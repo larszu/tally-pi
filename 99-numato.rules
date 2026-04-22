@@ -1,0 +1,6 @@
+# Numato 32-Channel USB GPIO with Analog Inputs
+# Creates a stable /dev/numato0 symlink so the watcher finds the board
+# regardless of which ttyACMx slot it lands on.
+# Numato uses CDC ACM (vendor 2a19). The product ID varies per board revision,
+# so we match on vendor + the ACM driver alone.
+SUBSYSTEM=="tty", ATTRS{idVendor}=="2a19", SYMLINK+="numato%n", MODE="0660", GROUP="dialout"

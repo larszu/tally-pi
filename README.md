@@ -18,35 +18,31 @@ into a self-contained Companion appliance:
 | File | Role |
 |------|------|
 | `setup-guide.html` | Kiosk setup UI (served on `:8080`). Live GPIO tiles + binding modal + pinout + ATEM tutorial. |
-| `guide_server.py` | Python stdlib HTTP server: serves the guide, exposes `/gpio` (live state from `/sys/kernel/debug/gpio`) and `/bindings` (GET/POST JSON). |
+| `guide_server.py` | Python stdlib HTTP server: serves the guide, exposes `/gpio` (live state from `/sys/kernel/debug/gpio`), `/numato`, `/ipconfig` and `/bindings` (GET/POST JSON). |
 | `gpio_watcher.py` | libgpiod v2 watcher. Reads `bindings.json`, claims lines, fires Companion HTTP API calls on edges. Auto-reloads on file change. |
+| `numato_watcher.py` | Hot-plug watcher for Numato 32-CH USB GPIO modules. Auto-detects `/dev/numato0` (via udev symlink) and polls digital + ADC channels. |
 | `pi_status.py` | OLED status cycler (luma.oled). |
 | `pi-guide.service` | systemd unit for the web server. |
-| `pi-gpio-watcher.service` | systemd unit for the GPIO watcher. |
+| `pi-gpio-watcher.service` | systemd unit for the Pi GPIO watcher. |
+| `pi-numato-watcher.service` | systemd unit for the Numato hot-plug watcher. |
 | `pi-status.service` | systemd unit for the OLED. |
+| `99-numato.rules` | udev rule → creates stable `/dev/numato0` symlink for any plugged-in Numato board. |
 | `10-modesetting.conf` | Xorg fix for Pi 5 (pins `vc4` to modesetting driver). |
 | `openbox-autostart` | Openbox autostart → launches Chromium with 3 tabs (guide, Companion, connections). |
-| `01-enable-i2c.sh` | Installer: enables I²C, installs tools. |
-| `02-install-status.sh` | Installer: OLED service. |
-| `03-install-kiosk.sh` | Installer: Xorg + Openbox + Chromium kiosk + tty1 autologin. |
-| `04-install-guide.sh` | Installer: pi-guide service. |
-| `05-install-watcher.sh` | Installer: pi-gpio-watcher service. |
+| `bootstrap.sh` | One-shot installer: apt deps, file deploy, systemd units, udev rules, kiosk autologin. |
 
 ## Quick start (on the Pi)
 
+One-shot install on a fresh Companion Pi image (as user `talentwerk`):
+
 ```bash
-sudo apt update
+curl -fsSL https://raw.githubusercontent.com/larszu/tw-broadcast-interface/main/bootstrap.sh \
+  | sudo bash
+# or, if you prefer to read first:
 git clone https://github.com/larszu/tw-broadcast-interface.git
 cd tw-broadcast-interface
-cp -r * /tmp/pi-setup/   # installers expect files under /tmp/pi-setup
-
-bash 01-enable-i2c.sh
-# reboot if asked
-bash 02-install-status.sh     # leave disabled until OLED is wired
-bash 03-install-kiosk.sh
-bash 04-install-guide.sh
-bash 05-install-watcher.sh
-sudo reboot
+sudo bash bootstrap.sh
+sudo reboot   # only required the first time, for I²C
 ```
 
 After reboot the Pi auto-logs in on tty1, starts Xorg + Openbox, and

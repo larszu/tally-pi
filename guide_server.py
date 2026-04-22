@@ -6,6 +6,7 @@ import os
 import re
 import socket
 import socketserver
+import subprocess
 import tempfile
 from pathlib import Path
 
@@ -13,6 +14,7 @@ ROOT = Path(__file__).resolve().parent
 PORT = 8080
 DEBUG_GPIO = Path("/sys/kernel/debug/gpio")
 BINDINGS_FILE = Path("/opt/pi-guide/bindings.json")
+NUMATO_STATE_FILE = Path("/run/pi-guide/numato.json")
 
 # Physical header pin for each BCM GPIO (2..27)
 BCM_TO_PIN = {
@@ -93,9 +95,17 @@ def validate_binding(b):
     """Raise ValueError if binding is malformed."""
     if not isinstance(b, dict):
         raise ValueError("binding must be object")
-    bcm = b.get("bcm")
-    if not isinstance(bcm, int) or bcm not in BCM_TO_PIN:
-        raise ValueError(f"bcm must be one of {sorted(BCM_TO_PIN)}")
+    source = b.get("source", "pi")
+    if source not in ("pi", "numato"):
+        raise ValueError("source must be pi|numato")
+    if source == "pi":
+        bcm = b.get("bcm")
+        if not isinstance(bcm, int) or bcm not in BCM_TO_PIN:
+            raise ValueError(f"bcm must be one of {sorted(BCM_TO_PIN)}")
+    else:
+        ch = b.get("channel")
+        if not isinstance(ch, int) or ch < 0 or ch > 31:
+            raise ValueError("channel must be 0..31")
     if b.get("trigger_edge") not in (None, "rising", "falling", "both"):
         raise ValueError("trigger_edge must be rising|falling|both")
     if b.get("bias") not in (None, "pull-up", "pull-down", "none"):
@@ -116,6 +126,39 @@ def validate_binding(b):
         name = action.get("variable", "")
         if not re.match(r"^[A-Za-z0-9_]{1,64}$", name):
             raise ValueError("action.variable must match [A-Za-z0-9_]{1,64}")
+
+
+def get_ipconfig():
+    """Return list of interfaces with their IPv4 addresses."""
+    ifaces = []
+    try:
+        out = subprocess.run(
+            ["ip", "-4", "-j", "addr", "show"],
+            capture_output=True, text=True, timeout=3,
+        )
+        data = json.loads(out.stdout)
+        for i in data:
+            name = i.get("ifname")
+            if name == "lo":
+                continue
+            addrs = [a.get("local") for a in i.get("addr_info", []) if a.get("local")]
+            state = i.get("operstate", "UNKNOWN")
+            ifaces.append({"name": name, "addresses": addrs, "state": state})
+    except Exception as e:
+        ifaces.append({"error": str(e)})
+    # Hostname info
+    hostname = socket.gethostname()
+    return {"hostname": hostname, "interfaces": ifaces}
+
+
+def get_numato_state():
+    """Return Numato watcher state (written by numato_watcher.py)."""
+    if not NUMATO_STATE_FILE.exists():
+        return {"connected": False, "device": None}
+    try:
+        return json.loads(NUMATO_STATE_FILE.read_text())
+    except Exception:
+        return {"connected": False, "device": None, "error": "state parse error"}
 
 
 class Handler(http.server.SimpleHTTPRequestHandler):
@@ -152,8 +195,14 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         elif self.path == "/hostname":
             self._send_text(socket.gethostname())
             return
+        elif self.path == "/ipconfig":
+            self._send_json(get_ipconfig())
+            return
         elif self.path == "/gpio":
             self._send_json(parse_gpio_state())
+            return
+        elif self.path == "/numato":
+            self._send_json(get_numato_state())
             return
         elif self.path == "/bindings":
             self._send_json(load_bindings())

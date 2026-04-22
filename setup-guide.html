@@ -97,9 +97,11 @@
 <header>
   <h1>Companion Pi · GPIO Setup Guide</h1>
   <div class="sub">Raspberry Pi 5 · Bitfocus Companion · <span id="hostinfo">companionpi</span></div>
+  <div class="sub" id="ipinfo" style="margin-top:2px">IP: …</div>
 </header>
 <nav>
   <a href="#live">⚡ Live-Status</a>
+  <a href="#numato">🔌 Numato USB</a>
   <a href="#pinout">1. Pinout</a>
   <a href="#button">2. Taster anschließen</a>
   <a href="#module">3. GPIO-Modul konfigurieren</a>
@@ -122,6 +124,16 @@
   </div>
   <div class="gpio-grid" id="gpio-grid"></div>
   <div id="live-err" class="card err" style="display:none;margin-top:12px"></div>
+</section>
+
+<section id="numato">
+  <h2>🔌 Numato USB GPIO (32 Kanäle + ADC) <span id="numato-status" style="font-size:13px;font-weight:normal;margin-left:12px"></span></h2>
+  <p id="numato-hint" style="color:var(--muted)">Steck ein Numato 32-Channel USB GPIO-Modul ein und es erscheint hier automatisch. Klick einen Kanal, um eine Companion-Aktion an ihn zu binden.</p>
+  <div id="numato-grid" class="gpio-grid" style="display:none"></div>
+  <div id="numato-adc-wrap" style="display:none;margin-top:16px">
+    <h3 style="margin-top:0">Analoge Eingänge (ADC · 10 bit · 0–1023)</h3>
+    <div id="numato-adc" class="gpio-grid"></div>
+  </div>
 </section>
 
 <section id="pinout">
@@ -297,11 +309,13 @@ sudo systemctl restart getty@tty1</pre>
     </select>
 
     <label>Pull-Widerstand</label>
+    <div id="f-bias-wrap">
     <select id="f-bias">
       <option value="pull-up">Pull-Up (Taster nach GND, Standard)</option>
       <option value="pull-down">Pull-Down (Taster nach 3.3V)</option>
       <option value="none">Keiner (externer Widerstand)</option>
     </select>
+    </div>
 
     <label>Debounce (ms) <span style="color:var(--muted)">— Entprellung</span></label>
     <input type="number" id="f-debounce" min="0" max="5000" value="20">
@@ -380,10 +394,24 @@ sudo systemctl restart getty@tty1</pre>
   // Simplify: use 2-column grid
   ph.style.gridTemplateColumns = '1fr 1fr';
 
-  // Show hostname
-  fetch('/hostname').then(r => r.text()).then(t => {
-    document.getElementById('hostinfo').textContent = t.trim();
-  }).catch(()=>{});
+  // Show hostname + IP config
+  async function loadIpConfig() {
+    try {
+      const r = await fetch('/ipconfig', {cache:'no-store'});
+      const d = await r.json();
+      document.getElementById('hostinfo').textContent = d.hostname || 'companionpi';
+      const parts = (d.interfaces || []).map(i => {
+        const addrs = (i.addresses || []).join(', ') || '—';
+        return `<span style="color:var(--fg)">${i.name}</span>: ${addrs}`;
+      });
+      document.getElementById('ipinfo').innerHTML =
+        parts.length ? parts.join(' · ') : 'keine IP';
+    } catch (e) {
+      document.getElementById('ipinfo').textContent = 'IP: (offline)';
+    }
+  }
+  loadIpConfig();
+  setInterval(loadIpConfig, 5000);
 
   // Live GPIO status
   const GPIO_LIST = [2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27];
@@ -398,6 +426,7 @@ sudo systemctl restart getty@tty1</pre>
   const tiles = {};
   let bindings = [];        // cached from /bindings
   let lastState = {};       // cached from /gpio
+  let numatoState = {connected:false};
 
   for (const bcm of GPIO_LIST) {
     const el = document.createElement('div');
@@ -407,7 +436,7 @@ sudo systemctl restart getty@tty1</pre>
       <div class="gdir" id="d${bcm}">—</div>
       <div class="gval" id="v${bcm}">—</div>
       <div class="gcons" id="c${bcm}"></div>`;
-    el.addEventListener('click', () => openModal(bcm));
+    el.addEventListener('click', () => openModal('pi', bcm));
     grid.appendChild(el);
     tiles[bcm] = el;
     if (GPIO_ROLE[bcm]) {
@@ -415,8 +444,21 @@ sudo systemctl restart getty@tty1</pre>
     }
   }
 
-  function findBinding(bcm) {
-    return bindings.find(b => b.bcm === bcm);
+  function findBinding(source, key) {
+    if (source === 'pi') return bindings.find(b => (b.source||'pi')==='pi' && b.bcm === key);
+    return bindings.find(b => b.source === 'numato' && b.channel === key);
+  }
+
+  function renderBoundTag(el, b) {
+    const tag = document.createElement('span');
+    tag.className = 'bound';
+    const a = b.action || {};
+    let short = a.kind || '';
+    if (a.kind === 'press' || a.kind === 'down_up')
+      short = (a.kind === 'press' ? 'press ' : 'hold ') + `${a.page}/${a.row}/${a.column}`;
+    else if (a.kind === 'variable') short = `var ${a.variable}`;
+    tag.textContent = '→ ' + short;
+    el.appendChild(tag);
   }
 
   function updateTile(bcm, s) {
@@ -463,18 +505,8 @@ sudo systemctl restart getty@tty1</pre>
       el.classList.add('free');
     }
 
-    const b = findBinding(bcm);
-    if (b) {
-      const tag = document.createElement('span');
-      tag.className = 'bound';
-      const a = b.action || {};
-      let short = a.kind || '';
-      if (a.kind === 'press' || a.kind === 'down_up')
-        short = (a.kind === 'press' ? 'press ' : 'hold ') + `${a.page}/${a.row}/${a.column}`;
-      else if (a.kind === 'variable') short = `var ${a.variable}`;
-      tag.textContent = '→ ' + short;
-      el.appendChild(tag);
-    }
+    const b = findBinding('pi', bcm);
+    if (b) renderBoundTag(el, b);
   }
 
   async function pollGpio() {
@@ -508,17 +540,125 @@ sudo systemctl restart getty@tty1</pre>
     } catch (e) { bindings = []; }
   }
 
+  // ---- Numato tiles ----
+  const numatoTiles = {};
+  const numatoAdcTiles = {};
+  function buildNumatoGrid() {
+    const ng = document.getElementById('numato-grid');
+    const ag = document.getElementById('numato-adc');
+    ng.innerHTML = ''; ag.innerHTML = '';
+    for (let ch = 0; ch < 32; ch++) {
+      const el = document.createElement('div');
+      el.className = 'gtile free';
+      el.innerHTML = `
+        <div class="head"><span class="gname">CH ${ch}</span><span class="gpin">Numato</span></div>
+        <div class="gdir">Digital</div>
+        <div class="gval" id="nv${ch}">—</div>`;
+      el.addEventListener('click', () => openModal('numato', ch));
+      ng.appendChild(el);
+      numatoTiles[ch] = el;
+
+      const a = document.createElement('div');
+      a.className = 'gtile free';
+      a.innerHTML = `
+        <div class="head"><span class="gname">ADC ${ch}</span></div>
+        <div class="gval" id="na${ch}">—</div>
+        <div style="background:#0b0e13;height:6px;border-radius:3px;overflow:hidden;margin-top:6px">
+          <div id="nab${ch}" style="height:100%;width:0;background:linear-gradient(90deg,#4ade80,#fbbf24,#f87171);transition:width .2s"></div>
+        </div>`;
+      ag.appendChild(a);
+      numatoAdcTiles[ch] = a;
+    }
+  }
+  buildNumatoGrid();
+
+  function updateNumatoTile(ch, val) {
+    const el = numatoTiles[ch];
+    const vEl = document.getElementById('nv'+ch);
+    el.classList.remove('free','in-hi','in-lo');
+    el.querySelectorAll('.pressed,.bound').forEach(n => n.remove());
+    if (val === 1) {
+      el.classList.add('in-hi');
+      vEl.textContent = 'HIGH (1)';
+    } else if (val === 0) {
+      el.classList.add('in-lo');
+      vEl.textContent = 'LOW (0)';
+      const tag = document.createElement('span');
+      tag.className = 'pressed';
+      tag.textContent = 'GEDRÜCKT';
+      el.appendChild(tag);
+    } else {
+      el.classList.add('free');
+      vEl.textContent = '—';
+    }
+    const b = findBinding('numato', ch);
+    if (b) renderBoundTag(el, b);
+  }
+
+  function updateNumatoAdc(ch, val) {
+    const vEl = document.getElementById('na'+ch);
+    const bar = document.getElementById('nab'+ch);
+    if (val == null) { vEl.textContent = '—'; bar.style.width = '0'; return; }
+    vEl.textContent = val + ' / 1023';
+    bar.style.width = Math.round(val / 1023 * 100) + '%';
+  }
+
+  async function pollNumato() {
+    try {
+      const r = await fetch('/numato', {cache:'no-store'});
+      const d = await r.json();
+      numatoState = d;
+      const statusEl = document.getElementById('numato-status');
+      const gridEl = document.getElementById('numato-grid');
+      const adcWrap = document.getElementById('numato-adc-wrap');
+      const hintEl = document.getElementById('numato-hint');
+      if (d.connected) {
+        statusEl.innerHTML = '<span style="color:var(--ok)">● verbunden</span> — ' + (d.device || '');
+        gridEl.style.display = 'grid';
+        adcWrap.style.display = 'block';
+        hintEl.style.display = 'none';
+        const digi = d.digital || [];
+        const adc = d.adc || [];
+        for (let ch = 0; ch < 32; ch++) {
+          updateNumatoTile(ch, digi[ch]);
+          updateNumatoAdc(ch, adc[ch]);
+        }
+      } else {
+        statusEl.innerHTML = '<span style="color:var(--muted)">○ nicht verbunden</span>';
+        gridEl.style.display = 'none';
+        adcWrap.style.display = 'none';
+        hintEl.style.display = 'block';
+      }
+    } catch (e) {
+      document.getElementById('numato-status').innerHTML =
+        '<span style="color:var(--err)">● Fehler: ' + e + '</span>';
+    }
+  }
+
   // ---- Modal ----
   const $ = id => document.getElementById(id);
-  let currentBcm = null;
+  let currentSource = 'pi';
+  let currentKey = null;  // bcm or channel
 
-  function openModal(bcm) {
-    currentBcm = bcm;
-    const s = lastState[String(bcm)] || {};
-    const b = findBinding(bcm) || {};
+  function openModal(source, key) {
+    currentSource = source;
+    currentKey = key;
+    const b = findBinding(source, key) || {};
     const a = b.action || {};
 
-    $('modal-title').textContent = `GPIO ${bcm} (Pin ${s.pin || BCM_TO_PIN[bcm] || '?'}) binden`;
+    if (source === 'pi') {
+      const s = lastState[String(key)] || {};
+      $('modal-title').textContent = `GPIO ${key} (Pin ${s.pin || BCM_TO_PIN[key] || '?'}) binden`;
+      const claimed = s.claimed && !findBinding('pi', key);
+      $('modal-claim-warn').style.display = claimed ? 'block' : 'none';
+      $('modal-claim-consumer').textContent = s.consumer || '';
+      $('f-bias-wrap').style.display = 'block';
+    } else {
+      $('modal-title').textContent = `Numato USB · Kanal ${key} binden`;
+      $('modal-claim-warn').style.display = 'none';
+      $('f-bias-wrap').style.display = 'none'; // bias fixed by module firmware
+    }
+
     $('f-edge').value = b.trigger_edge || 'falling';
     $('f-bias').value = b.bias || 'pull-up';
     $('f-debounce').value = b.debounce_ms ?? 20;
@@ -530,11 +670,7 @@ sudo systemctl restart getty@tty1</pre>
     $('f-varvalue').value = a.value ?? '1';
     onKindChange();
 
-    const claimed = s.claimed && !findBinding(bcm);
-    $('modal-claim-warn').style.display = claimed ? 'block' : 'none';
-    $('modal-claim-consumer').textContent = s.consumer || '';
-
-    $('btn-delete').style.display = findBinding(bcm) ? 'inline-block' : 'none';
+    $('btn-delete').style.display = findBinding(source, key) ? 'inline-block' : 'none';
     $('modal-status').textContent = '';
     $('modal-status').className = 'status';
     $('modal-bg').classList.add('show');
@@ -559,19 +695,27 @@ sudo systemctl restart getty@tty1</pre>
       action.variable = $('f-varname').value.trim();
       action.value = $('f-varvalue').value;
     }
-    return {
-      bcm: currentBcm,
+    const base = {
+      source: currentSource,
       trigger_edge: $('f-edge').value,
       bias: $('f-bias').value,
       debounce_ms: parseInt($('f-debounce').value, 10) || 0,
       enabled: true,
       action,
     };
+    if (currentSource === 'pi') base.bcm = currentKey;
+    else base.channel = currentKey;
+    return base;
+  }
+
+  function sameKey(b) {
+    if (currentSource === 'pi') return (b.source||'pi') === 'pi' && b.bcm === currentKey;
+    return b.source === 'numato' && b.channel === currentKey;
   }
 
   async function saveBinding() {
     const b = readForm();
-    const next = bindings.filter(x => x.bcm !== currentBcm);
+    const next = bindings.filter(x => !sameKey(x));
     next.push(b);
     const r = await fetch('/bindings', {
       method:'POST', headers:{'Content-Type':'application/json'},
@@ -591,7 +735,7 @@ sudo systemctl restart getty@tty1</pre>
   }
 
   async function deleteBinding() {
-    const next = bindings.filter(x => x.bcm !== currentBcm);
+    const next = bindings.filter(x => !sameKey(x));
     const r = await fetch('/bindings', {
       method:'POST', headers:{'Content-Type':'application/json'},
       body: JSON.stringify(next),
@@ -647,7 +791,9 @@ sudo systemctl restart getty@tty1</pre>
   (async () => {
     await loadBindings();
     pollGpio();
+    pollNumato();
     setInterval(pollGpio, 500);
+    setInterval(pollNumato, 500);
     setInterval(loadBindings, 3000);
   })();
 </script>
