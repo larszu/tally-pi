@@ -341,6 +341,51 @@
   <div class="card ok">
     <strong>Alternative ohne Toggle:</strong> Lege zwei Taster an (GPIO 17 + GPIO 27) und je einen Trigger pro Pin, der direkt Aux auf Input 1 bzw. 2 setzt. Das ist einfacher und verlässlicher.
   </div>
+
+  <h3>4b · Momentary: „Aux nur während Taste gehalten wird"</h3>
+  <p>Solange du die Taste hältst, zeigt die Aux eine andere Quelle. Beim Loslassen kehrt sie automatisch zur vorherigen Quelle zurück. Nützlich für „Zeige kurz Cam 3".</p>
+
+  <div class="card">
+    <strong>Wizard: Button-Config generieren</strong>
+    <p style="color:var(--muted);margin:4px 0 10px">Wähle deine Werte aus — unten bekommst du fertige Schritte zum Abtippen und optional ein Companion-Import-JSON zum Copy&amp;Paste.</p>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px;margin:10px 0">
+      <div>
+        <label style="font-size:12px;color:var(--muted)">ATEM-Connection Label</label>
+        <input id="mw-label" value="atem" placeholder="atem">
+      </div>
+      <div>
+        <label style="font-size:12px;color:var(--muted)">Aux-Ausgang</label>
+        <select id="mw-aux">
+          <option>1</option><option>2</option><option>3</option><option>4</option>
+          <option>5</option><option>6</option>
+        </select>
+      </div>
+      <div>
+        <label style="font-size:12px;color:var(--muted)">Quelle beim Halten (Input-ID)</label>
+        <input id="mw-src" type="number" value="3" min="0" max="10000">
+        <span style="font-size:11px;color:var(--muted)">z.B. 1=Cam1, 2=Cam2, 3000=Color1, 2001=MP1</span>
+      </div>
+      <div>
+        <label style="font-size:12px;color:var(--muted)">GPIO-Pin (BCM) der Taste</label>
+        <select id="mw-gpio"></select>
+      </div>
+    </div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap">
+      <button class="btn" type="button" id="mw-gen">Anleitung generieren</button>
+      <button class="btn sec" type="button" id="mw-json-toggle">Import-JSON zeigen</button>
+      <button class="btn sec" type="button" id="mw-copy-json" style="display:none">JSON kopieren</button>
+    </div>
+  </div>
+
+  <div id="mw-out" style="display:none;margin-top:14px">
+    <h4 style="margin:0 0 6px">Schritt-für-Schritt (manuell in Companion)</h4>
+    <ol class="steps" id="mw-steps"></ol>
+    <div id="mw-json-wrap" style="display:none;margin-top:10px">
+      <h4 style="margin:0 0 6px">Import-JSON (Companion → Buttons → Import)</h4>
+      <p style="color:var(--muted);font-size:12px;margin:0 0 6px">Companion öffnen → Buttons-Seite → leeren Button rechtsklick → <strong>Import</strong> → Inhalt einfügen.</p>
+      <pre id="mw-json" style="max-height:300px"></pre>
+    </div>
+  </div>
 </section>
 
 <section id="troubleshoot">
@@ -1007,6 +1052,108 @@ sudo systemctl restart getty@tty1</pre>
     setInterval(pollGpio, 500);
     setInterval(pollNumato, 500);
     setInterval(loadBindings, 3000);
+  })();
+
+  // ---- Momentary-Aux Wizard ----
+  (function initMwWizard() {
+    const gpioSel = document.getElementById('mw-gpio');
+    if (!gpioSel) return;
+    // Fill GPIO dropdown with Companion-usable pins only
+    const USABLE = [4,5,6,12,13,16,17,18,19,20,21,22,23,24,25,26,27];
+    USABLE.forEach(n => {
+      const o = document.createElement('option');
+      o.value = n; o.textContent = 'GPIO ' + n;
+      if (n === 17) o.selected = true;
+      gpioSel.appendChild(o);
+    });
+
+    const $ = id => document.getElementById(id);
+    const out = $('mw-out'), steps = $('mw-steps'),
+          jsonWrap = $('mw-json-wrap'), jsonPre = $('mw-json');
+
+    function build() {
+      const label = ($('mw-label').value || 'atem').trim();
+      const aux   = parseInt($('mw-aux').value, 10);
+      const src   = parseInt($('mw-src').value, 10);
+      const bcm   = parseInt(gpioSel.value, 10);
+      const varName = `aux${aux}_prev`;
+      const varRef  = `$(internal:custom_${varName})`;
+      const atemVar = `$(${label}:aux${aux}_input)`;
+
+      steps.innerHTML = `
+        <li><strong>Custom-Variable anlegen</strong>: Companion → <em>Variables</em> → <em>Custom variables</em> → <kbd>Add</kbd>.
+          Name <code>${varName}</code>, Startwert beliebig (wird überschrieben).</li>
+        <li><strong>GPIO-Modul</strong>: Pin <code>GPIO ${bcm}</code> als <em>IN</em> + <em>FALLING</em> + <em>Debounce 50 ms</em> aktivieren
+          (<em>Invert</em> an → „gedrückt"=1). Erzeugt Variable <code>$(gpio:gpio${bcm})</code>.</li>
+        <li><strong>Button anlegen</strong>: Buttons-Seite → freien Slot öffnen. Oben bei <em>Action sets</em> den Default-Step auf
+          <strong>Down/Up</strong> stellen, damit du zwei Blöcke (Button&nbsp;down + Button&nbsp;up) bekommst.</li>
+        <li><strong>Button down</strong> (beim Drücken):
+          <ol>
+            <li><em>Internal → Set custom variable</em>: Variable <code>${varName}</code> = <code>${atemVar}</code></li>
+            <li><em>${label} → Set Auxiliary source</em>: Aux <strong>${aux}</strong>, Source&nbsp;<strong>${src}</strong></li>
+          </ol>
+        </li>
+        <li><strong>Button up</strong> (beim Loslassen):
+          <ol>
+            <li><em>${label} → Set Auxiliary source</em>: Aux <strong>${aux}</strong>, Source&nbsp;<strong>${varRef}</strong>
+              <span style="color:var(--muted)">(einige ATEM-Modul-Versionen verlangen hier „Input from variable"; dann das Feld umschalten und <code>${varRef}</code> eintragen)</span></li>
+          </ol>
+        </li>
+        <li><strong>Trigger — Button halten, solange GPIO=1</strong>: <em>Triggers</em> → <kbd>+</kbd>
+          <ul>
+            <li>Event: <em>Variable changes</em> → <code>gpio:gpio${bcm}</code></li>
+            <li>Condition: <code>gpio:gpio${bcm}</code> = <code>1</code> → Action: <em>Button → Press and release</em> oder direkt den
+              Down-Step ausführen. Variante mit echtem Halten: in GPIO-Binding unten den Pin auf <strong>„press/release"</strong>-Modus
+              binden und als Ziel den gerade angelegten Button wählen.</li>
+          </ul>
+        </li>
+        <li><strong>Alternativ (einfacher): unsere eigene GPIO-Binding-UI</strong> oben im Live-Status.
+          Klicke auf GPIO ${bcm} → Kind <em>down_up</em> → Page/Row/Column des neuen Buttons eintragen.</li>
+      `;
+      // Companion button import JSON (Companion v3 format, generic "press" step using HTTP calls)
+      const export_ = {
+        version: '3.99.0',
+        type: 'button',
+        style: {
+          text: `Aux${aux}→${src}\\nhold`,
+          size: 'auto', alignment: 'center:center',
+          bgcolor: 0, color: 16777215, show_topbar: 'default'
+        },
+        feedbacks: [],
+        steps: {
+          '0': {
+            action_sets: {
+              down: [
+                { instance: 'internal', action: 'custom_variable_set_value',
+                  options: { name: varName, value: atemVar } },
+                { instance: label, action: 'setAuxSource',
+                  options: { aux: aux - 1, input: src } }
+              ],
+              up: [
+                { instance: label, action: 'setAuxSource',
+                  options: { aux: aux - 1, input: varRef } }
+              ]
+            },
+            options: { runWhileHeld: [] }
+          }
+        }
+      };
+      jsonPre.textContent = JSON.stringify(export_, null, 2);
+      out.style.display = 'block';
+    }
+
+    $('mw-gen').addEventListener('click', build);
+    $('mw-json-toggle').addEventListener('click', () => {
+      if (!out.style.display || out.style.display === 'none') build();
+      const vis = jsonWrap.style.display !== 'none';
+      jsonWrap.style.display = vis ? 'none' : 'block';
+      $('mw-copy-json').style.display = vis ? 'none' : 'inline-block';
+    });
+    $('mw-copy-json').addEventListener('click', async () => {
+      try { await navigator.clipboard.writeText(jsonPre.textContent);
+        $('mw-copy-json').textContent = '✓ kopiert'; setTimeout(()=> $('mw-copy-json').textContent = 'JSON kopieren', 1500);
+      } catch (e) { alert('Kopieren fehlgeschlagen: ' + e); }
+    });
   })();
 </script>
 </body>
