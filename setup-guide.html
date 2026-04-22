@@ -1,0 +1,655 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<title>Companion Pi – GPIO Setup Guide</title>
+<style>
+  :root {
+    --bg:#0f1115; --panel:#1a1f2b; --panel2:#222937; --fg:#e6ebf2; --muted:#8a94a6;
+    --accent:#4da3ff; --ok:#4ade80; --warn:#fbbf24; --err:#f87171;
+    --pin-power:#ef4444; --pin-gnd:#374151; --pin-gpio:#4ade80;
+    --pin-i2c:#fbbf24; --pin-spi:#a78bfa; --pin-uart:#60a5fa; --pin-pwm:#ec4899;
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family:system-ui,-apple-system,Segoe UI,sans-serif; background:var(--bg); color:var(--fg); line-height:1.5; }
+  header { padding:16px 24px; background:linear-gradient(90deg,#1a2540,#0f1115); border-bottom:1px solid #2a3548; position:sticky; top:0; z-index:10; }
+  header h1 { margin:0; font-size:20px; }
+  header .sub { color:var(--muted); font-size:13px; margin-top:4px; }
+  nav { display:flex; gap:8px; padding:8px 24px; background:#131721; border-bottom:1px solid #2a3548; position:sticky; top:64px; z-index:9; flex-wrap:wrap; }
+  nav a { color:var(--fg); text-decoration:none; padding:6px 12px; border-radius:6px; font-size:14px; background:#222937; }
+  nav a:hover { background:#2f3a4e; }
+  main { padding:24px; max-width:1400px; margin:0 auto; }
+  section { margin-bottom:40px; background:var(--panel); border-radius:12px; padding:24px; border:1px solid #2a3548; }
+  h2 { margin-top:0; color:var(--accent); border-bottom:1px solid #2a3548; padding-bottom:8px; }
+  h3 { color:#cbd5e1; margin-top:24px; }
+  code, pre { background:#0b0e13; color:#a5f3d8; border-radius:4px; padding:2px 6px; font-family:Consolas,ui-monospace,monospace; font-size:13px; }
+  pre { padding:12px; overflow:auto; white-space:pre-wrap; }
+  .legend { display:flex; flex-wrap:wrap; gap:10px; margin:12px 0; font-size:13px; }
+  .legend span { display:inline-flex; align-items:center; gap:6px; }
+  .dot { width:14px; height:14px; border-radius:4px; display:inline-block; }
+  .pinheader { display:grid; grid-template-columns:auto auto auto auto; gap:4px; background:#0b0e13; padding:16px; border-radius:8px; max-width:700px; }
+  .pin { padding:8px 10px; border-radius:4px; font-size:12px; font-family:Consolas,monospace; }
+  .pin .pn { font-weight:bold; opacity:.7; font-size:10px; }
+  .pin .nm { font-weight:bold; }
+  .pin.power { background:#3a1414; color:#fca5a5; }
+  .pin.gnd { background:#1f2937; color:#9ca3af; }
+  .pin.gpio { background:#14321d; color:#86efac; }
+  .pin.i2c { background:#3a2a08; color:#fcd34d; }
+  .pin.spi { background:#271c3a; color:#c4b5fd; }
+  .pin.uart { background:#0f2747; color:#93c5fd; }
+  .pin.pwm { background:#3a1528; color:#f9a8d4; }
+  .cols { display:grid; grid-template-columns:1fr 1fr; gap:24px; }
+  @media (max-width:900px) { .cols { grid-template-columns:1fr; } }
+  .card { background:var(--panel2); padding:16px; border-radius:8px; border-left:4px solid var(--accent); }
+  .card.warn { border-left-color:var(--warn); }
+  .card.err  { border-left-color:var(--err); }
+  .card.ok   { border-left-color:var(--ok); }
+  table { width:100%; border-collapse:collapse; margin:12px 0; }
+  th, td { padding:8px 12px; text-align:left; border-bottom:1px solid #2a3548; font-size:14px; }
+  th { background:#131721; color:var(--muted); font-weight:normal; }
+  ol.steps li { margin-bottom:12px; }
+  kbd { background:#2f3a4e; padding:2px 6px; border-radius:4px; font-family:Consolas,monospace; font-size:12px; border:1px solid #475569; }
+  .svg-wire { max-width:100%; height:auto; }
+  .btn { display:inline-block; padding:8px 16px; background:var(--accent); color:#0b0e13; border-radius:6px; text-decoration:none; font-weight:bold; margin:4px 4px 4px 0; }
+  .btn:hover { background:#78c0ff; }
+  .btn.sec { background:#2f3a4e; color:var(--fg); }
+
+  /* Live GPIO status tiles */
+  .gpio-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(180px,1fr)); gap:10px; margin-top:12px; }
+  .gtile { background:#0b0e13; border:1px solid #2a3548; border-radius:8px; padding:10px 12px; font-family:Consolas,monospace; font-size:13px; position:relative; transition:background .15s, border-color .15s, box-shadow .15s; }
+  .gtile .head { display:flex; justify-content:space-between; align-items:baseline; }
+  .gtile .gname { font-weight:bold; font-size:15px; }
+  .gtile .gpin { color:var(--muted); font-size:11px; }
+  .gtile .gdir { font-size:11px; color:var(--muted); margin-top:4px; }
+  .gtile .gval { font-weight:bold; font-size:18px; letter-spacing:1px; }
+  .gtile .gcons { font-size:11px; color:#fbbf24; margin-top:4px; word-break:break-all; }
+  .gtile.free    { border-color:#374151; }
+  .gtile.in-hi   { border-color:#4ade80; background:#0d1f14; }
+  .gtile.in-hi .gval { color:#4ade80; }
+  .gtile.in-lo   { border-color:#fbbf24; background:#2a1f08; box-shadow:0 0 12px rgba(251,191,36,.4); }
+  .gtile.in-lo .gval { color:#fbbf24; }
+  .gtile.out     { border-color:#60a5fa; background:#0a1628; }
+  .gtile.out .gval { color:#60a5fa; }
+  .gtile.sys     { border-color:#a78bfa; background:#1a102a; }
+  .gtile.sys .gval { color:#a78bfa; }
+  .gtile .pressed { position:absolute; top:6px; right:8px; background:#fbbf24; color:#111; padding:1px 6px; border-radius:3px; font-size:10px; font-weight:bold; animation:pulse 1s infinite; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.5} }
+  .gtile { cursor:pointer; }
+  .gtile:hover { outline:2px solid var(--accent); }
+  .gtile .bound { position:absolute; bottom:6px; right:8px; background:var(--accent); color:#0b0e13; padding:1px 6px; border-radius:3px; font-size:10px; font-weight:bold; }
+
+  /* Modal */
+  .modal-bg { position:fixed; inset:0; background:rgba(0,0,0,.7); display:none; align-items:center; justify-content:center; z-index:100; }
+  .modal-bg.show { display:flex; }
+  .modal { background:var(--panel); border:1px solid #2a3548; border-radius:12px; padding:24px; width:min(560px,92vw); max-height:92vh; overflow:auto; }
+  .modal h3 { margin-top:0; color:var(--accent); }
+  .modal label { display:block; margin:10px 0 4px; font-size:13px; color:var(--muted); }
+  .modal input, .modal select { width:100%; background:#0b0e13; color:var(--fg); border:1px solid #2a3548; border-radius:6px; padding:8px; font-family:Consolas,monospace; font-size:14px; }
+  .modal .row { display:grid; grid-template-columns:1fr 1fr 1fr; gap:8px; }
+  .modal .actions { display:flex; gap:8px; margin-top:20px; flex-wrap:wrap; }
+  .modal .btn.danger { background:#ef4444; color:white; }
+  .modal .status { margin-top:10px; font-size:13px; }
+  .modal .status.ok { color:var(--ok); }
+  .modal .status.err { color:var(--err); }
+</style>
+</head>
+<body>
+<header>
+  <h1>Companion Pi · GPIO Setup Guide</h1>
+  <div class="sub">Raspberry Pi 5 · Bitfocus Companion · <span id="hostinfo">companionpi</span></div>
+</header>
+<nav>
+  <a href="#live">⚡ Live-Status</a>
+  <a href="#pinout">1. Pinout</a>
+  <a href="#button">2. Taster anschließen</a>
+  <a href="#module">3. GPIO-Modul konfigurieren</a>
+  <a href="#atem">4. ATEM Aux-Beispiel</a>
+  <a href="#troubleshoot">5. Troubleshooting</a>
+  <a href="http://localhost:8000/" class="btn">Companion UI →</a>
+</nav>
+<main>
+
+<section id="live">
+  <h2>⚡ Live GPIO-Status <span id="live-ts" style="font-size:12px;color:var(--muted);font-weight:normal;margin-left:12px"></span></h2>
+  <p>Echtzeit-Übersicht aller GPIO-Pins des 40-Pin-Headers. Aktualisiert sich alle 500 ms. <strong>Klicke eine Kachel</strong>, um eine Companion-Aktion an den Pin zu binden (z.B. „Knopf 1/0/0 drücken").</p>
+  <div class="legend">
+    <span><span class="dot" style="background:#374151"></span>Frei (nicht verwendet)</span>
+    <span><span class="dot" style="background:#4ade80"></span>Input, HIGH (Taster nicht gedrückt)</span>
+    <span><span class="dot" style="background:#fbbf24"></span>Input, LOW (Taster gedrückt!)</span>
+    <span><span class="dot" style="background:#60a5fa"></span>Output</span>
+    <span><span class="dot" style="background:#a78bfa"></span>System (I2C / SPI / UART)</span>
+    <span><span class="dot" style="background:#4da3ff"></span>Gebunden an Companion-Aktion</span>
+  </div>
+  <div class="gpio-grid" id="gpio-grid"></div>
+  <div id="live-err" class="card err" style="display:none;margin-top:12px"></div>
+</section>
+
+<section id="pinout">
+  <h2>1. GPIO Pinout (40-Pin Header)</h2>
+  <p>Der Pi 5 hat einen 40-poligen Stiftleistenanschluss. Pin 1 ist an der Ecke mit der weißen Markierung auf der Platine (Richtung SD-Karte).</p>
+  <div class="legend">
+    <span><span class="dot" style="background:#ef4444"></span>Power (3.3V / 5V)</span>
+    <span><span class="dot" style="background:#374151"></span>GND (Masse)</span>
+    <span><span class="dot" style="background:#4ade80"></span>GPIO (frei nutzbar)</span>
+    <span><span class="dot" style="background:#fbbf24"></span>I2C</span>
+    <span><span class="dot" style="background:#a78bfa"></span>SPI</span>
+    <span><span class="dot" style="background:#60a5fa"></span>UART</span>
+  </div>
+  <div class="pinheader" id="pinheader"></div>
+  <p style="margin-top:16px"><strong>Für Taster:</strong> Nimm irgendeinen grünen Pin (GPIO) + einen grauen Pin (GND). Empfehlung: <code>GPIO 17 (Pin 11)</code> + <code>GND (Pin 9)</code>.</p>
+  <p><strong>Für den OLED (I2C):</strong> 3.3V (Pin 1), GND (Pin 6), SDA (Pin 3 = GPIO 2), SCL (Pin 5 = GPIO 3).</p>
+</section>
+
+<section id="button">
+  <h2>2. Taster anschließen</h2>
+  <div class="cols">
+    <div>
+      <h3>Verkabelung</h3>
+      <p>Ein einfacher Taster zwischen <strong>GPIO-Pin</strong> und <strong>GND</strong> reicht. Das GPIO-Modul aktiviert den internen Pull-Up-Widerstand, d.h. der Eingang ist im Ruhezustand HIGH und wird beim Drücken auf LOW gezogen.</p>
+      <div class="card warn"><strong>Wichtig:</strong> Niemals 5V an GPIO! Die Pins vertragen maximal 3.3V. Zum Pull-Up reichen die internen Widerstände.</div>
+      <h3>Schaltung</h3>
+      <svg class="svg-wire" viewBox="0 0 400 220" xmlns="http://www.w3.org/2000/svg">
+        <rect x="20" y="20" width="360" height="180" fill="#0b0e13" stroke="#2a3548" rx="8"/>
+        <!-- Pi pins -->
+        <circle cx="80" cy="70" r="8" fill="#4ade80"/>
+        <text x="100" y="75" fill="#e6ebf2" font-size="13" font-family="Consolas">GPIO 17 (Pin 11)</text>
+        <circle cx="80" cy="130" r="8" fill="#374151" stroke="#9ca3af"/>
+        <text x="100" y="135" fill="#e6ebf2" font-size="13" font-family="Consolas">GND (Pin 9)</text>
+        <!-- Wires -->
+        <line x1="88" y1="70" x2="250" y2="70" stroke="#4ade80" stroke-width="2"/>
+        <line x1="88" y1="130" x2="250" y2="130" stroke="#9ca3af" stroke-width="2"/>
+        <line x1="250" y1="70" x2="250" y2="90" stroke="#4ade80" stroke-width="2"/>
+        <line x1="250" y1="110" x2="250" y2="130" stroke="#9ca3af" stroke-width="2"/>
+        <!-- Button body -->
+        <rect x="225" y="85" width="50" height="30" fill="#1a1f2b" stroke="#4da3ff" rx="4"/>
+        <text x="250" y="104" fill="#4da3ff" font-size="11" font-family="Consolas" text-anchor="middle">TASTER</text>
+        <!-- Labels -->
+        <text x="40" y="210" fill="#8a94a6" font-size="11" font-family="Consolas">Pi-5 Header</text>
+        <text x="300" y="100" fill="#8a94a6" font-size="11" font-family="Consolas">Push-Button</text>
+      </svg>
+      <p>Empfehlung: 4-Pin-Taster (Mini-Printtaste), aber auch 2-Pin-Taster funktionieren.</p>
+    </div>
+    <div>
+      <h3>Pin-Nummerierung verstehen</h3>
+      <p>Verwirrend: Pi kennt zwei Nummerierungen.</p>
+      <table>
+        <tr><th>Physisch (Pin-Nr.)</th><th>BCM/GPIO-Nr.</th><th>Companion verwendet</th></tr>
+        <tr><td>Pin 11</td><td>GPIO 17</td><td>17</td></tr>
+        <tr><td>Pin 12</td><td>GPIO 18</td><td>18</td></tr>
+        <tr><td>Pin 13</td><td>GPIO 27</td><td>27</td></tr>
+        <tr><td>Pin 15</td><td>GPIO 22</td><td>22</td></tr>
+        <tr><td>Pin 16</td><td>GPIO 23</td><td>23</td></tr>
+        <tr><td>Pin 18</td><td>GPIO 24</td><td>24</td></tr>
+        <tr><td>Pin 22</td><td>GPIO 25</td><td>25</td></tr>
+      </table>
+      <p>Das Companion-Modul arbeitet mit <strong>BCM/GPIO-Nummern</strong> — nicht mit Pin-Nummern.</p>
+      <div class="card">
+        <strong>Vermeiden:</strong>
+        <ul style="margin:6px 0">
+          <li>GPIO 0, 1 — Reserviert (EEPROM)</li>
+          <li>GPIO 2, 3 — I2C (OLED)</li>
+          <li>GPIO 14, 15 — UART (seriell)</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="module">
+  <h2>3. GPIO-Modul in Companion konfigurieren</h2>
+  <ol class="steps">
+    <li>Öffne die <a href="http://localhost:8000/" class="btn">Companion Web-UI</a> (Tab links).</li>
+    <li>Gehe zu <strong>Connections</strong> → <strong>+ Add connection</strong>.</li>
+    <li>Suche nach <code>raspberry</code> und wähle <strong>"Raspberry Pi foundation · RPi GPIO (Dev)"</strong>.</li>
+    <li>Vergib einen Namen (z.B. <code>gpio</code>) und öffne die Konfiguration.</li>
+    <li>Scrolle zum gewünschten Pin (z.B. <strong>GPIO 17</strong>):
+      <ul>
+        <li>✅ <code>Use GPIO pin</code> anhaken</li>
+        <li><code>Set as IN/OUT</code>: <strong>IN</strong></li>
+        <li><code>Trigger type</code>: <strong>FALLING</strong> (Taster zieht auf GND)</li>
+        <li>✅ <code>Enable debouncing</code>, <code>Debounce time</code>: <strong>50 ms</strong></li>
+        <li>Optional: <code>Invert values</code> anhaken, dann ist "gedrückt" = 1</li>
+      </ul>
+    </li>
+    <li>Speichern. Der Pin erscheint jetzt als <strong>Variable</strong> in Companion unter <code>$(gpio:gpio17)</code>.</li>
+  </ol>
+</section>
+
+<section id="atem">
+  <h2>4. Beispiel: Taster schaltet ATEM Aux-Quelle</h2>
+  <p>Ziel: Beim Drücken eines angeschlossenen Tasters soll der ATEM <strong>Aux 1</strong> zwischen <strong>Input 1</strong> und <strong>Input 2</strong> toggeln.</p>
+  <ol class="steps">
+    <li>
+      <strong>ATEM-Verbindung anlegen</strong><br>
+      Connections → <em>+ Add</em> → suche <code>atem</code> → "Blackmagic Design · ATEM" → IP der ATEM-Switcher eintragen.
+    </li>
+    <li>
+      <strong>Variable des GPIO-Pins nutzen</strong><br>
+      Nach Schritt 3 liefert das Modul z.B. <code>$(gpio:gpio17)</code> → <code>0</code> oder <code>1</code>.
+    </li>
+    <li>
+      <strong>Trigger erstellen</strong><br>
+      Linke Seitenleiste → <strong>Triggers</strong> → <kbd>+</kbd> neuer Trigger:
+      <ul>
+        <li><em>Name:</em> <code>Aux1 Toggle</code></li>
+        <li><em>Event:</em> <strong>On variable change</strong> → Variable <code>gpio:gpio17</code></li>
+        <li><em>Condition:</em> <code>gpio:gpio17</code> = <code>1</code> (bei steigender Flanke / Tastendruck)</li>
+      </ul>
+    </li>
+    <li>
+      <strong>Custom Variable für Toggle-Zustand</strong><br>
+      Variables → Custom → neue Variable <code>aux1_state</code>, Startwert <code>1</code>.
+    </li>
+    <li>
+      <strong>Actions im Trigger</strong>:
+      <ol>
+        <li>Action: <em>Set custom variable</em> → <code>aux1_state</code> = <code>$(internal:custom_aux1_state) == 1 ? 2 : 1</code></li>
+        <li>Action: ATEM → <em>Set Aux source</em> → Aux <strong>1</strong> → Source: <code>$(internal:custom_aux1_state)</code></li>
+      </ol>
+    </li>
+    <li>Speichern. Taster drücken → Aux springt zwischen Input 1 und 2.</li>
+  </ol>
+  <div class="card ok">
+    <strong>Alternative ohne Toggle:</strong> Lege zwei Taster an (GPIO 17 + GPIO 27) und je einen Trigger pro Pin, der direkt Aux auf Input 1 bzw. 2 setzt. Das ist einfacher und verlässlicher.
+  </div>
+</section>
+
+<section id="troubleshoot">
+  <h2>5. Troubleshooting</h2>
+  <table>
+    <tr><th>Problem</th><th>Lösung</th></tr>
+    <tr><td>Pin ändert sich nicht</td><td>Companion neu starten: <code>sudo systemctl restart companion</code>. GPIO-Modul muss <strong>(Dev)</strong> im Namen haben.</td></tr>
+    <tr><td>Prellt / mehrfach ausgelöst</td><td>Debounce erhöhen (100–200 ms).</td></tr>
+    <tr><td>Wert ist immer 1</td><td>Kabel vertauscht? Oder Pull-Up verkehrt → <em>Invert</em> anhaken.</td></tr>
+    <tr><td>OLED zeigt nichts</td><td><code>i2cdetect -y 1</code> → muss <code>3C</code> zeigen. Sonst Verkabelung prüfen.</td></tr>
+    <tr><td>Kiosk beenden</td><td><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>Q</kbd></td></tr>
+  </table>
+  <h3>Nützliche SSH-Befehle</h3>
+  <pre>ssh talentwerk@companionpi.local
+
+# Companion Logs
+sudo journalctl -u companion -f
+
+# GPIO-Modul neu laden
+sudo systemctl restart companion
+
+# I2C-Geräte scannen
+sudo i2cdetect -y 1
+
+# Kiosk-Session neu starten
+sudo systemctl restart getty@tty1</pre>
+</section>
+
+</main>
+<div class="modal-bg" id="modal-bg">
+  <div class="modal" id="modal">
+    <h3 id="modal-title">GPIO binden</h3>
+    <div id="modal-claim-warn" class="card warn" style="display:none;margin:8px 0 0">
+      <strong>Achtung:</strong> Dieser Pin ist bereits belegt (<span id="modal-claim-consumer"></span>).
+      Falls er in Companions GPIO-Modul konfiguriert ist, deaktiviere ihn dort, sonst kollidieren beide Systeme.
+    </div>
+
+    <label>Wann auslösen?</label>
+    <select id="f-edge">
+      <option value="falling">Taster gedrückt (Falling Edge, HIGH→LOW)</option>
+      <option value="rising">Taster losgelassen (Rising Edge, LOW→HIGH)</option>
+      <option value="both">Beide Flanken (z.B. Down/Up an Companion)</option>
+    </select>
+
+    <label>Pull-Widerstand</label>
+    <select id="f-bias">
+      <option value="pull-up">Pull-Up (Taster nach GND, Standard)</option>
+      <option value="pull-down">Pull-Down (Taster nach 3.3V)</option>
+      <option value="none">Keiner (externer Widerstand)</option>
+    </select>
+
+    <label>Debounce (ms) <span style="color:var(--muted)">— Entprellung</span></label>
+    <input type="number" id="f-debounce" min="0" max="5000" value="20">
+
+    <label>Aktion</label>
+    <select id="f-kind">
+      <option value="press">Companion-Button drücken (press)</option>
+      <option value="down_up">Button-Druck halten (down bei press, up bei release) — benötigt „Beide Flanken"</option>
+      <option value="variable">Custom-Variable in Companion setzen</option>
+    </select>
+
+    <div id="f-press-fields">
+      <label>Companion Location (Page / Row / Column)</label>
+      <div class="row">
+        <input type="number" id="f-page" min="0" max="999" value="1" placeholder="Page">
+        <input type="number" id="f-row" min="0" max="999" value="0" placeholder="Row">
+        <input type="number" id="f-col" min="0" max="999" value="0" placeholder="Column">
+      </div>
+      <p style="font-size:12px;color:var(--muted);margin:6px 0">In Companion: Button-Position im Grid. Erste Seite/Zeile/Spalte = 1/0/0.</p>
+    </div>
+
+    <div id="f-var-fields" style="display:none">
+      <label>Variablenname <span style="color:var(--muted)">— nur Buchstaben/Zahlen/_</span></label>
+      <input type="text" id="f-varname" placeholder="z.B. aux1_state" pattern="[A-Za-z0-9_]{1,64}">
+      <label>Wert (beim Auslösen setzen)</label>
+      <input type="text" id="f-varvalue" placeholder="z.B. 1 oder foo">
+    </div>
+
+    <div class="status" id="modal-status"></div>
+    <div class="actions">
+      <button class="btn" id="btn-save">Speichern</button>
+      <button class="btn sec" id="btn-test">Aktion testen</button>
+      <button class="btn danger" id="btn-delete" style="display:none">Binding löschen</button>
+      <button class="btn sec" id="btn-cancel" style="margin-left:auto">Abbrechen</button>
+    </div>
+  </div>
+</div>
+<script>
+  // Pi 5 GPIO pinout (physical pin -> {label, type})
+  const pins = [
+    ['3.3V','power'],['5V','power'],
+    ['GPIO 2 · SDA','i2c'],['5V','power'],
+    ['GPIO 3 · SCL','i2c'],['GND','gnd'],
+    ['GPIO 4','gpio'],['GPIO 14 · TXD','uart'],
+    ['GND','gnd'],['GPIO 15 · RXD','uart'],
+    ['GPIO 17','gpio'],['GPIO 18 · PWM','pwm'],
+    ['GPIO 27','gpio'],['GND','gnd'],
+    ['GPIO 22','gpio'],['GPIO 23','gpio'],
+    ['3.3V','power'],['GPIO 24','gpio'],
+    ['GPIO 10 · MOSI','spi'],['GND','gnd'],
+    ['GPIO 9 · MISO','spi'],['GPIO 25','gpio'],
+    ['GPIO 11 · SCLK','spi'],['GPIO 8 · CE0','spi'],
+    ['GND','gnd'],['GPIO 7 · CE1','spi'],
+    ['ID_SD','gpio'],['ID_SC','gpio'],
+    ['GPIO 5','gpio'],['GND','gnd'],
+    ['GPIO 6','gpio'],['GPIO 12 · PWM','pwm'],
+    ['GPIO 13 · PWM','pwm'],['GND','gnd'],
+    ['GPIO 19 · PWM','pwm'],['GPIO 16','gpio'],
+    ['GPIO 26','gpio'],['GPIO 20','gpio'],
+    ['GND','gnd'],['GPIO 21','gpio'],
+  ];
+  const ph = document.getElementById('pinheader');
+  for (let i = 0; i < 40; i += 2) {
+    const pinNumLeft  = i + 1;
+    const pinNumRight = i + 2;
+    const [lblL, typL] = pins[i];
+    const [lblR, typR] = pins[i + 1];
+    for (const [n, lbl, typ] of [[pinNumLeft, lblL, typL],[pinNumRight, lblR, typR]]) {
+      const d = document.createElement('div');
+      d.className = 'pin ' + typ;
+      d.innerHTML = `<div class="pn">Pin ${n}</div><div class="nm">${lbl}</div>`;
+      ph.appendChild(d);
+    }
+    // Add a spacer every 2 pins for readability - actually let's just do 2 columns
+  }
+  // Simplify: use 2-column grid
+  ph.style.gridTemplateColumns = '1fr 1fr';
+
+  // Show hostname
+  fetch('/hostname').then(r => r.text()).then(t => {
+    document.getElementById('hostinfo').textContent = t.trim();
+  }).catch(()=>{});
+
+  // Live GPIO status
+  const GPIO_LIST = [2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27];
+  const GPIO_ROLE = {
+    2:'I2C SDA', 3:'I2C SCL',
+    14:'UART TX', 15:'UART RX',
+    7:'SPI CE1', 8:'SPI CE0', 9:'SPI MISO', 10:'SPI MOSI', 11:'SPI SCLK',
+    12:'PWM', 13:'PWM', 18:'PWM', 19:'PWM',
+  };
+  const SYSTEM_GPIOS = new Set([2,3,14,15]); // always system-ish
+  const grid = document.getElementById('gpio-grid');
+  const tiles = {};
+  let bindings = [];        // cached from /bindings
+  let lastState = {};       // cached from /gpio
+
+  for (const bcm of GPIO_LIST) {
+    const el = document.createElement('div');
+    el.className = 'gtile free';
+    el.innerHTML = `
+      <div class="head"><span class="gname">GPIO ${bcm}</span><span class="gpin" id="p${bcm}">Pin —</span></div>
+      <div class="gdir" id="d${bcm}">—</div>
+      <div class="gval" id="v${bcm}">—</div>
+      <div class="gcons" id="c${bcm}"></div>`;
+    el.addEventListener('click', () => openModal(bcm));
+    grid.appendChild(el);
+    tiles[bcm] = el;
+    if (GPIO_ROLE[bcm]) {
+      document.getElementById('d'+bcm).textContent = GPIO_ROLE[bcm];
+    }
+  }
+
+  function findBinding(bcm) {
+    return bindings.find(b => b.bcm === bcm);
+  }
+
+  function updateTile(bcm, s) {
+    const el = tiles[bcm];
+    const pinEl = document.getElementById('p'+bcm);
+    const dirEl = document.getElementById('d'+bcm);
+    const valEl = document.getElementById('v'+bcm);
+    const consEl = document.getElementById('c'+bcm);
+    el.classList.remove('free','in-hi','in-lo','out','sys');
+    el.querySelectorAll('.pressed,.bound').forEach(n => n.remove());
+
+    if (!s) { el.classList.add('free'); return; }
+    pinEl.textContent = 'Pin ' + s.pin;
+
+    const dirTxt = s.direction === 'in' ? 'INPUT'
+                 : s.direction === 'out' ? 'OUTPUT'
+                 : '—';
+    dirEl.textContent = (GPIO_ROLE[bcm] ? GPIO_ROLE[bcm] + ' · ' : '') + dirTxt
+                       + (s.claimed ? ' · belegt' : '');
+    valEl.textContent = s.value === 1 ? 'HIGH (1)'
+                      : s.value === 0 ? 'LOW (0)'
+                      : '—';
+    consEl.textContent = s.consumer ? ('consumer: ' + s.consumer) : '';
+
+    if (SYSTEM_GPIOS.has(bcm) && s.claimed) {
+      el.classList.add('sys');
+    } else if (s.direction === 'out') {
+      el.classList.add('out');
+    } else if (s.direction === 'in') {
+      if (s.value === 0) {
+        el.classList.add('in-lo');
+        if (s.claimed) {
+          const tag = document.createElement('span');
+          tag.className = 'pressed';
+          tag.textContent = 'GEDRÜCKT';
+          el.appendChild(tag);
+        }
+      } else if (s.value === 1) {
+        el.classList.add('in-hi');
+      } else {
+        el.classList.add('free');
+      }
+    } else {
+      el.classList.add('free');
+    }
+
+    const b = findBinding(bcm);
+    if (b) {
+      const tag = document.createElement('span');
+      tag.className = 'bound';
+      const a = b.action || {};
+      let short = a.kind || '';
+      if (a.kind === 'press' || a.kind === 'down_up')
+        short = (a.kind === 'press' ? 'press ' : 'hold ') + `${a.page}/${a.row}/${a.column}`;
+      else if (a.kind === 'variable') short = `var ${a.variable}`;
+      tag.textContent = '→ ' + short;
+      el.appendChild(tag);
+    }
+  }
+
+  async function pollGpio() {
+    try {
+      const r = await fetch('/gpio', {cache:'no-store'});
+      const data = await r.json();
+      const errEl = document.getElementById('live-err');
+      if (data.error) {
+        errEl.style.display = 'block';
+        errEl.textContent = 'Fehler: ' + data.error;
+        return;
+      }
+      errEl.style.display = 'none';
+      lastState = data;
+      for (const bcm of GPIO_LIST) {
+        updateTile(bcm, data[String(bcm)]);
+      }
+      document.getElementById('live-ts').textContent =
+        '· aktualisiert ' + new Date().toLocaleTimeString();
+    } catch (e) {
+      const errEl = document.getElementById('live-err');
+      errEl.style.display = 'block';
+      errEl.textContent = 'Verbindung zum Status-Server verloren: ' + e;
+    }
+  }
+
+  async function loadBindings() {
+    try {
+      const r = await fetch('/bindings', {cache:'no-store'});
+      bindings = await r.json();
+    } catch (e) { bindings = []; }
+  }
+
+  // ---- Modal ----
+  const $ = id => document.getElementById(id);
+  let currentBcm = null;
+
+  function openModal(bcm) {
+    currentBcm = bcm;
+    const s = lastState[String(bcm)] || {};
+    const b = findBinding(bcm) || {};
+    const a = b.action || {};
+
+    $('modal-title').textContent = `GPIO ${bcm} (Pin ${s.pin || BCM_TO_PIN[bcm] || '?'}) binden`;
+    $('f-edge').value = b.trigger_edge || 'falling';
+    $('f-bias').value = b.bias || 'pull-up';
+    $('f-debounce').value = b.debounce_ms ?? 20;
+    $('f-kind').value = a.kind || 'press';
+    $('f-page').value = a.page ?? 1;
+    $('f-row').value  = a.row  ?? 0;
+    $('f-col').value  = a.column ?? 0;
+    $('f-varname').value  = a.variable || '';
+    $('f-varvalue').value = a.value ?? '1';
+    onKindChange();
+
+    const claimed = s.claimed && !findBinding(bcm);
+    $('modal-claim-warn').style.display = claimed ? 'block' : 'none';
+    $('modal-claim-consumer').textContent = s.consumer || '';
+
+    $('btn-delete').style.display = findBinding(bcm) ? 'inline-block' : 'none';
+    $('modal-status').textContent = '';
+    $('modal-status').className = 'status';
+    $('modal-bg').classList.add('show');
+  }
+  function closeModal() { $('modal-bg').classList.remove('show'); }
+
+  function onKindChange() {
+    const k = $('f-kind').value;
+    $('f-press-fields').style.display = (k === 'press' || k === 'down_up') ? 'block' : 'none';
+    $('f-var-fields').style.display = (k === 'variable') ? 'block' : 'none';
+  }
+  $('f-kind').addEventListener('change', onKindChange);
+
+  function readForm() {
+    const kind = $('f-kind').value;
+    const action = { kind };
+    if (kind === 'press' || kind === 'down_up') {
+      action.page = parseInt($('f-page').value, 10);
+      action.row = parseInt($('f-row').value, 10);
+      action.column = parseInt($('f-col').value, 10);
+    } else if (kind === 'variable') {
+      action.variable = $('f-varname').value.trim();
+      action.value = $('f-varvalue').value;
+    }
+    return {
+      bcm: currentBcm,
+      trigger_edge: $('f-edge').value,
+      bias: $('f-bias').value,
+      debounce_ms: parseInt($('f-debounce').value, 10) || 0,
+      enabled: true,
+      action,
+    };
+  }
+
+  async function saveBinding() {
+    const b = readForm();
+    const next = bindings.filter(x => x.bcm !== currentBcm);
+    next.push(b);
+    const r = await fetch('/bindings', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify(next),
+    });
+    const j = await r.json();
+    const st = $('modal-status');
+    if (j.ok) {
+      bindings = next;
+      st.textContent = 'Gespeichert. Watcher lädt Config automatisch neu (~2s).';
+      st.className = 'status ok';
+      setTimeout(closeModal, 900);
+    } else {
+      st.textContent = 'Fehler: ' + (j.error || 'unbekannt');
+      st.className = 'status err';
+    }
+  }
+
+  async function deleteBinding() {
+    const next = bindings.filter(x => x.bcm !== currentBcm);
+    const r = await fetch('/bindings', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify(next),
+    });
+    const j = await r.json();
+    const st = $('modal-status');
+    if (j.ok) {
+      bindings = next;
+      st.textContent = 'Gelöscht.';
+      st.className = 'status ok';
+      setTimeout(closeModal, 600);
+    } else {
+      st.textContent = 'Fehler: ' + (j.error || 'unbekannt');
+      st.className = 'status err';
+    }
+  }
+
+  async function testAction() {
+    const b = readForm();
+    const a = b.action;
+    const st = $('modal-status');
+    try {
+      if (a.kind === 'press' || a.kind === 'down_up') {
+        const sub = a.kind === 'press' ? 'press' : 'down';
+        const r = await fetch(`http://localhost:8000/api/location/${a.page}/${a.row}/${a.column}/${sub}`, {method:'POST'});
+        st.textContent = `Companion API: HTTP ${r.status}`;
+        st.className = 'status ' + (r.ok ? 'ok':'err');
+        if (a.kind === 'down_up') {
+          setTimeout(() =>
+            fetch(`http://localhost:8000/api/location/${a.page}/${a.row}/${a.column}/up`, {method:'POST'}),
+          200);
+        }
+      } else if (a.kind === 'variable') {
+        const r = await fetch(`http://localhost:8000/api/custom-variable/${encodeURIComponent(a.variable)}/value`,
+          {method:'POST', body:String(a.value)});
+        st.textContent = `Companion API: HTTP ${r.status}`;
+        st.className = 'status ' + (r.ok ? 'ok':'err');
+      }
+    } catch (e) {
+      st.textContent = 'Fehler: ' + e;
+      st.className = 'status err';
+    }
+  }
+
+  $('btn-save').addEventListener('click', saveBinding);
+  $('btn-delete').addEventListener('click', deleteBinding);
+  $('btn-test').addEventListener('click', testAction);
+  $('btn-cancel').addEventListener('click', closeModal);
+  $('modal-bg').addEventListener('click', e => { if (e.target.id === 'modal-bg') closeModal(); });
+
+  const BCM_TO_PIN = {2:3,3:5,4:7,5:29,6:31,7:26,8:24,9:21,10:19,11:23,12:32,13:33,14:8,15:10,16:36,17:11,18:12,19:35,20:38,21:40,22:15,23:16,24:18,25:22,26:37,27:13};
+
+  (async () => {
+    await loadBindings();
+    pollGpio();
+    setInterval(pollGpio, 500);
+    setInterval(loadBindings, 3000);
+  })();
+</script>
+</body>
+</html>

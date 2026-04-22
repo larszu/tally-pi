@@ -1,0 +1,14 @@
+[Unit]
+Description=Companion Pi GPIO -> Companion HTTP API watcher
+After=network.target companion.service
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /opt/pi-guide/gpio_watcher.py
+WorkingDirectory=/opt/pi-guide
+Restart=on-failure
+RestartSec=3
+User=root
+
+[Install]
+WantedBy=multi-user.target

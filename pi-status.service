@@ -1,0 +1,14 @@
+[Unit]
+Description=Companion Pi OLED status display
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/opt/pi-status/venv/bin/python /opt/pi-status/pi_status.py
+Restart=on-failure
+RestartSec=5
+User=root
+
+[Install]
+WantedBy=multi-user.target
