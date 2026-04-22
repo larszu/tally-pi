@@ -1256,6 +1256,10 @@ sudo systemctl restart getty@tty1</pre>
       }
     } catch (e) {
       st.textContent = 'Fehler: ' + (e.message || e);
+      st.className = 'status err';
+    }
+  }
+
   $('btn-save').addEventListener('click', saveBinding);
   $('btn-delete').addEventListener('click', deleteBinding);
   $('btn-test').addEventListener('click', testAction);
