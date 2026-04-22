@@ -314,13 +314,19 @@
 </section>
 
 <section id="numato">
-  <h2>🔌 Numato USB GPIO (32 Kanäle + ADC) <span id="numato-status" style="font-size:13px;font-weight:normal;margin-left:12px"></span></h2>
-  <p id="numato-hint" style="color:var(--muted)">Steck ein Numato 32-Channel USB GPIO-Modul ein und es erscheint hier automatisch. Klick einen Kanal, um eine Companion-Aktion an ihn zu binden.</p>
-  <div id="numato-grid" class="gpio-grid" style="display:none"></div>
-  <div id="numato-adc-wrap" style="display:none;margin-top:16px">
-    <h3 style="margin-top:0">Analoge Eingänge (ADC · 10 bit · 0–1023)</h3>
-    <div id="numato-adc" class="gpio-grid"></div>
-  </div>
+  <details>
+    <summary style="cursor:pointer;font-size:18px;font-weight:600;padding:6px 0">
+      🔌 Numato USB GPIO (32 Kanäle + ADC)
+      <span id="numato-status" style="font-size:13px;font-weight:normal;margin-left:12px"></span>
+      <span style="font-size:12px;color:var(--muted);margin-left:8px">(optional – später)</span>
+    </summary>
+    <p id="numato-hint" style="color:var(--muted)">Steck ein Numato 32-Channel USB GPIO-Modul ein und es erscheint hier automatisch. Klick einen Kanal, um eine Companion-Aktion an ihn zu binden.</p>
+    <div id="numato-grid" class="gpio-grid" style="display:none"></div>
+    <div id="numato-adc-wrap" style="display:none;margin-top:16px">
+      <h3 style="margin-top:0">Analoge Eingänge (ADC · 10 bit · 0–1023)</h3>
+      <div id="numato-adc" class="gpio-grid"></div>
+    </div>
+  </details>
 </section>
 
 </div><!-- /dashboard -->
@@ -900,10 +906,11 @@ sudo systemctl restart getty@tty1</pre>
   }
 
   async function pollGpio() {
+    const errEl = document.getElementById('live-err');
+    const tsEl  = document.getElementById('live-ts');
     try {
       const r = await fetch('/gpio', {cache:'no-store'});
       const data = await r.json();
-      const errEl = document.getElementById('live-err');
       if (data.error) {
         errEl.style.display = 'block';
         errEl.textContent = 'Fehler: ' + data.error;
@@ -914,12 +921,18 @@ sudo systemctl restart getty@tty1</pre>
       for (const bcm of GPIO_LIST) {
         updateTile(bcm, data[String(bcm)]);
       }
-      document.getElementById('live-ts').textContent =
-        '· aktualisiert ' + new Date().toLocaleTimeString();
+      tsEl.innerHTML = '<span style="color:var(--ok)">● verbunden</span> · aktualisiert ' + new Date().toLocaleTimeString();
     } catch (e) {
-      const errEl = document.getElementById('live-err');
-      errEl.style.display = 'block';
-      errEl.textContent = 'Verbindung zum Status-Server verloren: ' + e;
+      // Offline-Modus: Kacheln als "unbekannt" markieren, aber sichtbar lassen.
+      errEl.style.display = 'none';
+      tsEl.innerHTML = '<span style="color:var(--muted)">○ nicht verbunden – Kacheln sind Platzhalter</span>';
+      for (const bcm of GPIO_LIST) {
+        const t = tiles[bcm]; if (!t) continue;
+        t.classList.remove('in-hi','in-lo','out','sys');
+        t.classList.add('free');
+        const v = document.getElementById('v'+bcm);
+        if (v) v.textContent = '—';
+      }
     }
   }
 
@@ -995,14 +1008,14 @@ sudo systemctl restart getty@tty1</pre>
   }
 
   async function pollNumato() {
+    const statusEl = document.getElementById('numato-status');
+    const gridEl = document.getElementById('numato-grid');
+    const adcWrap = document.getElementById('numato-adc-wrap');
+    const hintEl = document.getElementById('numato-hint');
     try {
       const r = await fetch('/numato', {cache:'no-store'});
       const d = await r.json();
       numatoState = d;
-      const statusEl = document.getElementById('numato-status');
-      const gridEl = document.getElementById('numato-grid');
-      const adcWrap = document.getElementById('numato-adc-wrap');
-      const hintEl = document.getElementById('numato-hint');
       if (d.connected) {
         statusEl.innerHTML = '<span style="color:var(--ok)">● verbunden</span> — ' + (d.device || '');
         gridEl.style.display = 'grid';
@@ -1021,8 +1034,11 @@ sudo systemctl restart getty@tty1</pre>
         hintEl.style.display = 'block';
       }
     } catch (e) {
-      document.getElementById('numato-status').innerHTML =
-        '<span style="color:var(--err)">● Fehler: ' + e + '</span>';
+      // Offline: Hinweis, Grid bleibt eingeklappt/zu.
+      statusEl.innerHTML = '<span style="color:var(--muted)">○ nicht verbunden</span>';
+      gridEl.style.display = 'none';
+      adcWrap.style.display = 'none';
+      hintEl.style.display = 'block';
     }
   }
 
