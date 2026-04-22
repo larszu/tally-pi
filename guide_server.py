@@ -25,7 +25,7 @@ BCM_TO_PIN = {
 }
 
 LINE_RE = re.compile(
-    r"gpio-\d+\s+\(\s*GPIO(\d+)\s*(?:\|([^)]*?))?\s*\)"
+    r"gpio-(\d+)\s+\(\s*GPIO(\d+)\s*(?:\|([^)]*?))?\s*\)"
     r"(?:\s+(in|out))?"
     r"(?:\s+(hi|lo))?"
 )
@@ -41,12 +41,13 @@ def parse_gpio_state():
         m = LINE_RE.search(line)
         if not m:
             continue
-        bcm = int(m.group(1))
+        global_line = int(m.group(1))
+        bcm = int(m.group(2))
         if bcm not in BCM_TO_PIN:
             continue
-        consumer = (m.group(2) or "").strip()
-        direction = m.group(3) or None
-        value_s = m.group(4)
+        consumer = (m.group(3) or "").strip()
+        direction = m.group(4) or None
+        value_s = m.group(5)
         value = 1 if value_s == "hi" else (0 if value_s == "lo" else None)
         result[str(bcm)] = {
             "bcm": bcm,
@@ -55,8 +56,31 @@ def parse_gpio_state():
             "claimed": bool(consumer),
             "direction": direction,
             "value": value,
+            "global_line": global_line,
+            "sysfs": consumer == "sysfs",
         }
     return result
+
+
+def sysfs_release(bcm):
+    """Try to release a sysfs-held GPIO line. Returns (ok, message)."""
+    if bcm not in BCM_TO_PIN:
+        return False, f"unknown bcm {bcm}"
+    state = parse_gpio_state()
+    info = state.get(str(bcm)) if isinstance(state, dict) else None
+    if not info or "global_line" not in info:
+        return False, "gpio not found in debug/gpio"
+    if info.get("consumer") != "sysfs":
+        return False, f"not held by sysfs (consumer={info.get('consumer') or 'none'})"
+    line = info["global_line"]
+    unexport = Path("/sys/class/gpio/unexport")
+    if not unexport.exists():
+        return False, "/sys/class/gpio/unexport not present"
+    try:
+        unexport.write_text(f"{line}\n")
+        return True, f"unexported gpio {line} (GPIO{bcm})"
+    except Exception as e:
+        return False, f"unexport failed: {e}"
 
 
 def load_bindings():
@@ -220,6 +244,18 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                     validate_binding(b)
                 save_bindings(data)
                 self._send_json({"ok": True, "count": len(data)})
+            except Exception as e:
+                self._send_json({"ok": False, "error": str(e)}, code=400)
+            return
+        if self.path == "/sysfs-release":
+            body = self._read_body()
+            try:
+                data = json.loads(body or b"{}")
+                bcm = data.get("bcm")
+                if not isinstance(bcm, int):
+                    raise ValueError("bcm must be int")
+                ok, msg = sysfs_release(bcm)
+                self._send_json({"ok": ok, "message": msg}, code=200 if ok else 409)
             except Exception as e:
                 self._send_json({"ok": False, "error": str(e)}, code=400)
             return

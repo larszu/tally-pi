@@ -299,6 +299,13 @@ sudo systemctl restart getty@tty1</pre>
     <div id="modal-claim-warn" class="card warn" style="display:none;margin:8px 0 0">
       <strong>Achtung:</strong> Dieser Pin ist bereits belegt (<span id="modal-claim-consumer"></span>).
       Falls er in Companions GPIO-Modul konfiguriert ist, deaktiviere ihn dort, sonst kollidieren beide Systeme.
+      <div id="modal-sysfs-row" style="display:none;margin-top:8px">
+        Der Pin ist per <code>sysfs</code> (klassisches <code>/sys/class/gpio</code>) exportiert &mdash;
+        das blockiert libgpiod. Das ist fast immer Companions <em>raspberry-gpio</em>-Modul.
+        Dauerhaft beheben: in Companion unter <em>Connections &rarr; Raspberry Pi GPIO</em> den Pin
+        deaktivieren. Einmalig freigeben:
+        <button class="btn sec" id="btn-sysfs-release" style="margin-left:8px">sysfs jetzt freigeben</button>
+      </div>
     </div>
 
     <label>Wann auslösen?</label>
@@ -652,10 +659,12 @@ sudo systemctl restart getty@tty1</pre>
       const claimed = s.claimed && !findBinding('pi', key);
       $('modal-claim-warn').style.display = claimed ? 'block' : 'none';
       $('modal-claim-consumer').textContent = s.consumer || '';
+      $('modal-sysfs-row').style.display = (claimed && s.sysfs) ? 'block' : 'none';
       $('f-bias-wrap').style.display = 'block';
     } else {
       $('modal-title').textContent = `Numato USB · Kanal ${key} binden`;
       $('modal-claim-warn').style.display = 'none';
+      $('modal-sysfs-row').style.display = 'none';
       $('f-bias-wrap').style.display = 'none'; // bias fixed by module firmware
     }
 
@@ -784,6 +793,35 @@ sudo systemctl restart getty@tty1</pre>
   $('btn-delete').addEventListener('click', deleteBinding);
   $('btn-test').addEventListener('click', testAction);
   $('btn-cancel').addEventListener('click', closeModal);
+  $('btn-sysfs-release').addEventListener('click', async () => {
+    if (currentSource !== 'pi') return;
+    const st = $('modal-status');
+    st.textContent = 'Gebe sysfs-Sperre frei …';
+    st.className = 'status';
+    try {
+      const r = await fetch('/sysfs-release', {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({bcm: currentKey}),
+      });
+      const j = await r.json();
+      if (j.ok) {
+        st.textContent = j.message || 'freigegeben';
+        st.className = 'status ok';
+        setTimeout(() => { pollGpio(); }, 300);
+        setTimeout(() => {
+          const s = lastState[String(currentKey)] || {};
+          $('modal-claim-warn').style.display = (s.claimed && !findBinding('pi', currentKey)) ? 'block' : 'none';
+          $('modal-sysfs-row').style.display = (s.claimed && s.sysfs) ? 'block' : 'none';
+        }, 800);
+      } else {
+        st.textContent = 'Fehler: ' + (j.message || j.error || 'unbekannt');
+        st.className = 'status err';
+      }
+    } catch (e) {
+      st.textContent = 'Fehler: ' + e;
+      st.className = 'status err';
+    }
+  });
   $('modal-bg').addEventListener('click', e => { if (e.target.id === 'modal-bg') closeModal(); });
 
   const BCM_TO_PIN = {2:3,3:5,4:7,5:29,6:31,7:26,8:24,9:21,10:19,11:23,12:32,13:33,14:8,15:10,16:36,17:11,18:12,19:35,20:38,21:40,22:15,23:16,24:18,25:22,26:37,27:13};
