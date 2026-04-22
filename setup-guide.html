@@ -92,6 +92,24 @@
   .modal .status.ok { color:var(--ok); }
   .modal .status.err { color:var(--err); }
 
+  /* Compact collapsible topbar */
+  #topbar { position:sticky; top:0; z-index:20; background:#0b0e13; border-bottom:1px solid #2a3548; }
+  #topbar-mini { display:flex; align-items:center; gap:8px; padding:4px 10px; font-size:12px; }
+  #topbar-mini #mini-ip { flex:1; color:var(--fg); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; font-family:Consolas,monospace; }
+  #topbar-mini button { background:#222937; color:var(--fg); border:1px solid #2a3548; border-radius:4px; padding:2px 8px; font-size:12px; cursor:pointer; }
+  #topbar-mini button:hover { background:#2f3a4e; }
+  #topbar-full { display:none; border-top:1px solid #2a3548; }
+  #topbar.open #topbar-full { display:block; }
+  #topbar.open #mini-toggle::after { content:" \25B2"; }
+  #mini-toggle::after { content:" \25BC"; font-size:10px; }
+  #topbar header, #topbar nav { position:static; }
+
+  /* GPIO filter toolbar */
+  .gpio-toolbar { display:flex; align-items:center; gap:12px; margin:8px 0; font-size:13px; flex-wrap:wrap; }
+  .gpio-toolbar label { display:inline-flex; align-items:center; gap:6px; cursor:pointer; user-select:none; }
+  .gpio-toolbar input[type=checkbox] { width:16px; height:16px; cursor:pointer; }
+  .gtile.hidden-pin { display:none !important; }
+
   /* Accordion */
   section.acc { padding:0; overflow:hidden; }
   section.acc > h2.acc-head {
@@ -142,21 +160,29 @@
 </style>
 </head>
 <body>
-<header>
-  <h1>Companion Pi · GPIO Setup Guide</h1>
-  <div class="sub">Raspberry Pi 5 · Bitfocus Companion · <span id="hostinfo">companionpi</span></div>
-  <div class="sub" id="ipinfo" style="margin-top:2px">IP: …</div>
-</header>
-<nav>
-  <a href="#live">⚡ Live-Status</a>
-  <a href="#numato">🔌 Numato USB</a>
-  <a href="#pinout">1. Pinout</a>
-  <a href="#button">2. Taster anschließen</a>
-  <a href="#module">3. GPIO-Modul konfigurieren</a>
-  <a href="#atem">4. ATEM Aux-Beispiel</a>
-  <a href="#troubleshoot">5. Troubleshooting</a>
-  <a href="http://localhost:8000/" class="btn">Companion UI →</a>
-</nav>
+<div id="topbar">
+  <div id="topbar-mini">
+    <span id="mini-ip">…</span>
+    <button id="mini-toggle" type="button" aria-label="Menü">Menü</button>
+  </div>
+  <div id="topbar-full">
+    <header>
+      <h1>Companion Pi · GPIO Setup Guide</h1>
+      <div class="sub">Raspberry Pi 5 · Bitfocus Companion · <span id="hostinfo">companionpi</span></div>
+      <div class="sub" id="ipinfo" style="margin-top:2px">IP: …</div>
+    </header>
+    <nav>
+      <a href="#live">⚡ Live-Status</a>
+      <a href="#numato">🔌 Numato USB</a>
+      <a href="#pinout">1. Pinout</a>
+      <a href="#button">2. Taster anschließen</a>
+      <a href="#module">3. GPIO-Modul konfigurieren</a>
+      <a href="#atem">4. ATEM Aux-Beispiel</a>
+      <a href="#troubleshoot">5. Troubleshooting</a>
+      <a href="http://localhost:8000/" class="btn">Companion UI →</a>
+    </nav>
+  </div>
+</div>
 <main>
 
 <section id="live">
@@ -169,6 +195,9 @@
     <span><span class="dot" style="background:#60a5fa"></span>Output</span>
     <span><span class="dot" style="background:#a78bfa"></span>System (I2C / SPI / UART)</span>
     <span><span class="dot" style="background:#4da3ff"></span>Gebunden an Companion-Aktion</span>
+  </div>
+  <div class="gpio-toolbar">
+    <label><input type="checkbox" id="filter-usable" checked> Nur Companion-nutzbare Pins <span style="color:var(--muted);font-size:12px">(I²C/UART/SPI ausblenden)</span></label>
   </div>
   <div class="gpio-grid" id="gpio-grid"></div>
   <div id="live-err" class="card err" style="display:none;margin-top:12px"></div>
@@ -455,7 +484,6 @@ sudo systemctl restart getty@tty1</pre>
       const r = await fetch('/ipconfig', {cache:'no-store'});
       const d = await r.json();
       document.getElementById('hostinfo').textContent = d.hostname || 'companionpi';
-      // Prefer eth0 first in display; mark offline clearly
       const ifs = (d.interfaces || []).slice().sort((a,b) => {
         if (a.name === 'eth0') return -1;
         if (b.name === 'eth0') return 1;
@@ -469,12 +497,45 @@ sudo systemctl restart getty@tty1</pre>
       });
       document.getElementById('ipinfo').innerHTML =
         parts.length ? parts.join(' &nbsp;·&nbsp; ') : 'keine IP';
+      // Mini strip: short form, eth0 first, only addresses
+      const mini = ifs.map(i => {
+        const addrs = (i.addresses || []).filter(a => !a.startsWith('169.254.'));
+        const label = i.name === 'eth0' ? 'LAN' : (i.name === 'wlan0' ? 'WLAN' : i.name);
+        if (!addrs.length) return `${label} —`;
+        return `${label} ${addrs[0]}`;
+      }).join(' · ');
+      document.getElementById('mini-ip').textContent =
+        (d.hostname || 'companionpi') + ' · ' + (mini || 'offline');
     } catch (e) {
       document.getElementById('ipinfo').textContent = 'IP: (offline)';
+      document.getElementById('mini-ip').textContent = '(offline)';
     }
   }
   loadIpConfig();
   setInterval(loadIpConfig, 5000);
+
+  // Collapsible topbar
+  (function initTopbar() {
+    const tb = document.getElementById('topbar');
+    const btn = document.getElementById('mini-toggle');
+    // Default: collapsed on narrow screens, open on wide
+    const saved = localStorage.getItem('topbar-open');
+    const openDefault = saved === null ? (window.innerWidth > 700) : (saved === '1');
+    if (openDefault) tb.classList.add('open');
+    btn.addEventListener('click', () => {
+      tb.classList.toggle('open');
+      localStorage.setItem('topbar-open', tb.classList.contains('open') ? '1' : '0');
+    });
+    // Close topbar when a nav link is clicked on narrow screens
+    tb.querySelectorAll('nav a[href^="#"]').forEach(a => {
+      a.addEventListener('click', () => {
+        if (window.innerWidth <= 640) {
+          tb.classList.remove('open');
+          localStorage.setItem('topbar-open', '0');
+        }
+      });
+    });
+  })();
 
   // Turn every <section id="…"> into a collapsible accordion.
   // Default open: live + numato. Others closed. Hash in URL auto-opens.
@@ -521,6 +582,8 @@ sudo systemctl restart getty@tty1</pre>
     12:'PWM', 13:'PWM', 18:'PWM', 19:'PWM',
   };
   const SYSTEM_GPIOS = new Set([2,3,14,15]); // always system-ish
+  // Pins that are NOT useful as generic Companion GPIO (busy with I2C/UART/SPI by default)
+  const NON_USABLE_GPIOS = new Set([2,3, 7,8,9,10,11, 14,15]);
   const grid = document.getElementById('gpio-grid');
   const tiles = {};
   let bindings = [];        // cached from /bindings
@@ -530,6 +593,7 @@ sudo systemctl restart getty@tty1</pre>
   for (const bcm of GPIO_LIST) {
     const el = document.createElement('div');
     el.className = 'gtile free';
+    if (NON_USABLE_GPIOS.has(bcm)) el.dataset.sysPin = '1';
     el.innerHTML = `
       <div class="head"><span class="gname">GPIO ${bcm}</span><span class="gpin" id="p${bcm}">Pin —</span></div>
       <div class="gdir" id="d${bcm}">—</div>
@@ -542,6 +606,24 @@ sudo systemctl restart getty@tty1</pre>
       document.getElementById('d'+bcm).textContent = GPIO_ROLE[bcm];
     }
   }
+
+  // Filter toggle: hide system-role pins when "usable only" is on
+  (function initFilter() {
+    const cb = document.getElementById('filter-usable');
+    const saved = localStorage.getItem('filter-usable');
+    if (saved !== null) cb.checked = saved === '1';
+    function apply() {
+      for (const bcm of GPIO_LIST) {
+        const t = tiles[bcm];
+        if (!t) continue;
+        if (cb.checked && NON_USABLE_GPIOS.has(bcm)) t.classList.add('hidden-pin');
+        else t.classList.remove('hidden-pin');
+      }
+      localStorage.setItem('filter-usable', cb.checked ? '1' : '0');
+    }
+    cb.addEventListener('change', apply);
+    apply();
+  })();
 
   function findBinding(source, key) {
     if (source === 'pi') return bindings.find(b => (b.source||'pi')==='pi' && b.bcm === key);
