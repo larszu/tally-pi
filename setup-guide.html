@@ -276,13 +276,13 @@
 </div>
 
 <div class="view-tabs" role="tablist">
-  <button type="button" data-view="dashboard" class="active" role="tab">
+  <button type="button" data-view="dashboard" class="active" role="tab" onclick="window.showView&&window.showView('dashboard')">
     <span class="ic">⚡</span><span>Status</span>
   </button>
-  <button type="button" data-view="setup" role="tab">
+  <button type="button" data-view="setup" role="tab" onclick="window.showView&&window.showView('setup')">
     <span class="ic">🧙</span><span>Einrichten</span>
   </button>
-  <button type="button" data-view="help" role="tab">
+  <button type="button" data-view="help" role="tab" onclick="window.showView&&window.showView('help')">
     <span class="ic">📖</span><span>Hilfe</span>
   </button>
   <a class="companion-btn" href="http://localhost:8000/" target="_blank" title="Companion Web-UI öffnen">
@@ -725,6 +725,22 @@ sudo systemctl restart getty@tty1</pre>
   }
   loadIpConfig();
   setInterval(loadIpConfig, 5000);
+
+  // ---------- View tabs (Dashboard / Setup / Help) — defined EARLY so tabs always work ----------
+  window.showView = function(name) {
+    document.querySelectorAll('.view[data-view]').forEach(v =>
+      v.classList.toggle('active', v.dataset.view === name));
+    document.querySelectorAll('.view-tabs button[data-view]').forEach(b =>
+      b.classList.toggle('active', b.dataset.view === name));
+    try { localStorage.setItem('active-view', name); } catch(e) {}
+    window.scrollTo({top:0, behavior:'instant'});
+  };
+  (function restoreView() {
+    try {
+      const saved = localStorage.getItem('active-view');
+      if (saved) window.showView(saved);
+    } catch(e) {}
+  })();
 
   // Collapsible topbar
   (function initTopbar() {
@@ -1277,22 +1293,7 @@ sudo systemctl restart getty@tty1</pre>
 
   const BCM_TO_PIN = {2:3,3:5,4:7,5:29,6:31,7:26,8:24,9:21,10:19,11:23,12:32,13:33,14:8,15:10,16:36,17:11,18:12,19:35,20:38,21:40,22:15,23:16,24:18,25:22,26:37,27:13};
 
-  // ---------- View tabs (Dashboard / Setup / Help) ----------
-  (function initViewTabs() {
-    const tabs = document.querySelectorAll('.view-tabs button[data-view]');
-    const views = document.querySelectorAll('.view[data-view]');
-    function show(name) {
-      views.forEach(v => v.classList.toggle('active', v.dataset.view === name));
-      tabs.forEach(b => b.classList.toggle('active', b.dataset.view === name));
-      localStorage.setItem('active-view', name);
-      window.scrollTo({top:0, behavior:'instant'});
-    }
-    tabs.forEach(b => b.addEventListener('click', () => show(b.dataset.view)));
-    const saved = localStorage.getItem('active-view');
-    if (saved) show(saved);
-    // Expose for deep-linking from buttons
-    window.showView = show;
-  })();
+  // ---------- View tabs already wired up at the top of the script ----------
 
   // ---------- Setup wizard (3 use-cases, 4 steps) ----------
   (function initSetupWizard() {
