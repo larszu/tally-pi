@@ -91,6 +91,54 @@
   .modal .status { margin-top:10px; font-size:13px; }
   .modal .status.ok { color:var(--ok); }
   .modal .status.err { color:var(--err); }
+
+  /* Accordion */
+  section.acc { padding:0; overflow:hidden; }
+  section.acc > h2.acc-head {
+    margin:0; padding:16px 20px; cursor:pointer; user-select:none;
+    display:flex; align-items:center; gap:10px; border-bottom:1px solid transparent;
+  }
+  section.acc > h2.acc-head:hover { background:#1f2838; }
+  section.acc > h2.acc-head::before {
+    content:"▸"; display:inline-block; font-size:14px; color:var(--muted);
+    transition:transform .15s; width:14px; text-align:center;
+  }
+  section.acc.open > h2.acc-head::before { transform:rotate(90deg); }
+  section.acc.open > h2.acc-head { border-bottom-color:#2a3548; }
+  section.acc > .acc-body { padding:16px 20px 20px; display:none; }
+  section.acc.open > .acc-body { display:block; }
+
+  /* Responsive — portrait / narrow screens (Waveshare 11.9" = 320×1480) */
+  @media (max-width: 640px) {
+    body { font-size:14px; }
+    header { padding:10px 12px; }
+    header h1 { font-size:16px; }
+    header .sub { font-size:11px; }
+    nav { padding:6px 10px; gap:4px; top:58px; }
+    nav a { padding:4px 8px; font-size:12px; }
+    main { padding:10px; }
+    section.acc > h2.acc-head { padding:10px 12px; font-size:15px; }
+    section.acc > .acc-body { padding:10px 12px 14px; }
+    .gpio-grid { grid-template-columns:repeat(auto-fill,minmax(140px,1fr)); gap:6px; }
+    .gtile { padding:6px 8px; font-size:11px; }
+    .gtile .gname { font-size:13px; }
+    .gtile .gval  { font-size:14px; }
+    .gtile .gpin, .gtile .gdir, .gtile .gcons { font-size:10px; }
+    .pinheader { grid-template-columns:auto auto; padding:8px; }
+    .pin { padding:6px 8px; font-size:11px; }
+    .cols { grid-template-columns:1fr !important; gap:12px; }
+    pre, code { font-size:11px; }
+    .modal { padding:14px; }
+  }
+  /* Very narrow (Waveshare bar) */
+  @media (max-width: 360px) {
+    .gpio-grid { grid-template-columns:repeat(2,1fr); gap:5px; }
+    .gtile { padding:5px 6px; }
+    .gtile .gname { font-size:12px; }
+    .gtile .gval  { font-size:13px; }
+    nav a { padding:3px 6px; font-size:11px; }
+    header h1 { font-size:14px; }
+  }
 </style>
 </head>
 <body>
@@ -407,18 +455,62 @@ sudo systemctl restart getty@tty1</pre>
       const r = await fetch('/ipconfig', {cache:'no-store'});
       const d = await r.json();
       document.getElementById('hostinfo').textContent = d.hostname || 'companionpi';
-      const parts = (d.interfaces || []).map(i => {
-        const addrs = (i.addresses || []).join(', ') || '—';
-        return `<span style="color:var(--fg)">${i.name}</span>: ${addrs}`;
+      // Prefer eth0 first in display; mark offline clearly
+      const ifs = (d.interfaces || []).slice().sort((a,b) => {
+        if (a.name === 'eth0') return -1;
+        if (b.name === 'eth0') return 1;
+        return (a.name||'').localeCompare(b.name||'');
+      });
+      const parts = ifs.map(i => {
+        const addrs = (i.addresses || []).filter(a => !a.startsWith('169.254.'));
+        const label = i.name === 'eth0' ? 'LAN' : (i.name === 'wlan0' ? 'WLAN' : i.name);
+        if (!addrs.length) return `<span style="color:var(--muted)">${label}: —</span>`;
+        return `<span style="color:var(--fg)">${label} (${i.name})</span>: <strong>${addrs.join(', ')}</strong>`;
       });
       document.getElementById('ipinfo').innerHTML =
-        parts.length ? parts.join(' · ') : 'keine IP';
+        parts.length ? parts.join(' &nbsp;·&nbsp; ') : 'keine IP';
     } catch (e) {
       document.getElementById('ipinfo').textContent = 'IP: (offline)';
     }
   }
   loadIpConfig();
   setInterval(loadIpConfig, 5000);
+
+  // Turn every <section id="…"> into a collapsible accordion.
+  // Default open: live + numato. Others closed. Hash in URL auto-opens.
+  (function initAccordions() {
+    const defaultOpen = new Set(['live', 'numato']);
+    const sections = document.querySelectorAll('main section[id]');
+    sections.forEach(sec => {
+      const h2 = sec.querySelector(':scope > h2');
+      if (!h2) return;
+      sec.classList.add('acc');
+      h2.classList.add('acc-head');
+      // Wrap remaining siblings into .acc-body
+      const body = document.createElement('div');
+      body.className = 'acc-body';
+      let n = h2.nextSibling;
+      while (n) {
+        const next = n.nextSibling;
+        body.appendChild(n);
+        n = next;
+      }
+      sec.appendChild(body);
+      if (defaultOpen.has(sec.id)) sec.classList.add('open');
+      h2.addEventListener('click', () => sec.classList.toggle('open'));
+    });
+    function openByHash() {
+      const id = (location.hash || '').replace('#','');
+      if (!id) return;
+      const sec = document.getElementById(id);
+      if (sec && sec.classList.contains('acc')) {
+        sec.classList.add('open');
+        setTimeout(() => sec.scrollIntoView({behavior:'smooth', block:'start'}), 50);
+      }
+    }
+    window.addEventListener('hashchange', openByHash);
+    openByHash();
+  })();
 
   // Live GPIO status
   const GPIO_LIST = [2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27];
