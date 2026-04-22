@@ -732,16 +732,15 @@ sudo systemctl restart getty@tty1</pre>
       tb.classList.toggle('open');
       localStorage.setItem('topbar-open', tb.classList.contains('open') ? '1' : '0');
     });
-    // Close topbar when a nav link is clicked on narrow screens
-    tb.querySelectorAll('nav a[href^="#"]').forEach(a => {
-      a.addEventListener('click', () => {
-        if (window.innerWidth <= 640) {
-          tb.classList.remove('open');
-          localStorage.setItem('topbar-open', '0');
-        }
-      });
-    });
+    // (No nav links in the topbar anymore; view-tabs handle navigation.)
   })();
+
+  // Tiny HTML-escape helper for values we inject via innerHTML
+  function escHtml(s) {
+    return String(s ?? '').replace(/[&<>"']/g, c => ({
+      '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
+    }[c]));
+  }
 
   // Turn every <section id="…"> into a collapsible accordion.
   // Default: all sections open (each view has only 1-3 sections).
@@ -770,10 +769,14 @@ sudo systemctl restart getty@tty1</pre>
       const id = (location.hash || '').replace('#','');
       if (!id) return;
       const sec = document.getElementById(id);
-      if (sec && sec.classList.contains('acc')) {
-        sec.classList.add('open');
-        setTimeout(() => sec.scrollIntoView({behavior:'smooth', block:'start'}), 50);
+      if (!sec) return;
+      // If the target section lives inside an inactive view, switch view first.
+      const hostView = sec.closest('.view[data-view]');
+      if (hostView && !hostView.classList.contains('active') && window.showView) {
+        window.showView(hostView.dataset.view);
       }
+      if (sec.classList.contains('acc')) sec.classList.add('open');
+      setTimeout(() => sec.scrollIntoView({behavior:'smooth', block:'start'}), 80);
     }
     window.addEventListener('hashchange', openByHash);
     openByHash();
@@ -923,7 +926,8 @@ sudo systemctl restart getty@tty1</pre>
   async function loadBindings() {
     try {
       const r = await fetch('/bindings', {cache:'no-store'});
-      bindings = await r.json();
+      const j = await r.json();
+      bindings = Array.isArray(j) ? j : [];
     } catch (e) { bindings = []; }
   }
 
@@ -1102,43 +1106,80 @@ sudo systemctl restart getty@tty1</pre>
     return b.source === 'numato' && b.channel === currentKey;
   }
 
+  let modalInFlight = false;
+
+  function validateActionForModal(a) {
+    if (a.kind === 'press' || a.kind === 'down_up') {
+      for (const k of ['page','row','column']) {
+        if (!Number.isFinite(a[k]) || a[k] < 0) return `${k} muss eine nicht-negative Ganzzahl sein.`;
+      }
+    } else if (a.kind === 'variable') {
+      if (!/^[A-Za-z0-9_]{1,64}$/.test(a.variable || '')) {
+        return 'Variablenname: nur A–Z, 0–9, _ (max 64).';
+      }
+    }
+    return null;
+  }
+
   async function saveBinding() {
+    if (modalInFlight) return;
     const b = readForm();
-    const next = bindings.filter(x => !sameKey(x));
-    next.push(b);
-    const r = await fetch('/bindings', {
-      method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify(next),
-    });
-    const j = await r.json();
     const st = $('modal-status');
-    if (j.ok) {
-      bindings = next;
-      st.textContent = 'Gespeichert. Watcher lädt Config automatisch neu (~2s).';
-      st.className = 'status ok';
-      setTimeout(closeModal, 900);
-    } else {
-      st.textContent = 'Fehler: ' + (j.error || 'unbekannt');
+    const err = validateActionForModal(b.action);
+    if (err) { st.textContent = err; st.className = 'status err'; return; }
+    modalInFlight = true;
+    try {
+      await loadBindings(); // pull latest to minimize lost-update window
+      const next = bindings.filter(x => !sameKey(x));
+      next.push(b);
+      const r = await fetch('/bindings', {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify(next),
+      });
+      const j = await r.json();
+      if (j.ok) {
+        bindings = next;
+        st.textContent = 'Gespeichert. Watcher lädt Config automatisch neu (~2s).';
+        st.className = 'status ok';
+        setTimeout(closeModal, 900);
+      } else {
+        st.textContent = 'Fehler: ' + (j.error || 'unbekannt');
+        st.className = 'status err';
+      }
+    } catch (e) {
+      st.textContent = 'Fehler: ' + (e.message || e);
       st.className = 'status err';
+    } finally {
+      modalInFlight = false;
     }
   }
 
   async function deleteBinding() {
-    const next = bindings.filter(x => !sameKey(x));
-    const r = await fetch('/bindings', {
-      method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify(next),
-    });
-    const j = await r.json();
+    if (modalInFlight) return;
     const st = $('modal-status');
-    if (j.ok) {
-      bindings = next;
-      st.textContent = 'Gelöscht.';
-      st.className = 'status ok';
-      setTimeout(closeModal, 600);
-    } else {
-      st.textContent = 'Fehler: ' + (j.error || 'unbekannt');
+    modalInFlight = true;
+    try {
+      await loadBindings();
+      const next = bindings.filter(x => !sameKey(x));
+      const r = await fetch('/bindings', {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify(next),
+      });
+      const j = await r.json();
+      if (j.ok) {
+        bindings = next;
+        st.textContent = 'Gelöscht.';
+        st.className = 'status ok';
+        setTimeout(closeModal, 600);
+      } else {
+        st.textContent = 'Fehler: ' + (j.error || 'unbekannt');
+        st.className = 'status err';
+      }
+    } catch (e) {
+      st.textContent = 'Fehler: ' + (e.message || e);
       st.className = 'status err';
+    } finally {
+      modalInFlight = false;
     }
   }
 
@@ -1146,29 +1187,43 @@ sudo systemctl restart getty@tty1</pre>
     const b = readForm();
     const a = b.action;
     const st = $('modal-status');
+    // Companion runs on :8000, we are on :8080 -> cross-origin.
+    // Companion's /api returns no CORS headers, so fetch() throws TypeError
+    // even when the request *was* delivered and executed. We handle that
+    // case and tell the user the request was sent but status is unreadable.
+    async function apiCall(url, opts) {
+      try {
+        const r = await fetch(url, opts);
+        return { ok:r.ok, status:r.status };
+      } catch (e) {
+        return { ok:null, status:null, err:e };
+      }
+    }
     try {
+      let res;
       if (a.kind === 'press' || a.kind === 'down_up') {
         const sub = a.kind === 'press' ? 'press' : 'down';
-        const r = await fetch(`http://localhost:8000/api/location/${a.page}/${a.row}/${a.column}/${sub}`, {method:'POST'});
-        st.textContent = `Companion API: HTTP ${r.status}`;
-        st.className = 'status ' + (r.ok ? 'ok':'err');
+        res = await apiCall(`http://localhost:8000/api/location/${a.page}/${a.row}/${a.column}/${sub}`, {method:'POST'});
         if (a.kind === 'down_up') {
           setTimeout(() =>
-            fetch(`http://localhost:8000/api/location/${a.page}/${a.row}/${a.column}/up`, {method:'POST'}),
+            apiCall(`http://localhost:8000/api/location/${a.page}/${a.row}/${a.column}/up`, {method:'POST'}),
           200);
         }
       } else if (a.kind === 'variable') {
-        const r = await fetch(`http://localhost:8000/api/custom-variable/${encodeURIComponent(a.variable)}/value`,
+        res = await apiCall(`http://localhost:8000/api/custom-variable/${encodeURIComponent(a.variable)}/value`,
           {method:'POST', body:String(a.value)});
-        st.textContent = `Companion API: HTTP ${r.status}`;
-        st.className = 'status ' + (r.ok ? 'ok':'err');
+      }
+      if (res == null) {
+        st.textContent = 'Unbekannte Aktion.'; st.className = 'status err';
+      } else if (res.ok === null) {
+        st.textContent = 'Request abgesendet (Antwort durch CORS blockiert).';
+        st.className = 'status ok';
+      } else {
+        st.textContent = `Companion API: HTTP ${res.status}`;
+        st.className = 'status ' + (res.ok ? 'ok':'err');
       }
     } catch (e) {
-      st.textContent = 'Fehler: ' + e;
-      st.className = 'status err';
-    }
-  }
-
+      st.textContent = 'Fehler: ' + (e.message || e);
   $('btn-save').addEventListener('click', saveBinding);
   $('btn-delete').addEventListener('click', deleteBinding);
   $('btn-test').addEventListener('click', testAction);
@@ -1284,30 +1339,32 @@ sudo systemctl restart getty@tty1</pre>
         document.querySelectorAll('#uc-picker button').forEach(b => b.classList.remove('active'));
         btn.classList.add('active');
         currentUC = btn.dataset.uc;
+        // If the user is already past step 1, refresh step 3/4 so labels & forms match.
+        if (currentStep >= 3) updateStep3Labels();
+        if (currentStep === 4) refreshStep4();
       });
     });
 
     // GPIO select -> update svg + step-3 labels + mirror into mw-gpio
-    gpioSel.addEventListener('change', () => {
+    function syncGpioUI() {
       const bcm = parseInt(gpioSel.value, 10);
       document.getElementById('wz-svg-gpio').textContent =
         `GPIO ${bcm} (Pin ${BCM_TO_PIN[bcm] || '?'})`;
       document.getElementById('wz-pin-hint').textContent =
         `Du brauchst zwei Pins: GPIO ${bcm} (Pin ${BCM_TO_PIN[bcm] || '?'}) und irgendeinen GND-Pin.`;
-      // mirror for hold-aux wizard
       const mw = document.getElementById('mw-gpio');
-      if (mw) {
-        let opt = mw.querySelector(`option[value="${bcm}"]`);
-        if (!opt) {
-          opt = document.createElement('option');
-          opt.value = bcm; opt.textContent = 'GPIO ' + bcm;
-          mw.appendChild(opt);
+      if (mw && mw.options.length > 0) {
+        // mw-gpio is already populated by initMwWizard; just mirror the selection.
+        const exists = Array.from(mw.options).some(o => +o.value === bcm);
+        if (exists) {
+          mw.value = String(bcm);
+          mw.dispatchEvent(new Event('change'));
         }
-        mw.value = bcm;
-        mw.dispatchEvent(new Event('change'));
       }
-    });
-    gpioSel.dispatchEvent(new Event('change'));
+    }
+    gpioSel.addEventListener('change', syncGpioUI);
+    // Defer the initial sync until after initMwWizard populated mw-gpio.
+    setTimeout(syncGpioUI, 0);
 
     function updateStep3Labels() {
       const bcm = parseInt(gpioSel.value, 10);
@@ -1346,12 +1403,17 @@ sudo systemctl restart getty@tty1</pre>
     }
 
     function buildToggleSteps(bcm) {
-      const label = (document.getElementById('wzt-label').value || 'atem').trim();
+      const rawLabel = (document.getElementById('wzt-label').value || 'atem').trim();
+      // Strip anything that would break a $(label:var) reference.
+      const label = escHtml(rawLabel.replace(/[^A-Za-z0-9_-]/g, '') || 'atem');
       const aux = parseInt(document.getElementById('wzt-aux').value, 10);
       const a = parseInt(document.getElementById('wzt-a').value, 10);
       const b = parseInt(document.getElementById('wzt-b').value, 10);
+      const warn = (a === b)
+        ? `<div class="card warn" style="margin:8px 0">Quelle A und Quelle B sind gleich (${a}). Der Toggle schaltet dann nichts um.</div>`
+        : '';
       const varState = `aux${aux}_state`;
-      document.getElementById('wzt-steps').innerHTML = `
+      document.getElementById('wzt-steps').innerHTML = warn + `
         <h4 style="margin:14px 0 8px">1. Custom-Variable anlegen</h4>
         <ol class="steps">
           <li>Links auf <strong>Variables</strong> → <strong>Custom variables</strong>.</li>
@@ -1383,19 +1445,29 @@ sudo systemctl restart getty@tty1</pre>
     });
 
     // "Jetzt binden" button (press use-case)
+    let bindInFlight = false;
     document.getElementById('wz-bind-press').addEventListener('click', async () => {
+      if (bindInFlight) return;
       const bcm = parseInt(gpioSel.value, 10);
       const st = document.getElementById('wz-bind-status');
+
+      // Validate numeric inputs
+      const page = parseInt(document.getElementById('wz-page').value, 10);
+      const row  = parseInt(document.getElementById('wz-row').value,  10);
+      const col  = parseInt(document.getElementById('wz-col').value, 10);
+      if (!Number.isFinite(page) || page < 0 ||
+          !Number.isFinite(row)  || row  < 0 ||
+          !Number.isFinite(col)  || col  < 0) {
+        st.innerHTML = `<span style="color:var(--err)">Page/Row/Column müssen nicht-negative Ganzzahlen sein.</span>`;
+        return;
+      }
+
       const binding = {
         source:'pi', bcm,
         trigger_edge:'falling', bias:'pull-up', debounce_ms:20, enabled:true,
-        action: {
-          kind:'press',
-          page: parseInt(document.getElementById('wz-page').value, 10) || 1,
-          row:  parseInt(document.getElementById('wz-row').value,  10) || 0,
-          column: parseInt(document.getElementById('wz-col').value,10) || 0,
-        },
+        action: { kind:'press', page, row, column: col },
       };
+      bindInFlight = true;
       try {
         await loadBindings();
         const next = bindings.filter(b => !((b.source||'pi')==='pi' && b.bcm === bcm));
@@ -1407,12 +1479,14 @@ sudo systemctl restart getty@tty1</pre>
         const j = await r.json();
         if (j.ok) {
           bindings = next;
-          st.innerHTML = `<span style="color:var(--ok)">✓ Gebunden. Taster drücken → Button ${binding.action.page}/${binding.action.row}/${binding.action.column}.</span>`;
+          st.innerHTML = `<span style="color:var(--ok)">✓ Gebunden. Taster drücken → Button ${page}/${row}/${col}.</span>`;
         } else {
-          st.innerHTML = `<span style="color:var(--err)">Fehler: ${j.error||'unbekannt'}</span>`;
+          st.innerHTML = `<span style="color:var(--err)">Fehler: ${escHtml(j.error||'unbekannt')}</span>`;
         }
       } catch (e) {
-        st.innerHTML = `<span style="color:var(--err)">Fehler: ${e}</span>`;
+        st.innerHTML = `<span style="color:var(--err)">Fehler: ${escHtml(e.message || e)}</span>`;
+      } finally {
+        bindInFlight = false;
       }
     });
 
@@ -1446,7 +1520,9 @@ sudo systemctl restart getty@tty1</pre>
     const steps = $('mw-steps');
 
     function build() {
-      const label = ($('mw-label').value || 'atem').trim();
+      const rawLabel = ($('mw-label').value || 'atem').trim();
+      // Strip anything that would break $(label:var) references in Companion
+      const label = escHtml(rawLabel.replace(/[^A-Za-z0-9_-]/g, '') || 'atem');
       const aux   = parseInt($('mw-aux').value, 10);
       const src   = parseInt($('mw-src').value, 10);
       const bcm   = parseInt(gpioSel.value, 10);

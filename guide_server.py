@@ -266,7 +266,10 @@ class Handler(http.server.SimpleHTTPRequestHandler):
 
 
 if __name__ == "__main__":
+    # Bind address: default to all interfaces so admins can reach it from
+    # the LAN. Set GUIDE_HOST=127.0.0.1 in the systemd unit to lock it down.
+    host = os.environ.get("GUIDE_HOST", "0.0.0.0")
     socketserver.TCPServer.allow_reuse_address = True
-    with socketserver.TCPServer(("0.0.0.0", PORT), Handler) as httpd:
-        print(f"Serving guide on http://0.0.0.0:{PORT}/")
+    with socketserver.TCPServer((host, PORT), Handler) as httpd:
+        print(f"Serving guide on http://{host}:{PORT}/")
         httpd.serve_forever()
