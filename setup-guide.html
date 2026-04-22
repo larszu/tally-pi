@@ -277,13 +277,13 @@
 
 <div class="view-tabs" role="tablist">
   <button type="button" data-view="dashboard" class="active" role="tab" onclick="window.showView&&window.showView('dashboard')">
-    <span class="ic">⚡</span><span>Status</span>
+    <span>Status</span>
   </button>
   <button type="button" data-view="setup" role="tab" onclick="window.showView&&window.showView('setup')">
-    <span class="ic">🧙</span><span>Einrichten</span>
+    <span>Einrichten</span>
   </button>
   <button type="button" data-view="help" role="tab" onclick="window.showView&&window.showView('help')">
-    <span class="ic">📖</span><span>Hilfe</span>
+    <span>Hilfe</span>
   </button>
   <a class="companion-btn" href="http://localhost:8000/" target="_blank" title="Companion Web-UI öffnen">
     Companion ↗
@@ -296,7 +296,7 @@
 <div class="view active" data-view="dashboard">
 
 <section id="live">
-  <h2>⚡ Live GPIO-Status <span id="live-ts" style="font-size:12px;color:var(--muted);font-weight:normal;margin-left:12px"></span></h2>
+  <h2>Live GPIO-Status <span id="live-ts" style="font-size:12px;color:var(--muted);font-weight:normal;margin-left:12px"></span></h2>
   <p>Echtzeit-Übersicht aller GPIO-Pins des 40-Pin-Headers. Aktualisiert sich alle 500 ms. <strong>Klicke eine Kachel</strong>, um eine Companion-Aktion an den Pin zu binden (z.B. „Knopf 1/0/0 drücken").</p>
   <div class="legend">
     <span><span class="dot" style="background:#374151"></span>Frei (nicht verwendet)</span>
@@ -316,7 +316,7 @@
 <section id="numato">
   <details>
     <summary style="cursor:pointer;font-size:18px;font-weight:600;padding:6px 0">
-      🔌 Numato USB GPIO (32 Kanäle + ADC)
+      Numato USB GPIO (32 Kanäle + ADC)
       <span id="numato-status" style="font-size:13px;font-weight:normal;margin-left:12px"></span>
       <span style="font-size:12px;color:var(--muted);margin-left:8px">(optional – später)</span>
     </summary>
@@ -336,7 +336,7 @@
 <div class="view" data-view="setup">
 
 <section class="acc open" id="wizard">
-  <h2 class="acc-head">🧙 Einrichten in 3 Schritten</h2>
+  <h2 class="acc-head">Einrichten in 3 Schritten</h2>
   <div class="acc-body">
     <p style="color:var(--muted);margin-top:0">Folge den Schritten der Reihe nach. Alles ist schon ausgefüllt — du klickst es nur in der Companion-UI nach.</p>
 
@@ -345,21 +345,18 @@
       <h3 style="margin-top:4px">Was möchtest du machen?</h3>
       <div class="usecase-picker" id="uc-picker">
         <button type="button" data-uc="press" class="active">
-          <span class="ucic">🎛️</span>
           <span>
             <div class="uc-title">Taster → Companion-Button drücken</div>
             <div class="uc-desc">Am einfachsten. Der Taster löst einen Button auf einer bestimmten Page/Zeile/Spalte aus.</div>
           </span>
         </button>
         <button type="button" data-uc="atem-toggle">
-          <span class="ucic">🔀</span>
           <span>
             <div class="uc-title">Taster → ATEM Aux umschalten (Toggle)</div>
             <div class="uc-desc">Jeder Druck wechselt Aux zwischen zwei festen Quellen.</div>
           </span>
         </button>
         <button type="button" data-uc="atem-hold">
-          <span class="ucic">⏱️</span>
           <span>
             <div class="uc-title">Taster halten → ATEM Aux temporär</div>
             <div class="uc-desc">Solange du hältst, wird auf eine andere Quelle gewechselt. Beim Loslassen zurück zur vorherigen.</div>
@@ -391,7 +388,7 @@
         <rect x="225" y="85" width="50" height="30" fill="#1a1f2b" stroke="#4da3ff" rx="4"/>
         <text x="250" y="104" fill="#4da3ff" font-size="11" font-family="Consolas" text-anchor="middle">TASTER</text>
       </svg>
-      <p style="color:var(--muted);font-size:12px">Pinout-Übersicht findest du im Tab „📖 Hilfe".</p>
+      <p style="color:var(--muted);font-size:12px">Pinout-Übersicht findest du im Tab „Hilfe".</p>
     </div>
 
     <!-- Step 3: configure GPIO module in Companion -->
@@ -403,17 +400,17 @@
         <li>Namen vergeben (z.B. <code>gpio</code>) und speichern. Dann auf die Verbindung klicken, um sie zu konfigurieren.</li>
         <li>Scrolle zu <strong id="wz-pin-line">GPIO 17</strong> und setze:
           <ul>
-            <li>✅ <code>Use GPIO pin</code></li>
+            <li><code>Use GPIO pin</code> aktivieren</li>
             <li><code>Set as IN/OUT</code> = <strong>IN</strong></li>
             <li><code>Trigger type</code> = <strong id="wz-trig">FALLING</strong></li>
-            <li>✅ <code>Enable debouncing</code>, <code>Debounce time</code> = <strong>20 ms</strong></li>
+            <li><code>Enable debouncing</code> aktivieren, <code>Debounce time</code> = <strong>20 ms</strong></li>
             <li id="wz-invert-line">Optional: <code>Invert values</code> aktivieren, damit „gedrückt" = 1 ist.</li>
           </ul>
         </li>
         <li>Speichern. Der Pin liefert jetzt die Variable <code id="wz-varname">$(gpio:gpio17)</code>.</li>
       </ol>
       <div class="card ok" style="margin-top:10px">
-        <strong>Prüfen:</strong> Wechsel zum Tab <strong>⚡ Status</strong>, drück den Taster — die Kachel <strong id="wz-check-tile">GPIO 17</strong> wird gelb und zeigt „GEDRÜCKT".
+        <strong>Prüfen:</strong> Wechsel zum Tab <strong>Status</strong>, drück den Taster — die Kachel <strong id="wz-check-tile">GPIO 17</strong> wird gelb und zeigt „GEDRÜCKT".
       </div>
     </div>
 
