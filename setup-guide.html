@@ -280,13 +280,10 @@
     <span>Status</span>
   </button>
   <button type="button" data-view="setup" role="tab" onclick="window.showView&&window.showView('setup')">
-    <span>Einrichten</span>
+    <span>Companion einrichten</span>
   </button>
   <button type="button" data-view="tally" role="tab" onclick="window.showView&&window.showView('tally')">
     <span>Tally</span>
-  </button>
-  <button type="button" data-view="log" role="tab" onclick="window.showView&&window.showView('log')">
-    <span>Log</span>
   </button>
   <button type="button" data-view="help" role="tab" onclick="window.showView&&window.showView('help')">
     <span>Hilfe</span>
@@ -563,36 +560,6 @@
 </div><!-- /tally -->
 
 
-<!-- ============================== LOG VIEW ============================== -->
-<div class="view" data-view="log">
-
-<section>
-  <h2>Ereignis-Log</h2>
-  <p class="hint">Tally-Zustandswechsel, Konfigurations-Änderungen und ATEM-Verbindungsstatus.</p>
-
-  <div class="card">
-    <label style="display:inline-block;margin-right:10px">
-      <input type="checkbox" id="log-follow" checked> live
-    </label>
-    <label>Filter
-      <select id="log-filter">
-        <option value="">alle</option>
-        <option value="tally">Tally</option>
-        <option value="atem">ATEM</option>
-        <option value="config">Config</option>
-        <option value="bindings">Bindings</option>
-        <option value="guide">Guide</option>
-      </select>
-    </label>
-    <button type="button" id="log-clear-view" class="btn" style="margin-left:8px">Ansicht leeren</button>
-    <div id="log-status" class="hint" style="margin-top:6px">—</div>
-    <pre id="log-view" style="max-height:60vh;overflow:auto;background:#0b1020;color:#cbd5e1;padding:8px;border-radius:6px;font-size:12px;line-height:1.35;white-space:pre-wrap;margin-top:8px"></pre>
-  </div>
-</section>
-
-</div><!-- /log -->
-
-
 <!-- ============================== HELP VIEW ============================== -->
 <div class="view" data-view="help">
 
@@ -659,6 +626,29 @@ sudo i2cdetect -y 1
 
 # Kiosk-Session neu starten
 sudo systemctl restart getty@tty1</pre>
+</section>
+
+<section id="log">
+  <h2>Ereignis-Log</h2>
+  <p class="hint">Tally-Zustandswechsel, Konfigurations-Änderungen und ATEM-Verbindungsstatus.</p>
+  <div class="card">
+    <label style="display:inline-block;margin-right:10px">
+      <input type="checkbox" id="log-follow" checked> live
+    </label>
+    <label>Filter
+      <select id="log-filter">
+        <option value="">alle</option>
+        <option value="tally">Tally</option>
+        <option value="atem">ATEM</option>
+        <option value="config">Config</option>
+        <option value="bindings">Bindings</option>
+        <option value="guide">Guide</option>
+      </select>
+    </label>
+    <button type="button" id="log-clear-view" class="btn" style="margin-left:8px">Ansicht leeren</button>
+    <div id="log-status" class="hint" style="margin-top:6px">—</div>
+    <pre id="log-view" style="max-height:60vh;overflow:auto;background:#0b1020;color:#cbd5e1;padding:8px;border-radius:6px;font-size:12px;line-height:1.35;white-space:pre-wrap;margin-top:8px"></pre>
+  </div>
 </section>
 
 </div><!-- /help -->
@@ -732,7 +722,7 @@ sudo systemctl restart getty@tty1</pre>
   </div>
 </div>
 <script>
-/* qrcode-generator 1.4.4 MIT by Kazuhiko Arase � embedded inline */
+/* qrcode-generator 1.4.4 MIT by Kazuhiko Arase � embedded inline */
 /**
  * Minified by jsDelivr using Terser v5.37.0.
  * Original file: /npm/qrcode-generator@1.4.4/qrcode.js
@@ -861,7 +851,7 @@ var qrcode=function(){var t=function(t,r){var e=t,n=g[r],o=null,i=0,a=null,u=[],
   // Turn every <section id="…"> into a collapsible accordion.
   // Default: all sections open (each view has only 1-3 sections).
   (function initAccordions() {
-    const defaultOpen = new Set(['live','numato','wizard','pinout','pinref','troubleshoot']);
+    const defaultOpen = new Set(['live','numato','wizard']);
     const sections = document.querySelectorAll('main section[id]');
     sections.forEach(sec => {
       const h2 = sec.querySelector(':scope > h2');
