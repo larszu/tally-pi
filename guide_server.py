@@ -8,6 +8,7 @@ import socket
 import socketserver
 import subprocess
 import tempfile
+import threading
 import time
 from pathlib import Path
 
@@ -18,6 +19,9 @@ BINDINGS_FILE = Path("/opt/pi-guide/bindings.json")
 NUMATO_STATE_FILE = Path("/run/pi-guide/numato.json")
 ATEM_STATE_FILE = Path("/run/pi-guide/atem.json")
 TALLY_CONFIG_FILE = Path("/opt/pi-guide/tally.json")
+EVENT_LOG_FILE = Path("/opt/pi-guide/events.log")
+EVENT_LOG_MAX = 1_000_000  # bytes before rotation
+EVENT_LOG_LOCK = threading.Lock()
 
 # Physical header pin for each BCM GPIO (2..27)
 BCM_TO_PIN = {
@@ -195,7 +199,7 @@ DEFAULT_TALLY_CONFIG = {
     "mode": "atem",              # "atem" or "arbiter"
     "atem_ip": "",
     "arbiter_url": "http://localhost:4455",
-    "devices": [],               # [{id, name, input}]
+    "devices": [],               # [{id, name, input, me?, aux?}]
 }
 
 
@@ -264,6 +268,15 @@ def validate_tally_config(cfg):
         inp = d.get("input")
         if not isinstance(inp, int) or inp < 0 or inp > 99999:
             raise ValueError("device input must be non-negative int")
+        me = d.get("me", 1)
+        if not isinstance(me, int) or me < 1 or me > 4:
+            raise ValueError("device me must be int 1..4")
+        aux = d.get("aux", [])
+        if not isinstance(aux, list):
+            raise ValueError("device aux must be list")
+        for a in aux:
+            if not isinstance(a, int) or a < 1 or a > 32:
+                raise ValueError("device aux entries must be int 1..32")
 
 
 def get_atem_state():
@@ -278,8 +291,9 @@ def get_atem_state():
 def tally_state_for_device(cfg, device_id, atem_state=None):
     """Return 'pgm' | 'pvw' | 'safe' for a device based on current atem state.
 
-    Only implemented for mode=atem. mode=arbiter is handled client-side
-    (the /tally/<id> page redirects into TallyArbiter).
+    Considers device.me (which ME bus) and device.aux (list of aux outputs
+    that also count as PGM if the device's input is routed there).
+    Only implemented for mode=atem. mode=arbiter is handled client-side.
     """
     if cfg.get("mode") != "atem":
         return "safe"
@@ -293,13 +307,76 @@ def tally_state_for_device(cfg, device_id, atem_state=None):
     inp = device.get("input")
     if not isinstance(inp, int):
         return "safe"
-    pgm_inputs = {e.get("input") for e in (atem_state.get("pgm") or []) if isinstance(e, dict)}
-    pvw_inputs = {e.get("input") for e in (atem_state.get("pvw") or []) if isinstance(e, dict)}
+    me = device.get("me") or 1
+    aux_watch = device.get("aux") or []
+    pgm_inputs = {e.get("input") for e in (atem_state.get("pgm") or [])
+                  if isinstance(e, dict) and e.get("me") == me}
+    pvw_inputs = {e.get("input") for e in (atem_state.get("pvw") or [])
+                  if isinstance(e, dict) and e.get("me") == me}
+    # If any watched aux output carries this input, treat as PGM.
+    atem_aux = atem_state.get("aux") or {}
+    for a in aux_watch:
+        if isinstance(atem_aux, dict) and atem_aux.get(str(a)) == inp:
+            return "pgm"
     if inp in pgm_inputs:
         return "pgm"
     if inp in pvw_inputs:
         return "pvw"
     return "safe"
+
+
+# ---------------------------------------------------------------------------
+# Event log (JSONL)
+# ---------------------------------------------------------------------------
+def log_event(kind, **fields):
+    """Append a single JSON line to the event log. Thread-safe, best-effort.
+
+    kind: short string like 'tally', 'config', 'atem', 'bindings'.
+    """
+    rec = {"ts": time.time(), "kind": kind}
+    rec.update(fields)
+    line = json.dumps(rec, ensure_ascii=False) + "\n"
+    try:
+        with EVENT_LOG_LOCK:
+            EVENT_LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
+            # simple size-based rotation
+            try:
+                if EVENT_LOG_FILE.exists() and EVENT_LOG_FILE.stat().st_size > EVENT_LOG_MAX:
+                    rotated = EVENT_LOG_FILE.with_suffix(".log.1")
+                    try:
+                        if rotated.exists():
+                            rotated.unlink()
+                    except Exception:
+                        pass
+                    os.replace(EVENT_LOG_FILE, rotated)
+            except Exception:
+                pass
+            with open(EVENT_LOG_FILE, "a", encoding="utf-8") as f:
+                f.write(line)
+    except Exception:
+        pass
+
+
+def read_event_log(limit=200):
+    """Return most recent <limit> event lines (newest last) as list of dicts."""
+    if not EVENT_LOG_FILE.exists():
+        return []
+    try:
+        # Read last N lines efficiently-ish (log stays <= 1MB).
+        with open(EVENT_LOG_FILE, "r", encoding="utf-8", errors="replace") as f:
+            lines = f.readlines()[-max(1, int(limit)):]
+        out = []
+        for ln in lines:
+            ln = ln.strip()
+            if not ln:
+                continue
+            try:
+                out.append(json.loads(ln))
+            except Exception:
+                out.append({"ts": 0, "kind": "raw", "line": ln})
+        return out
+    except Exception:
+        return []
 
 
 TALLY_PAGE = """<!doctype html>
@@ -403,6 +480,9 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         elif self.path == "/tally-config":
             self._send_json(load_tally_config())
             return
+        elif self.path.startswith("/logs"):
+            self._handle_logs()
+            return
         elif self.path.startswith("/tally/state"):
             self._handle_tally_state()
             return
@@ -498,6 +578,53 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         except Exception:
             return
 
+    def _handle_logs(self):
+        from urllib.parse import urlparse, parse_qs
+        p = urlparse(self.path)
+        qs = parse_qs(p.query)
+        if p.path == "/logs/stream":
+            self._handle_logs_stream()
+            return
+        try:
+            limit = int(qs.get("limit", ["200"])[0])
+        except Exception:
+            limit = 200
+        limit = max(1, min(2000, limit))
+        self._send_json({"events": read_event_log(limit=limit)})
+
+    def _handle_logs_stream(self):
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream")
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("X-Accel-Buffering", "no")
+        self.end_headers()
+        try:
+            EVENT_LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
+            if not EVENT_LOG_FILE.exists():
+                EVENT_LOG_FILE.touch()
+            with open(EVENT_LOG_FILE, "r", encoding="utf-8", errors="replace") as f:
+                f.seek(0, 2)
+                heartbeat = 0
+                while True:
+                    ln = f.readline()
+                    if ln:
+                        ln = ln.strip()
+                        if ln:
+                            self.wfile.write(f"data: {ln}\n\n".encode())
+                            self.wfile.flush()
+                        heartbeat = 0
+                    else:
+                        time.sleep(0.3)
+                        heartbeat += 1
+                        if heartbeat >= 30:
+                            self.wfile.write(b": ping\n\n")
+                            self.wfile.flush()
+                            heartbeat = 0
+        except (BrokenPipeError, ConnectionResetError):
+            return
+        except Exception:
+            return
+
     def do_POST(self):
         if self.path == "/bindings":
             body = self._read_body()
@@ -508,8 +635,10 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 for b in data:
                     validate_binding(b)
                 save_bindings(data)
+                log_event("bindings", action="save", count=len(data))
                 self._send_json({"ok": True, "count": len(data)})
             except Exception as e:
+                log_event("bindings", action="save_failed", error=str(e))
                 self._send_json({"ok": False, "error": str(e)}, code=400)
             return
         if self.path == "/tally-config":
@@ -518,8 +647,13 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 data = json.loads(body or b"{}")
                 validate_tally_config(data)
                 save_tally_config(data)
+                log_event("config", action="tally_save",
+                          mode=data.get("mode"),
+                          atem_ip=data.get("atem_ip"),
+                          devices=len(data.get("devices") or []))
                 self._send_json({"ok": True})
             except Exception as e:
+                log_event("config", action="tally_save_failed", error=str(e))
                 self._send_json({"ok": False, "error": str(e)}, code=400)
             return
         if self.path == "/sysfs-release":
@@ -540,11 +674,58 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         pass
 
 
+def start_transition_logger():
+    """Background thread that logs tally state changes and ATEM link events.
+
+    Central place so that a state change is logged once, not once per SSE
+    subscriber.
+    """
+    last_states = {}
+    last_atem_connected = None
+
+    def loop():
+        nonlocal last_atem_connected
+        while True:
+            try:
+                cfg = load_tally_config()
+                atem = get_atem_state()
+                connected = bool(atem.get("connected"))
+                if connected != last_atem_connected:
+                    log_event("atem", connected=connected,
+                              error=atem.get("error") or "")
+                    last_atem_connected = connected
+                if cfg.get("mode") == "atem":
+                    current_ids = set()
+                    for d in cfg.get("devices") or []:
+                        did = d.get("id")
+                        if not did:
+                            continue
+                        current_ids.add(did)
+                        state = tally_state_for_device(cfg, did, atem_state=atem)
+                        prev = last_states.get(did)
+                        if prev != state:
+                            log_event("tally", id=did, state=state,
+                                      input=d.get("input"), me=d.get("me", 1))
+                            last_states[did] = state
+                    # drop removed devices
+                    for gone in [k for k in last_states if k not in current_ids]:
+                        last_states.pop(gone, None)
+            except Exception:
+                pass
+            time.sleep(0.25)
+
+    t = threading.Thread(target=loop, name="transition-logger", daemon=True)
+    t.start()
+    return t
+
+
 if __name__ == "__main__":
     # Bind address: default to all interfaces so admins can reach it from
     # the LAN. Set GUIDE_HOST=127.0.0.1 in the systemd unit to lock it down.
     host = os.environ.get("GUIDE_HOST", "0.0.0.0")
     socketserver.ThreadingTCPServer.allow_reuse_address = True
+    start_transition_logger()
+    log_event("guide", action="start", host=host, port=PORT)
     # Threading server so SSE streams do not block other requests.
     with socketserver.ThreadingTCPServer((host, PORT), Handler) as httpd:
         httpd.daemon_threads = True
