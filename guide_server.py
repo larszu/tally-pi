@@ -8,6 +8,7 @@ import socket
 import socketserver
 import subprocess
 import tempfile
+import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
@@ -15,6 +16,8 @@ PORT = 8080
 DEBUG_GPIO = Path("/sys/kernel/debug/gpio")
 BINDINGS_FILE = Path("/opt/pi-guide/bindings.json")
 NUMATO_STATE_FILE = Path("/run/pi-guide/numato.json")
+ATEM_STATE_FILE = Path("/run/pi-guide/atem.json")
+TALLY_CONFIG_FILE = Path("/opt/pi-guide/tally.json")
 
 # Physical header pin for each BCM GPIO (2..27)
 BCM_TO_PIN = {
@@ -185,6 +188,169 @@ def get_numato_state():
         return {"connected": False, "device": None, "error": "state parse error"}
 
 
+# ---------------------------------------------------------------------------
+# Tally support (ATEM direct or TallyArbiter client)
+# ---------------------------------------------------------------------------
+DEFAULT_TALLY_CONFIG = {
+    "mode": "atem",              # "atem" or "arbiter"
+    "atem_ip": "",
+    "arbiter_url": "http://localhost:4455",
+    "devices": [],               # [{id, name, input}]
+}
+
+
+def load_tally_config():
+    if not TALLY_CONFIG_FILE.exists():
+        return dict(DEFAULT_TALLY_CONFIG)
+    try:
+        d = json.loads(TALLY_CONFIG_FILE.read_text())
+        if not isinstance(d, dict):
+            return dict(DEFAULT_TALLY_CONFIG)
+        out = dict(DEFAULT_TALLY_CONFIG)
+        out.update({k: v for k, v in d.items() if k in DEFAULT_TALLY_CONFIG})
+        if not isinstance(out["devices"], list):
+            out["devices"] = []
+        return out
+    except Exception:
+        return dict(DEFAULT_TALLY_CONFIG)
+
+
+def save_tally_config(cfg):
+    TALLY_CONFIG_FILE.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=str(TALLY_CONFIG_FILE.parent), prefix=".tally.", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w") as f:
+            json.dump(cfg, f, indent=2)
+        os.replace(tmp, TALLY_CONFIG_FILE)
+        try:
+            os.chmod(TALLY_CONFIG_FILE, 0o664)
+        except Exception:
+            pass
+    except Exception:
+        try:
+            os.unlink(tmp)
+        except Exception:
+            pass
+        raise
+
+
+def validate_tally_config(cfg):
+    if not isinstance(cfg, dict):
+        raise ValueError("config must be object")
+    if cfg.get("mode") not in ("atem", "arbiter"):
+        raise ValueError("mode must be 'atem' or 'arbiter'")
+    atem_ip = cfg.get("atem_ip", "") or ""
+    if atem_ip and not re.match(r"^[0-9a-zA-Z\.\-]{1,64}$", atem_ip):
+        raise ValueError("atem_ip contains invalid characters")
+    arb = cfg.get("arbiter_url", "") or ""
+    if arb and not re.match(r"^https?://[A-Za-z0-9\.\-:/_]{1,256}$", arb):
+        raise ValueError("arbiter_url must be http(s) URL")
+    devs = cfg.get("devices") or []
+    if not isinstance(devs, list):
+        raise ValueError("devices must be list")
+    ids = set()
+    for d in devs:
+        if not isinstance(d, dict):
+            raise ValueError("device entry must be object")
+        did = d.get("id", "")
+        if not isinstance(did, str) or not re.match(r"^[A-Za-z0-9_\-]{1,32}$", did):
+            raise ValueError("device id must match [A-Za-z0-9_-]{1,32}")
+        if did in ids:
+            raise ValueError(f"duplicate device id: {did}")
+        ids.add(did)
+        name = d.get("name", "")
+        if not isinstance(name, str) or len(name) > 64:
+            raise ValueError("device name must be string, max 64 chars")
+        inp = d.get("input")
+        if not isinstance(inp, int) or inp < 0 or inp > 99999:
+            raise ValueError("device input must be non-negative int")
+
+
+def get_atem_state():
+    if not ATEM_STATE_FILE.exists():
+        return {"connected": False, "error": "atem watcher not running"}
+    try:
+        return json.loads(ATEM_STATE_FILE.read_text())
+    except Exception:
+        return {"connected": False, "error": "state parse error"}
+
+
+def tally_state_for_device(cfg, device_id, atem_state=None):
+    """Return 'pgm' | 'pvw' | 'safe' for a device based on current atem state.
+
+    Only implemented for mode=atem. mode=arbiter is handled client-side
+    (the /tally/<id> page redirects into TallyArbiter).
+    """
+    if cfg.get("mode") != "atem":
+        return "safe"
+    if atem_state is None:
+        atem_state = get_atem_state()
+    if not atem_state.get("connected"):
+        return "offline"
+    device = next((d for d in cfg.get("devices", []) if d.get("id") == device_id), None)
+    if not device:
+        return "unknown"
+    inp = device.get("input")
+    if not isinstance(inp, int):
+        return "safe"
+    pgm_inputs = {e.get("input") for e in (atem_state.get("pgm") or []) if isinstance(e, dict)}
+    pvw_inputs = {e.get("input") for e in (atem_state.get("pvw") or []) if isinstance(e, dict)}
+    if inp in pgm_inputs:
+        return "pgm"
+    if inp in pvw_inputs:
+        return "pvw"
+    return "safe"
+
+
+TALLY_PAGE = """<!doctype html>
+<html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Tally __ID__</title>
+<style>
+  html,body{margin:0;padding:0;height:100%;background:#000;color:#fff;font-family:system-ui,sans-serif;overflow:hidden}
+  #bg{position:fixed;inset:0;background:#000;transition:background 80ms linear}
+  #label{position:fixed;top:10px;left:10px;font-size:14px;opacity:.6;mix-blend-mode:difference;pointer-events:none}
+  #state{position:fixed;bottom:10px;left:10px;font-size:12px;opacity:.5;mix-blend-mode:difference;pointer-events:none}
+  #bg.pgm{background:#e11d48}
+  #bg.pvw{background:#16a34a}
+  #bg.safe{background:#111}
+  #bg.offline{background:#1e293b}
+  body:fullscreen #label,body:fullscreen #state{display:none}
+</style></head><body>
+<div id="bg" class="offline"></div>
+<div id="label">__NAME__</div>
+<div id="state">verbinde ...</div>
+<script>
+(function(){
+  var bg=document.getElementById('bg');
+  var st=document.getElementById('state');
+  function set(state){
+    bg.className='';
+    bg.classList.add(state);
+    st.textContent=state.toUpperCase();
+  }
+  function connect(){
+    try { var ev=new EventSource('/tally/stream?id=__ID__'); } catch(e){ return fallback(); }
+    ev.onmessage=function(e){ try{ var d=JSON.parse(e.data); set(d.state||'safe'); }catch(_){} };
+    ev.onerror=function(){ set('offline'); ev.close(); setTimeout(connect,2000); };
+  }
+  function fallback(){
+    set('offline');
+    setTimeout(function poll(){
+      fetch('/tally/state?id=__ID__',{cache:'no-store'}).then(r=>r.json()).then(d=>{
+        set(d.state||'safe'); setTimeout(poll,500);
+      }).catch(()=>{ set('offline'); setTimeout(poll,2000); });
+    },100);
+  }
+  connect();
+  document.addEventListener('click',function(){
+    if(!document.fullscreenElement) document.documentElement.requestFullscreen&&document.documentElement.requestFullscreen();
+    else document.exitFullscreen&&document.exitFullscreen();
+  });
+})();
+</script></body></html>"""
+
+
 class Handler(http.server.SimpleHTTPRequestHandler):
     def __init__(self, *a, **kw):
         super().__init__(*a, directory=str(ROOT), **kw)
@@ -231,7 +397,106 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         elif self.path == "/bindings":
             self._send_json(load_bindings())
             return
+        elif self.path == "/atem":
+            self._send_json(get_atem_state())
+            return
+        elif self.path == "/tally-config":
+            self._send_json(load_tally_config())
+            return
+        elif self.path.startswith("/tally/state"):
+            self._handle_tally_state()
+            return
+        elif self.path.startswith("/tally/stream"):
+            self._handle_tally_stream()
+            return
+        elif self.path.startswith("/tally/"):
+            self._handle_tally_page()
+            return
         return super().do_GET()
+
+    def _query(self):
+        from urllib.parse import urlparse, parse_qs
+        return parse_qs(urlparse(self.path).query)
+
+    def _device_id_from_path(self):
+        # /tally/<id> or /tally/state?id=... or /tally/stream?id=...
+        from urllib.parse import urlparse
+        p = urlparse(self.path)
+        parts = [seg for seg in p.path.split("/") if seg]
+        if len(parts) >= 2 and parts[0] == "tally" and parts[1] not in ("state", "stream"):
+            return parts[1]
+        qs = self._query()
+        v = qs.get("id", [""])[0]
+        return v
+
+    def _handle_tally_page(self):
+        did = self._device_id_from_path()
+        if not re.match(r"^[A-Za-z0-9_\-]{1,32}$", did or ""):
+            self.send_error(400, "bad device id")
+            return
+        cfg = load_tally_config()
+        device = next((d for d in cfg.get("devices", []) if d.get("id") == did), None)
+        name = (device or {}).get("name", did)
+        if cfg.get("mode") == "arbiter":
+            # Redirect into the local TallyArbiter tally page.
+            base = (cfg.get("arbiter_url") or "").rstrip("/")
+            if not base:
+                base = "http://localhost:4455"
+            target = f"{base}/tally/{did}"
+            self.send_response(302)
+            self.send_header("Location", target)
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            return
+        html = (TALLY_PAGE.replace("__ID__", did).replace("__NAME__", name)).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Content-Length", str(len(html)))
+        self.end_headers()
+        self.wfile.write(html)
+
+    def _handle_tally_state(self):
+        did = self._device_id_from_path()
+        if not did:
+            self.send_error(400, "missing id")
+            return
+        cfg = load_tally_config()
+        state = tally_state_for_device(cfg, did)
+        self._send_json({"id": did, "state": state, "mode": cfg.get("mode")})
+
+    def _handle_tally_stream(self):
+        did = self._device_id_from_path()
+        if not did:
+            self.send_error(400, "missing id")
+            return
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream")
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("X-Accel-Buffering", "no")
+        self.end_headers()
+        last_state = None
+        # 5 Hz tick, write a heartbeat every ~15 s to keep proxies happy
+        heartbeat = 0
+        try:
+            while True:
+                cfg = load_tally_config()
+                state = tally_state_for_device(cfg, did)
+                if state != last_state:
+                    payload = json.dumps({"id": did, "state": state, "mode": cfg.get("mode")})
+                    self.wfile.write(f"data: {payload}\n\n".encode())
+                    self.wfile.flush()
+                    last_state = state
+                heartbeat += 1
+                if heartbeat >= 75:  # ~15s at 5 Hz
+                    self.wfile.write(b": ping\n\n")
+                    self.wfile.flush()
+                    heartbeat = 0
+                time.sleep(0.2)
+        except (BrokenPipeError, ConnectionResetError):
+            return
+        except Exception:
+            return
 
     def do_POST(self):
         if self.path == "/bindings":
@@ -244,6 +509,16 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                     validate_binding(b)
                 save_bindings(data)
                 self._send_json({"ok": True, "count": len(data)})
+            except Exception as e:
+                self._send_json({"ok": False, "error": str(e)}, code=400)
+            return
+        if self.path == "/tally-config":
+            body = self._read_body()
+            try:
+                data = json.loads(body or b"{}")
+                validate_tally_config(data)
+                save_tally_config(data)
+                self._send_json({"ok": True})
             except Exception as e:
                 self._send_json({"ok": False, "error": str(e)}, code=400)
             return
@@ -269,7 +544,9 @@ if __name__ == "__main__":
     # Bind address: default to all interfaces so admins can reach it from
     # the LAN. Set GUIDE_HOST=127.0.0.1 in the systemd unit to lock it down.
     host = os.environ.get("GUIDE_HOST", "0.0.0.0")
-    socketserver.TCPServer.allow_reuse_address = True
-    with socketserver.TCPServer((host, PORT), Handler) as httpd:
+    socketserver.ThreadingTCPServer.allow_reuse_address = True
+    # Threading server so SSE streams do not block other requests.
+    with socketserver.ThreadingTCPServer((host, PORT), Handler) as httpd:
+        httpd.daemon_threads = True
         print(f"Serving guide on http://{host}:{PORT}/")
         httpd.serve_forever()

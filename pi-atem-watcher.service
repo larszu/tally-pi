@@ -1,0 +1,22 @@
+[Unit]
+Description=ATEM state watcher for pi-guide tally
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /opt/pi-guide/atem_watcher.py
+Restart=always
+RestartSec=3
+# RuntimeDirectory creates /run/pi-guide and cleans up on stop
+RuntimeDirectory=pi-guide
+RuntimeDirectoryMode=0755
+# Read /opt/pi-guide/tally.json
+ReadOnlyPaths=/opt/pi-guide/tally.json
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target

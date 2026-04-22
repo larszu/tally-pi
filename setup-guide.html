@@ -282,6 +282,9 @@
   <button type="button" data-view="setup" role="tab" onclick="window.showView&&window.showView('setup')">
     <span>Einrichten</span>
   </button>
+  <button type="button" data-view="tally" role="tab" onclick="window.showView&&window.showView('tally')">
+    <span>Tally</span>
+  </button>
   <button type="button" data-view="help" role="tab" onclick="window.showView&&window.showView('help')">
     <span>Hilfe</span>
   </button>
@@ -505,6 +508,64 @@
 </section>
 
 </div><!-- /setup -->
+
+
+<!-- ============================== TALLY VIEW ============================== -->
+<div class="view" data-view="tally">
+
+<section>
+  <h2>Tally-Lampen über das Netzwerk</h2>
+  <p class="hint">Jedes Gerät öffnet eine URL im Browser. Die Seite leuchtet rot (PGM), grün (PVW) oder schwarz (safe).</p>
+
+  <div class="card">
+    <h3>Modus</h3>
+    <label style="display:block;margin:4px 0">
+      <input type="radio" name="tally-mode" value="atem" checked>
+      ATEM direkt (empfohlen)
+    </label>
+    <label style="display:block;margin:4px 0">
+      <input type="radio" name="tally-mode" value="arbiter">
+      TallyArbiter (lokal auf dem Pi)
+    </label>
+  </div>
+
+  <div class="card" id="tally-atem-card">
+    <h3>ATEM</h3>
+    <label>ATEM-IP<br>
+      <input type="text" id="tally-atem-ip" placeholder="192.168.10.240" style="width:100%">
+    </label>
+    <div id="tally-atem-status" class="hint" style="margin-top:6px">—</div>
+  </div>
+
+  <div class="card" id="tally-arbiter-card" style="display:none">
+    <h3>TallyArbiter</h3>
+    <label>URL<br>
+      <input type="text" id="tally-arbiter-url" placeholder="http://localhost:4455" style="width:100%">
+    </label>
+    <p class="hint">Die Tally-Links leiten direkt in TallyArbiter weiter. Geräte müssen dort angelegt sein.</p>
+  </div>
+
+  <div class="card">
+    <h3>Geräte</h3>
+    <table id="tally-devices" style="width:100%;border-collapse:collapse">
+      <thead><tr>
+        <th style="text-align:left">ID</th>
+        <th style="text-align:left">Name</th>
+        <th style="text-align:left">Input</th>
+        <th></th><th></th>
+      </tr></thead>
+      <tbody></tbody>
+    </table>
+    <button type="button" id="tally-add" class="btn" style="margin-top:8px">+ Gerät</button>
+  </div>
+
+  <div class="card">
+    <button type="button" id="tally-save" class="btn primary">Speichern</button>
+    <span id="tally-save-status" class="hint" style="margin-left:8px"></span>
+  </div>
+</section>
+
+</div><!-- /tally -->
 
 
 <!-- ============================== HELP VIEW ============================== -->
@@ -1608,6 +1669,129 @@ sudo systemctl restart getty@tty1</pre>
       if (el) el.addEventListener('change', build);
     });
     build();
+  })();
+
+  // ============================== TALLY ==============================
+  (function initTally(){
+    const tbody = document.querySelector('#tally-devices tbody');
+    const addBtn = document.getElementById('tally-add');
+    const saveBtn = document.getElementById('tally-save');
+    const saveSt = document.getElementById('tally-save-status');
+    const atemIpEl = document.getElementById('tally-atem-ip');
+    const arbUrlEl = document.getElementById('tally-arbiter-url');
+    const atemCard = document.getElementById('tally-atem-card');
+    const arbCard = document.getElementById('tally-arbiter-card');
+    const atemStatus = document.getElementById('tally-atem-status');
+    if (!tbody || !addBtn || !saveBtn) return;
+
+    let devices = [];
+
+    function currentMode(){
+      const r = document.querySelector('input[name="tally-mode"]:checked');
+      return r ? r.value : 'atem';
+    }
+    function applyMode(){
+      const m = currentMode();
+      atemCard.style.display = (m === 'atem') ? '' : 'none';
+      arbCard.style.display = (m === 'arbiter') ? '' : 'none';
+    }
+    document.querySelectorAll('input[name="tally-mode"]').forEach(r =>
+      r.addEventListener('change', applyMode));
+
+    function baseUrl(){
+      return location.origin; // http://<pi-ip>:8080
+    }
+
+    function render(){
+      tbody.innerHTML = '';
+      devices.forEach((d, i) => {
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+          <td><input data-f="id" value="${escHtml(d.id||'')}" placeholder="cam1" style="width:80px"></td>
+          <td><input data-f="name" value="${escHtml(d.name||'')}" placeholder="Kamera 1" style="width:100%"></td>
+          <td><input data-f="input" type="number" min="0" value="${Number(d.input)||0}" style="width:60px"></td>
+          <td><a href="/tally/${encodeURIComponent(d.id||'')}" target="_blank">Öffnen</a></td>
+          <td><button type="button" class="btn" data-act="del">×</button></td>
+        `;
+        tr.querySelectorAll('input').forEach(inp => {
+          inp.addEventListener('input', () => {
+            const f = inp.dataset.f;
+            if (f === 'input') devices[i][f] = parseInt(inp.value,10) || 0;
+            else devices[i][f] = inp.value;
+          });
+        });
+        tr.querySelector('[data-act=del]').addEventListener('click', () => {
+          devices.splice(i,1); render();
+        });
+        tbody.appendChild(tr);
+      });
+    }
+
+    addBtn.addEventListener('click', () => {
+      const n = devices.length + 1;
+      devices.push({id:'cam'+n, name:'Kamera '+n, input:n});
+      render();
+    });
+
+    saveBtn.addEventListener('click', async () => {
+      saveSt.textContent = 'speichere ...';
+      const cfg = {
+        mode: currentMode(),
+        atem_ip: (atemIpEl.value||'').trim(),
+        arbiter_url: (arbUrlEl.value||'').trim(),
+        devices: devices,
+      };
+      try {
+        const r = await fetch('/tally-config', {
+          method:'POST',
+          headers:{'Content-Type':'application/json'},
+          body: JSON.stringify(cfg),
+        });
+        const j = await r.json();
+        if (j.ok) saveSt.textContent = 'gespeichert ✓';
+        else saveSt.textContent = 'Fehler: ' + (j.error||'unbekannt');
+      } catch(e) {
+        saveSt.textContent = 'Fehler: ' + (e.message||e);
+      }
+      setTimeout(() => { saveSt.textContent=''; }, 3000);
+    });
+
+    async function load(){
+      try {
+        const r = await fetch('/tally-config', {cache:'no-store'});
+        const cfg = await r.json();
+        const mode = (cfg.mode === 'arbiter') ? 'arbiter' : 'atem';
+        const radio = document.querySelector('input[name="tally-mode"][value="'+mode+'"]');
+        if (radio) radio.checked = true;
+        atemIpEl.value = cfg.atem_ip || '';
+        arbUrlEl.value = cfg.arbiter_url || '';
+        devices = Array.isArray(cfg.devices) ? cfg.devices.slice() : [];
+        applyMode();
+        render();
+      } catch(e) {
+        atemStatus.textContent = 'Config konnte nicht geladen werden';
+      }
+    }
+
+    async function pollAtem(){
+      try {
+        const r = await fetch('/atem', {cache:'no-store'});
+        const a = await r.json();
+        if (a.connected) {
+          const pgm = (a.pgm||[]).map(x=>x.input).join(',') || '—';
+          const pvw = (a.pvw||[]).map(x=>x.input).join(',') || '—';
+          atemStatus.textContent = '● verbunden – PGM '+pgm+' / PVW '+pvw;
+        } else {
+          atemStatus.textContent = '○ ' + (a.error||'nicht verbunden');
+        }
+      } catch(e) {
+        atemStatus.textContent = '○ watcher nicht erreichbar';
+      }
+    }
+
+    load();
+    pollAtem();
+    setInterval(pollAtem, 1500);
   })();
 </script>
 </body>
