@@ -343,11 +343,11 @@
   </div>
 
   <h3>4b · Momentary: „Aux nur während Taste gehalten wird"</h3>
-  <p>Solange du die Taste hältst, zeigt die Aux eine andere Quelle. Beim Loslassen kehrt sie automatisch zur vorherigen Quelle zurück. Nützlich für „Zeige kurz Cam 3". <strong>Komplett ohne Button</strong> — nur über zwei Trigger, die auf die GPIO-Variable reagieren.</p>
+  <p>Solange du die Taste hältst, zeigt die Aux eine andere Quelle. Beim Loslassen kehrt sie automatisch zur vorher laufenden Quelle zurück. <strong>Komplett ohne Button</strong> — nur zwei Trigger, die auf die GPIO-Variable reagieren.</p>
 
   <div class="card">
-    <strong>Wizard: Button-Config generieren</strong>
-    <p style="color:var(--muted);margin:4px 0 10px">Wähle deine Werte aus — unten bekommst du fertige Schritte zum Abtippen und optional ein Companion-Import-JSON zum Copy&amp;Paste.</p>
+    <strong>Wizard: Werte wählen → fertige Klick-Anleitung</strong>
+    <p style="color:var(--muted);margin:4px 0 10px">Companion unterstützt keinen Trigger-Import über die UI. Deshalb generieren wir eine Schritt-für-Schritt-Anleitung mit deinen konkreten Werten — du klickst sie einfach in Companion nach.</p>
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px;margin:10px 0">
       <div>
         <label style="font-size:12px;color:var(--muted)">ATEM-Connection Label</label>
@@ -363,28 +363,18 @@
       <div>
         <label style="font-size:12px;color:var(--muted)">Quelle beim Halten (Input-ID)</label>
         <input id="mw-src" type="number" value="3" min="0" max="10000">
-        <span style="font-size:11px;color:var(--muted)">z.B. 1=Cam1, 2=Cam2, 3000=Color1, 2001=MP1</span>
+        <span style="font-size:11px;color:var(--muted)">Meist 1=Cam1, 2=Cam2…</span>
       </div>
       <div>
         <label style="font-size:12px;color:var(--muted)">GPIO-Pin (BCM) der Taste</label>
         <select id="mw-gpio"></select>
       </div>
     </div>
-    <div style="display:flex;gap:8px;flex-wrap:wrap">
-      <button class="btn" type="button" id="mw-gen">Anleitung generieren</button>
-      <button class="btn sec" type="button" id="mw-json-toggle">Import-JSON zeigen</button>
-      <button class="btn sec" type="button" id="mw-copy-json" style="display:none">JSON kopieren</button>
-    </div>
+    <button class="btn" type="button" id="mw-gen">Anleitung generieren</button>
   </div>
 
   <div id="mw-out" style="display:none;margin-top:14px">
-    <h4 style="margin:0 0 6px">Schritt-für-Schritt (manuell in Companion)</h4>
-    <ol class="steps" id="mw-steps"></ol>
-    <div id="mw-json-wrap" style="display:none;margin-top:10px">
-      <h4 style="margin:0 0 6px">Import-JSON (Companion → Triggers → Import)</h4>
-      <p style="color:var(--muted);font-size:12px;margin:0 0 6px">Companion öffnen → <strong>Triggers</strong> → Import. Legt beide Trigger (down + up) in einem Rutsch an. Falls der Import nicht klappt (Schema kann zwischen Companion-Versionen leicht abweichen), nimm die manuelle Anleitung oben — identisches Resultat.</p>
-      <pre id="mw-json" style="max-height:300px"></pre>
-    </div>
+    <div id="mw-steps"></div>
   </div>
 </section>
 
@@ -1068,8 +1058,8 @@ sudo systemctl restart getty@tty1</pre>
     });
 
     const $ = id => document.getElementById(id);
-    const out = $('mw-out'), steps = $('mw-steps'),
-          jsonWrap = $('mw-json-wrap'), jsonPre = $('mw-json');
+    const out = $('mw-out');
+    const steps = $('mw-steps');
 
     function build() {
       const label = ($('mw-label').value || 'atem').trim();
@@ -1081,89 +1071,60 @@ sudo systemctl restart getty@tty1</pre>
       const atemVar = `$(${label}:aux${aux}_input)`;
 
       steps.innerHTML = `
-        <li><strong>Custom-Variable anlegen</strong>: Companion → <em>Variables</em> → <em>Custom variables</em> → <kbd>Add</kbd>.
-          Name <code>${varName}</code>, Startwert beliebig (wird überschrieben).</li>
-        <li><strong>GPIO-Modul</strong>: Pin <code>GPIO ${bcm}</code> als <em>IN</em> + <em>BOTH</em> (beide Flanken)
-          + <em>Debounce 20&nbsp;ms</em> aktivieren. <em>Invert</em> an, wenn der Taster gegen GND zieht (dann „gedrückt"=1).
-          Der Modul liefert die Variable <code>$(gpio:gpio${bcm})</code> mit <code>0</code> oder <code>1</code>.</li>
+        <h4 style="margin:0 0 8px">1. Custom-Variable anlegen</h4>
+        <ol class="steps">
+          <li>In Companion links auf <strong>Variables</strong> gehen.</li>
+          <li><strong>Custom variables</strong> öffnen.</li>
+          <li>Mit <kbd>Add</kbd> eine neue Variable anlegen: Name <code>${varName}</code>.</li>
+          <li>Wert egal. Diese Variable speichert beim Drücken die aktuelle Aux-Quelle.</li>
+        </ol>
 
-        <li><strong>Trigger 1 — „Aux zeigen beim Drücken"</strong>: <em>Triggers</em> → <kbd>+</kbd>
-          <ul>
-            <li>Name: <code>Aux${aux} hold ${bcm} down</code></li>
-            <li>Event: <em>Variable changes</em> → <code>gpio:gpio${bcm}</code></li>
-            <li>Condition: <em>Variable value</em> → <code>gpio:gpio${bcm}</code> = <code>1</code></li>
-            <li>Actions (in dieser Reihenfolge):
-              <ol>
-                <li><em>Internal → Set custom variable</em>: Variable <code>${varName}</code>, Value <code>${atemVar}</code>
-                  &nbsp;<span style="color:var(--muted)">(merkt, was gerade auf Aux ${aux} liegt)</span></li>
-                <li><em>${label} → Set Auxiliary source</em>: Aux <strong>${aux}</strong>, Source <strong>${src}</strong></li>
-              </ol>
-            </li>
-          </ul>
-        </li>
+        <h4 style="margin:14px 0 8px">2. GPIO-Variable sicherstellen</h4>
+        <ol class="steps">
+          <li>Connections → Raspberry GPIO öffnen.</li>
+          <li>Für <code>GPIO ${bcm}</code>: <strong>Use GPIO pin</strong> an.</li>
+          <li><strong>Set as IN/OUT</strong> = <strong>IN</strong>.</li>
+          <li><strong>Trigger type</strong> = <strong>BOTH</strong>.</li>
+          <li><strong>Debounce</strong> = <strong>20 ms</strong>.</li>
+          <li>Falls der Taster gegen GND schaltet: <strong>Invert values</strong> an, damit gedrückt = <code>1</code>.</li>
+          <li>Ergebnis: Companion-Variable <code>$(gpio:gpio${bcm})</code>.</li>
+        </ol>
 
-        <li><strong>Trigger 2 — „Aux zurück beim Loslassen"</strong>: noch ein Trigger:
-          <ul>
-            <li>Name: <code>Aux${aux} hold ${bcm} up</code></li>
-            <li>Event: <em>Variable changes</em> → <code>gpio:gpio${bcm}</code></li>
-            <li>Condition: <em>Variable value</em> → <code>gpio:gpio${bcm}</code> = <code>0</code></li>
-            <li>Action: <em>${label} → Set Auxiliary source</em>: Aux <strong>${aux}</strong>,
-              Source <strong>${varRef}</strong>
-              &nbsp;<span style="color:var(--muted)">(falls das Feld keine Variable akzeptiert → „Input from variable" / „Use variable" aktivieren und <code>${varRef}</code> eintragen)</span></li>
-          </ul>
-        </li>
+        <h4 style="margin:14px 0 8px">3. Trigger für Tastendruck anlegen</h4>
+        <ol class="steps">
+          <li>Links auf <strong>Triggers</strong> gehen.</li>
+          <li>Mit <kbd>+</kbd> einen neuen Trigger anlegen.</li>
+          <li><strong>Name</strong>: <code>Aux${aux} hold GPIO${bcm} down</code></li>
+          <li><strong>Event</strong>: <strong>Variable changes</strong></li>
+          <li>Als Variable <code>gpio:gpio${bcm}</code> auswaehlen.</li>
+          <li><strong>Condition</strong>: Variable <code>gpio:gpio${bcm}</code> ist gleich <code>1</code>.</li>
+          <li><strong>Action 1</strong>: <strong>Internal → Set custom variable</strong><br>Variable = <code>${varName}</code><br>Wert = <code>${atemVar}</code></li>
+          <li><strong>Action 2</strong>: <strong>${label} → Set Auxiliary source</strong><br>Aux = <strong>${aux}</strong><br>Source = <strong>${src}</strong></li>
+        </ol>
 
-        <li>Beide Trigger speichern + aktivieren. Taster drücken → Aux springt auf ${src}, loslassen → Aux geht zurück auf das, was vorher lief.</li>
+        <h4 style="margin:14px 0 8px">4. Trigger für Loslassen anlegen</h4>
+        <ol class="steps">
+          <li>Noch einen Trigger mit <kbd>+</kbd> anlegen.</li>
+          <li><strong>Name</strong>: <code>Aux${aux} hold GPIO${bcm} up</code></li>
+          <li><strong>Event</strong>: wieder <strong>Variable changes</strong></li>
+          <li>Als Variable wieder <code>gpio:gpio${bcm}</code> auswaehlen.</li>
+          <li><strong>Condition</strong>: Variable <code>gpio:gpio${bcm}</code> ist gleich <code>0</code>.</li>
+          <li><strong>Action</strong>: <strong>${label} → Set Auxiliary source</strong><br>Aux = <strong>${aux}</strong><br>Source = <code>${varRef}</code></li>
+          <li>Wenn das ATEM-Modul im Source-Feld keine Variable akzeptiert: nach <strong>Use variable</strong>, <strong>Input from variable</strong> oder aehnlicher Option suchen und dort <code>${varRef}</code> eintragen.</li>
+        </ol>
 
-        <li><strong>Hinweis:</strong> Wenn die vorherige Quelle die gleiche wie <strong>${src}</strong> war (jemand hat schon vor dem Drücken ${src} aufgeschaltet), merkt sich Trigger 1 genau das und Trigger 2 stellt dann wieder <strong>${src}</strong> her — also kein Sprung. Das ist korrekt.</li>
+        <h4 style="margin:14px 0 8px">5. Ergebnis</h4>
+        <ol class="steps">
+          <li>Taste druecken: Trigger 1 merkt sich die aktuelle Aux-${aux}-Quelle und schaltet auf <strong>${src}</strong>.</li>
+          <li>Taste loslassen: Trigger 2 liest <code>${varName}</code> und stellt genau diese Quelle wieder her.</li>
+          <li>Wenn vorher schon Quelle <strong>${src}</strong> aktiv war, bleibt Aux auf <strong>${src}</strong>. Das ist korrekt.</li>
+        </ol>
       `;
-      // Companion v3+ triggers import (array of two triggers, hold-down / release)
-      const mkAction = (inst, action, options) => ({ instance: inst, action, options });
-      const triggers = [
-        {
-          type: 'trigger',
-          name: `Aux${aux} hold GPIO${bcm} — down`,
-          enabled: true,
-          events: [{ type: 'variable_changed', variableId: `gpio:gpio${bcm}` }],
-          condition: [
-            { instance: 'internal', feedback: 'variable_value',
-              options: { variable_id: `gpio:gpio${bcm}`, op: 'eq', value: '1' } }
-          ],
-          actions: [
-            mkAction('internal', 'custom_variable_set_value', { name: varName, value: atemVar }),
-            mkAction(label, 'setAuxSource', { aux: aux - 1, input: src })
-          ]
-        },
-        {
-          type: 'trigger',
-          name: `Aux${aux} hold GPIO${bcm} — up`,
-          enabled: true,
-          events: [{ type: 'variable_changed', variableId: `gpio:gpio${bcm}` }],
-          condition: [
-            { instance: 'internal', feedback: 'variable_value',
-              options: { variable_id: `gpio:gpio${bcm}`, op: 'eq', value: '0' } }
-          ],
-          actions: [
-            mkAction(label, 'setAuxSource', { aux: aux - 1, input: varRef })
-          ]
-        }
-      ];
-      jsonPre.textContent = JSON.stringify(triggers, null, 2);
       out.style.display = 'block';
     }
 
     $('mw-gen').addEventListener('click', build);
-    $('mw-json-toggle').addEventListener('click', () => {
-      if (!out.style.display || out.style.display === 'none') build();
-      const vis = jsonWrap.style.display !== 'none';
-      jsonWrap.style.display = vis ? 'none' : 'block';
-      $('mw-copy-json').style.display = vis ? 'none' : 'inline-block';
-    });
-    $('mw-copy-json').addEventListener('click', async () => {
-      try { await navigator.clipboard.writeText(jsonPre.textContent);
-        $('mw-copy-json').textContent = '✓ kopiert'; setTimeout(()=> $('mw-copy-json').textContent = 'JSON kopieren', 1500);
-      } catch (e) { alert('Kopieren fehlgeschlagen: ' + e); }
-    });
+    build();
   })();
 </script>
 </body>
