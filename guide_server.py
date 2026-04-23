@@ -326,6 +326,9 @@ def tally_state_for_device(cfg, device_id, atem_state=None):
     Considers device.me (which ME bus) and device.aux (list of aux outputs
     that also count as PGM if the device's input is routed there).
     Only implemented for mode=atem. mode=arbiter is handled client-side.
+
+    If device_id is a plain integer string (e.g. "5"), treat it as an ad-hoc
+    device watching that input on ME 1 — no config entry required.
     """
     if cfg.get("mode") != "atem":
         return "safe"
@@ -333,23 +336,48 @@ def tally_state_for_device(cfg, device_id, atem_state=None):
         atem_state = get_atem_state()
     if not atem_state.get("connected"):
         return "offline"
+
     device = next((d for d in cfg.get("devices", []) if d.get("id") == device_id), None)
+    if device is None and isinstance(device_id, str) and device_id.isdigit():
+        # Ad-hoc device: URL path is the input number itself.
+        device = {"input": int(device_id), "me": 1, "aux": []}
     if not device:
         return "unknown"
+
     inp = device.get("input")
     if not isinstance(inp, int):
         return "safe"
     me = device.get("me") or 1
     aux_watch = device.get("aux") or []
-    pgm_inputs = {e.get("input") for e in (atem_state.get("pgm") or [])
-                  if isinstance(e, dict) and e.get("me") == me}
-    pvw_inputs = {e.get("input") for e in (atem_state.get("pvw") or [])
-                  if isinstance(e, dict) and e.get("me") == me}
+
+    # atem_watcher writes pgm/pvw as {"<me>": input_num} dicts (0-indexed ME),
+    # older versions used [{me, input}] lists — support both.
+    def _collect(bus):
+        out = set()
+        if isinstance(bus, dict):
+            for k, v in bus.items():
+                try:
+                    # atem_watcher uses 0-indexed ME; device.me is 1-indexed
+                    if int(k) == (me - 1) and isinstance(v, int):
+                        out.add(v)
+                except Exception:
+                    pass
+        elif isinstance(bus, list):
+            for e in bus:
+                if isinstance(e, dict) and e.get("me") == me:
+                    out.add(e.get("input"))
+        return out
+
+    pgm_inputs = _collect(atem_state.get("pgm"))
+    pvw_inputs = _collect(atem_state.get("pvw"))
+
     # If any watched aux output carries this input, treat as PGM.
     atem_aux = atem_state.get("aux") or {}
-    for a in aux_watch:
-        if isinstance(atem_aux, dict) and atem_aux.get(str(a)) == inp:
-            return "pgm"
+    if isinstance(atem_aux, dict):
+        for a in aux_watch:
+            if atem_aux.get(str(a)) == inp:
+                return "pgm"
+
     if inp in pgm_inputs:
         return "pgm"
     if inp in pvw_inputs:
@@ -548,7 +576,16 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return
         cfg = load_tally_config()
         device = next((d for d in cfg.get("devices", []) if d.get("id") == did), None)
-        name = (device or {}).get("name", did)
+        if device:
+            name = device.get("name", did)
+        elif did.isdigit():
+            # Ad-hoc: use ATEM input long name if available
+            atem = get_atem_state() or {}
+            info = (atem.get("inputs") or {}).get(did) or {}
+            long_name = info.get("long") or ""
+            name = f"Input {did}" + (f" – {long_name}" if long_name else "")
+        else:
+            name = did
         if cfg.get("mode") == "arbiter":
             # Redirect into the local TallyArbiter tally page.
             base = (cfg.get("arbiter_url") or "").rstrip("/")
