@@ -165,7 +165,7 @@ class AtemClient:
                 src = struct.unpack_from(">H", data, 2)[0]
                 self.state["pgm"][str(me)] = src
 
-            elif name == "PvwI" and len(data) >= 4:
+            elif name == "PrvI" and len(data) >= 4:
                 me = data[0]
                 src = struct.unpack_from(">H", data, 2)[0]
                 self.state["pvw"][str(me)] = src
