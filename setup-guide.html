@@ -1863,7 +1863,37 @@ var qrcode=function(){var t=function(t,r){var e=t,n=g[r],o=null,i=0,a=null,u=[],
     document.querySelectorAll('input[name="tally-mode"]').forEach(r =>
       r.addEventListener('change', applyMode));
 
-    function baseUrl(){ return location.origin; }
+    function baseUrl(){
+      // If accessed via localhost/127.x, substitute the Pi's LAN IP so QR codes work on phones.
+      const h = location.hostname;
+      const isLocal = (h === 'localhost' || h === '127.0.0.1' || h.startsWith('127.') || h === '::1');
+      if (isLocal && window.__piLanIp) {
+        return location.protocol + '//' + window.__piLanIp + (location.port ? ':'+location.port : '');
+      }
+      return location.origin;
+    }
+
+    async function detectLanIp(){
+      try {
+        const r = await fetch('/ipconfig', {cache:'no-store'});
+        const cfg = await r.json();
+        // Pick the first non-loopback IPv4 that is in a private range (prefer UP interfaces)
+        const ifaces = (cfg.interfaces||[]).slice().sort((a,b) => {
+          const au = (a.state||'').toUpperCase() === 'UP' ? 0 : 1;
+          const bu = (b.state||'').toUpperCase() === 'UP' ? 0 : 1;
+          return au - bu;
+        });
+        for (const i of ifaces) {
+          for (const addr of (i.addresses||[])) {
+            if (addr && !addr.startsWith('127.') && !addr.startsWith('169.254.')) {
+              window.__piLanIp = addr;
+              return addr;
+            }
+          }
+        }
+      } catch(e){ /* ignore */ }
+      return null;
+    }
 
     function renderQr(container, url){
       container.innerHTML = '';
@@ -1991,8 +2021,8 @@ var qrcode=function(){var t=function(t,r){var e=t,n=g[r],o=null,i=0,a=null,u=[],
         const r = await fetch('/atem', {cache:'no-store'});
         const a = await r.json();
         if (a.connected) {
-          const pgm = (a.pgm||[]).map(x=>x.input).join(',') || '—';
-          const pvw = (a.pvw||[]).map(x=>x.input).join(',') || '—';
+          const pgm = Object.values(a.pgm||{}).join(',') || '—';
+          const pvw = Object.values(a.pvw||{}).join(',') || '—';
           atemStatus.textContent = '● verbunden – PGM '+pgm+' / PVW '+pvw;
         } else {
           atemStatus.textContent = '○ ' + (a.error||'nicht verbunden');
@@ -2002,7 +2032,10 @@ var qrcode=function(){var t=function(t,r){var e=t,n=g[r],o=null,i=0,a=null,u=[],
       }
     }
 
-    load();
+    (async () => {
+      await detectLanIp();
+      await load();
+    })();
     pollAtem();
     setInterval(pollAtem, 1500);
   })();
