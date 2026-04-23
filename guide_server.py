@@ -10,6 +10,8 @@ import subprocess
 import tempfile
 import threading
 import time
+import urllib.error
+import urllib.request
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
@@ -190,6 +192,36 @@ def get_numato_state():
         return json.loads(NUMATO_STATE_FILE.read_text())
     except Exception:
         return {"connected": False, "device": None, "error": "state parse error"}
+
+
+COMPANION_API_PATH_RE = re.compile(
+    r"^/api/(location/\d+/\d+/\d+/(press|down|up)|custom-variable/[A-Za-z0-9_]{1,64}/value)$"
+)
+
+
+def companion_api_call(path, method="POST", body=b"", content_type="text/plain; charset=utf-8"):
+    """Call local Companion API safely through an allow-listed proxy."""
+    if not isinstance(path, str) or not COMPANION_API_PATH_RE.match(path):
+        raise ValueError("unsupported companion api path")
+    method = (method or "POST").upper()
+    if method not in ("GET", "POST"):
+        raise ValueError("method must be GET or POST")
+
+    url = f"http://127.0.0.1:8000{path}"
+    headers = {}
+    data = None
+    if method == "POST":
+        data = body if isinstance(body, (bytes, bytearray)) else b""
+        headers["Content-Type"] = content_type or "text/plain; charset=utf-8"
+
+    req = urllib.request.Request(url, data=data, method=method, headers=headers)
+    try:
+        with urllib.request.urlopen(req, timeout=4) as resp:
+            text = resp.read().decode("utf-8", errors="replace")
+            return True, int(resp.status), text
+    except urllib.error.HTTPError as e:
+        text = e.read().decode("utf-8", errors="replace")
+        return False, int(e.code), text
 
 
 # ---------------------------------------------------------------------------
@@ -666,6 +698,31 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 ok, msg = sysfs_release(bcm)
                 self._send_json({"ok": ok, "message": msg}, code=200 if ok else 409)
             except Exception as e:
+                self._send_json({"ok": False, "error": str(e)}, code=400)
+            return
+        if self.path == "/companion-api":
+            body = self._read_body(limit=16 * 1024)
+            try:
+                data = json.loads(body or b"{}")
+                path = data.get("path", "")
+                method = data.get("method", "POST")
+                payload = data.get("body", "")
+                content_type = data.get("contentType", "text/plain; charset=utf-8")
+                payload_b = str(payload).encode("utf-8")
+                ok, status, resp_body = companion_api_call(
+                    path=path,
+                    method=method,
+                    body=payload_b,
+                    content_type=content_type,
+                )
+                log_event("guide", action="companion_proxy", path=path, status=status)
+                self._send_json({
+                    "ok": bool(ok),
+                    "status": int(status),
+                    "body": (resp_body or "")[:2000],
+                }, code=200)
+            except Exception as e:
+                log_event("guide", action="companion_proxy_failed", error=str(e))
                 self._send_json({"ok": False, "error": str(e)}, code=400)
             return
         self.send_error(404)

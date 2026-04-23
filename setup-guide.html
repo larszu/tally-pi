@@ -49,6 +49,14 @@
   th { background:#131721; color:var(--muted); font-weight:normal; }
   ol.steps li { margin-bottom:12px; }
   kbd { background:#2f3a4e; padding:2px 6px; border-radius:4px; font-family:Consolas,monospace; font-size:12px; border:1px solid #475569; }
+  ol.steps code { display:inline-block; padding:6px 8px; margin:2px 4px 2px 0; border-radius:6px; }
+  .copy-wrap { display:inline-flex; align-items:center; gap:6px; flex-wrap:wrap; margin:2px 6px 2px 0; }
+  .copy-btn {
+    appearance:none; border:1px solid #475569; background:#2f3a4e; color:var(--fg);
+    border-radius:8px; padding:8px 10px; font-size:12px; cursor:pointer; min-height:38px;
+  }
+  .copy-btn:hover { background:#3b4961; }
+  .copy-btn.copied { background:#14532d; border-color:#22c55e; color:#dcfce7; }
   .svg-wire { max-width:100%; height:auto; }
   .btn { display:inline-block; padding:8px 16px; background:var(--accent); color:#0b0e13; border-radius:6px; text-decoration:none; font-weight:bold; margin:4px 4px 4px 0; }
   .btn:hover { background:#78c0ff; }
@@ -288,7 +296,7 @@
   <button type="button" data-view="help" role="tab" onclick="window.showView&&window.showView('help')">
     <span>Hilfe</span>
   </button>
-  <a class="companion-btn" href="http://localhost:8000/" target="_blank" title="Companion Web-UI öffnen">
+  <a class="companion-btn" id="companion-link" href="http://localhost:8000/" target="_blank" title="Companion Web-UI öffnen">
     Companion ↗
   </a>
 </div>
@@ -443,7 +451,7 @@
 
       <!-- Use-case: ATEM toggle -->
       <div class="uc-body" data-uc-body="atem-toggle" style="display:none">
-        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:8px;margin:10px 0">
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:8px;margin:10px 0">
           <div>
             <label style="font-size:12px;color:var(--muted)">ATEM-Label</label>
             <input id="wzt-label" value="atem">
@@ -453,12 +461,16 @@
             <select id="wzt-aux"><option>1</option><option>2</option><option>3</option><option>4</option><option>5</option><option>6</option></select>
           </div>
           <div>
-            <label style="font-size:12px;color:var(--muted)">Quelle A</label>
+            <label style="font-size:12px;color:var(--muted)">Quelle bei HIGH</label>
             <input type="number" id="wzt-a" value="1" min="0">
           </div>
           <div>
-            <label style="font-size:12px;color:var(--muted)">Quelle B</label>
+            <label style="font-size:12px;color:var(--muted)">Quelle bei LOW</label>
             <input type="number" id="wzt-b" value="2" min="0">
+          </div>
+          <div>
+            <label style="font-size:12px;color:var(--muted)">GPIO-Slot</label>
+            <input type="number" id="wzt-slot" value="4" min="0" max="7">
           </div>
         </div>
         <div id="wzt-steps" class="wz-instructions"></div>
@@ -485,6 +497,12 @@
         <button class="btn" type="button" id="mw-gen" style="display:none">generate</button>
         <div id="mw-out" style="display:block">
           <div id="mw-steps"></div>
+        </div>
+        <div class="card" style="margin-top:10px">
+          <strong>Companion live vorbereiten</strong>
+          <p class="hint" style="margin:6px 0">Legt <code>auxX_prev</code> direkt an und setzt den aktuellen Aux-Wert als Startwert.</p>
+          <button class="btn" type="button" id="mw-live-apply">Variable jetzt in Companion setzen</button>
+          <div id="mw-live-status" class="hint" style="margin-top:6px">—</div>
         </div>
       </div>
     </div>
@@ -609,6 +627,7 @@
     <tr><td>Pin ändert sich nicht</td><td>Companion neu starten: <code>sudo systemctl restart companion</code>. GPIO-Modul muss <strong>(Dev)</strong> im Namen haben.</td></tr>
     <tr><td>Prellt / mehrfach ausgelöst</td><td>Debounce erhöhen (100–200 ms).</td></tr>
     <tr><td>Wert ist immer 1</td><td>Kabel vertauscht? Oder Pull-Up verkehrt → <em>Invert</em> anhaken.</td></tr>
+    <tr><td>Aux-Toggle reagiert nicht</td><td>Im Trigger muss Event/Condition auf <code>gpio:gpioX</code> stehen (nicht <code>RPi_GPIO:gpio_state_X</code>). Bei „Set custom variable" den Wert als <em>Expression</em> speichern, und danach die ATEM-Action <em>Aux/Output: Set source</em> nutzen (Aux Output = z.B. Aux 1). Wenn Input rot ist, auf <em>Variable/Expression</em> umstellen.</td></tr>
     <tr><td>OLED zeigt nichts</td><td><code>i2cdetect -y 1</code> → muss <code>3C</code> zeigen. Sonst Verkabelung prüfen.</td></tr>
     <tr><td>Kiosk beenden</td><td><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>Q</kbd></td></tr>
   </table>
@@ -734,6 +753,12 @@ var qrcode=function(){var t=function(t,r){var e=t,n=g[r],o=null,i=0,a=null,u=[],
 </script>
 
 <script>
+  // Set Companion link to use same host as this page (works for remote access)
+  (function(){
+    const lnk = document.getElementById('companion-link');
+    if (lnk) lnk.href = 'http://' + location.hostname + ':8000/';
+  })();
+
   // Pi 5 GPIO pinout (physical pin -> {label, type})
   const pins = [
     ['3.3V','power'],['5V','power'],
@@ -848,6 +873,40 @@ var qrcode=function(){var t=function(t,r){var e=t,n=g[r],o=null,i=0,a=null,u=[],
     }[c]));
   }
 
+  // Add copy buttons next to Companion values inside step lists.
+  function enhanceCopyButtons(root) {
+    const scope = root || document;
+    const nodes = scope.querySelectorAll('ol.steps code');
+    nodes.forEach(code => {
+      if (code.dataset.copyReady === '1') return;
+      code.dataset.copyReady = '1';
+      const wrap = document.createElement('span');
+      wrap.className = 'copy-wrap';
+      code.parentNode.insertBefore(wrap, code);
+      wrap.appendChild(code);
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'copy-btn';
+      btn.textContent = 'Kopieren';
+      btn.addEventListener('click', async () => {
+        const txt = code.textContent || '';
+        try {
+          await navigator.clipboard.writeText(txt);
+          btn.textContent = 'Kopiert';
+          btn.classList.add('copied');
+          setTimeout(() => {
+            btn.textContent = 'Kopieren';
+            btn.classList.remove('copied');
+          }, 1000);
+        } catch (_) {
+          btn.textContent = 'Fehler';
+          setTimeout(() => (btn.textContent = 'Kopieren'), 1000);
+        }
+      });
+      wrap.appendChild(btn);
+    });
+  }
+
   // Turn every <section id="…"> into a collapsible accordion.
   // Default: all sections open (each view has only 1-3 sections).
   (function initAccordions() {
@@ -887,6 +946,8 @@ var qrcode=function(){var t=function(t,r){var e=t,n=g[r],o=null,i=0,a=null,u=[],
     window.addEventListener('hashchange', openByHash);
     openByHash();
   })();
+
+  enhanceCopyButtons(document);
 
   // Live GPIO status
   const GPIO_LIST = [2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27];
@@ -1303,40 +1364,39 @@ var qrcode=function(){var t=function(t,r){var e=t,n=g[r],o=null,i=0,a=null,u=[],
     const b = readForm();
     const a = b.action;
     const st = $('modal-status');
-    // Companion runs on :8000, we are on :8080 -> cross-origin.
-    // Companion's /api returns no CORS headers, so fetch() throws TypeError
-    // even when the request *was* delivered and executed. We handle that
-    // case and tell the user the request was sent but status is unreadable.
-    async function apiCall(url, opts) {
-      try {
-        const r = await fetch(url, opts);
-        return { ok:r.ok, status:r.status };
-      } catch (e) {
-        return { ok:null, status:null, err:e };
-      }
+    async function companionApi(path, method, body) {
+      const r = await fetch('/companion-api', {
+        method: 'POST',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({ path, method: method || 'POST', body: body || '' }),
+      });
+      return r.json();
     }
     try {
       let res;
       if (a.kind === 'press' || a.kind === 'down_up') {
         const sub = a.kind === 'press' ? 'press' : 'down';
-        res = await apiCall(`http://localhost:8000/api/location/${a.page}/${a.row}/${a.column}/${sub}`, {method:'POST'});
+        res = await companionApi(`/api/location/${a.page}/${a.row}/${a.column}/${sub}`, 'POST', '');
         if (a.kind === 'down_up') {
-          setTimeout(() =>
-            apiCall(`http://localhost:8000/api/location/${a.page}/${a.row}/${a.column}/up`, {method:'POST'}),
-          200);
+          setTimeout(() => {
+            companionApi(`/api/location/${a.page}/${a.row}/${a.column}/up`, 'POST', '');
+          }, 200);
         }
       } else if (a.kind === 'variable') {
-        res = await apiCall(`http://localhost:8000/api/custom-variable/${encodeURIComponent(a.variable)}/value`,
-          {method:'POST', body:String(a.value)});
+        res = await companionApi(
+          `/api/custom-variable/${encodeURIComponent(a.variable)}/value`,
+          'POST',
+          String(a.value),
+        );
       }
       if (res == null) {
         st.textContent = 'Unbekannte Aktion.'; st.className = 'status err';
-      } else if (res.ok === null) {
-        st.textContent = 'Request abgesendet (Antwort durch CORS blockiert).';
-        st.className = 'status ok';
+      } else if (res.error) {
+        st.textContent = 'Companion-Proxy Fehler: ' + res.error;
+        st.className = 'status err';
       } else {
         st.textContent = `Companion API: HTTP ${res.status}`;
-        st.className = 'status ' + (res.ok ? 'ok':'err');
+        st.className = 'status ' + (res.ok ? 'ok' : 'err');
       }
     } catch (e) {
       st.textContent = 'Fehler: ' + (e.message || e);
@@ -1507,46 +1567,120 @@ var qrcode=function(){var t=function(t,r){var e=t,n=g[r],o=null,i=0,a=null,u=[],
       }
     }
 
-    function buildToggleSteps(bcm) {
-      const rawLabel = (document.getElementById('wzt-label').value || 'atem').trim();
-      // Strip anything that would break a $(label:var) reference.
-      const label = escHtml(rawLabel.replace(/[^A-Za-z0-9_-]/g, '') || 'atem');
+    async function companionApi(path, method, body) {
+      const r = await fetch('/companion-api', {
+        method: 'POST',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({ path, method: method || 'POST', body: body || '' }),
+      });
+      return r.json();
+    }
+
+    async function initToggleVariableInCompanion() {
+      const st = document.getElementById('wzt-live-status');
       const aux = parseInt(document.getElementById('wzt-aux').value, 10);
       const a = parseInt(document.getElementById('wzt-a').value, 10);
-      const b = parseInt(document.getElementById('wzt-b').value, 10);
-      const warn = (a === b)
-        ? `<div class="card warn" style="margin:8px 0">Quelle A und Quelle B sind gleich (${a}). Der Toggle schaltet dann nichts um.</div>`
-        : '';
+      if (!Number.isFinite(aux) || !Number.isFinite(a)) {
+        st.textContent = 'Aux/Quelle ungültig.';
+        return;
+      }
       const varState = `aux${aux}_state`;
-      document.getElementById('wzt-steps').innerHTML = warn + `
-        <h4 style="margin:14px 0 8px">1. Custom-Variable anlegen</h4>
+      st.textContent = 'Sende an Companion ...';
+      try {
+        const res = await companionApi(`/api/custom-variable/${encodeURIComponent(varState)}/value`, 'POST', String(a));
+        if (res && res.ok) st.textContent = `OK: ${varState} = ${a} (HTTP ${res.status})`;
+        else st.textContent = `Fehler: ${(res && (res.error || ('HTTP ' + res.status))) || 'unbekannt'}`;
+      } catch (e) {
+        st.textContent = 'Fehler: ' + (e.message || e);
+      }
+    }
+
+    async function initHoldVariableInCompanion() {
+      const st = document.getElementById('mw-live-status');
+      const aux = parseInt(document.getElementById('mw-aux').value, 10);
+      const src = parseInt(document.getElementById('mw-src').value, 10);
+      if (!Number.isFinite(aux) || !Number.isFinite(src)) {
+        st.textContent = 'Aux/Quelle ungültig.';
+        return;
+      }
+      const varName = `aux${aux}_prev`;
+      let seed = src;
+      try {
+        const r = await fetch('/atem', {cache:'no-store'});
+        const j = await r.json();
+        if (j && j.connected && j.aux && j.aux[String(aux)] != null) {
+          const cur = parseInt(j.aux[String(aux)], 10);
+          if (Number.isFinite(cur)) seed = cur;
+        }
+      } catch (_) {}
+      st.textContent = 'Sende an Companion ...';
+      try {
+        const res = await companionApi(`/api/custom-variable/${encodeURIComponent(varName)}/value`, 'POST', String(seed));
+        if (res && res.ok) st.textContent = `OK: ${varName} = ${seed} (HTTP ${res.status})`;
+        else st.textContent = `Fehler: ${(res && (res.error || ('HTTP ' + res.status))) || 'unbekannt'}`;
+      } catch (e) {
+        st.textContent = 'Fehler: ' + (e.message || e);
+      }
+    }
+
+    function buildToggleSteps(bcm) {
+      const rawLabel = (document.getElementById('wzt-label').value || 'atem').trim();
+      const label = escHtml(rawLabel.replace(/[^A-Za-z0-9_-]/g, '') || 'atem');
+      const aux  = parseInt(document.getElementById('wzt-aux').value,  10);
+      const a    = parseInt(document.getElementById('wzt-a').value,    10);
+      const b    = parseInt(document.getElementById('wzt-b').value,    10);
+      const slot = parseInt(document.getElementById('wzt-slot').value, 10);
+      const varName = `RPi_GPIO:gpio_state_${slot}`;
+      document.getElementById('wzt-steps').innerHTML = `
+        <h4 style="margin:0 0 8px">Wie es funktioniert</h4>
+        <p class="hint" style="margin:0 0 10px">
+          Das Companion-Modul <strong>raspberry-gpio</strong> liest den Pin direkt.
+          Je nach Signal (<strong>HIGH</strong> = gedrückt, <strong>LOW</strong> = losgelassen)
+          feuert ein eigener Trigger mit einer festen ATEM-Action – keine Variable nötig, kein rotes Feld.
+        </p>
+        <h4 style="margin:14px 0 8px">1. raspberry-gpio Modul konfigurieren</h4>
         <ol class="steps">
-          <li>Links auf <strong>Variables</strong> → <strong>Custom variables</strong>.</li>
-          <li>Mit <kbd>Add</kbd> neue Variable: Name <code>${varState}</code>, Startwert <code>${a}</code>.</li>
+          <li>In Companion links auf <strong>Connections</strong> → <kbd>+</kbd>.</li>
+          <li>Modul <strong>raspberry-gpio</strong> suchen und hinzufügen. Label: <code>RPi_GPIO</code>.</li>
+          <li>In der Modul-Konfiguration: <strong>Slot ${slot}</strong> aktivieren (<em>Use GPIO pin</em> an) – das entspricht BCM-GPIO ${bcm}.</li>
+          <li><strong>Set as IN/OUT</strong> = <strong>IN</strong>.</li>
+          <li><strong>Trigger type</strong> = <strong>BOTH</strong>.</li>
+          <li><strong>Debounce</strong> = <strong>20 ms</strong>.</li>
+          <li><strong>Invert values</strong> = <strong>AN</strong> (Taster zieht Pin auf GND → invertiert = HIGH).</li>
+          <li>Speichern. Companion liefert jetzt die Variable <code>RPi_GPIO:gpio_state_${slot}</code>.</li>
         </ol>
-        <h4 style="margin:14px 0 8px">2. Trigger anlegen</h4>
+        <h4 style="margin:14px 0 8px">2. Trigger für Tastendruck (HIGH) anlegen</h4>
         <ol class="steps">
           <li>Links auf <strong>Triggers</strong> → <kbd>+</kbd>.</li>
-          <li><strong>Name</strong>: <code>Aux${aux} Toggle GPIO${bcm}</code></li>
-          <li><strong>Event</strong>: <strong>Variable changes</strong>, Variable <code>gpio:gpio${bcm}</code>.</li>
-          <li><strong>Condition</strong>: <code>gpio:gpio${bcm}</code> ist gleich <code>1</code>.</li>
-          <li><strong>Action 1</strong>: <em>Internal → Set custom variable</em><br>
-            Variable = <code>${varState}</code><br>
-            Wert = <code>$(internal:custom_${varState}) == ${a} ? ${b} : ${a}</code></li>
-          <li><strong>Action 2</strong>: <em>${label} → Set Auxiliary source</em><br>
-            Aux = <strong>${aux}</strong><br>
-            Source = <code>$(internal:custom_${varState})</code><br>
-            (Falls das ATEM-Modul keine Variable akzeptiert: nach „Use variable" / „Input from variable" suchen.)</li>
+          <li><strong>Name</strong>: <code>Aux${aux} HIGH GPIO${bcm}</code></li>
+          <li><strong>Event</strong>: <em>Variable changes</em>, Variable = <code>RPi_GPIO:gpio_state_${slot}</code>.</li>
+          <li><strong>Condition</strong>: <code>RPi_GPIO:gpio_state_${slot}</code> <em>ist gleich</em> <code>HIGH</code>.</li>
+          <li><strong>Action</strong>: <em>${label} → Aux/Output: Set source</em><br>
+            Aux Output = <strong>Aux ${aux}</strong><br>
+            Input = <code>${a}</code> &nbsp;– das ist die ATEM-Eingangsnummer (z.B. <code>1</code> = Cam 1 / PC, <code>10010</code> = Program-Bus). Die richtige Zahl seht ihr wenn ihr den Input-Dropdown in Companion aufklappt und den Wert danach im JSON nachschaut, oder einfach den Companion-Tooltip nutzt.</li>
         </ol>
-        <h4 style="margin:14px 0 8px">3. Ergebnis</h4>
+        <h4 style="margin:14px 0 8px">3. Trigger für Loslassen (LOW) anlegen</h4>
         <ol class="steps">
-          <li>Jeder Tastendruck schaltet Aux ${aux} zwischen Input <strong>${a}</strong> und <strong>${b}</strong> um.</li>
+          <li>Noch einen Trigger mit <kbd>+</kbd>.</li>
+          <li><strong>Name</strong>: <code>Aux${aux} LOW GPIO${bcm}</code></li>
+          <li><strong>Event</strong>: <em>Variable changes</em>, Variable = <code>RPi_GPIO:gpio_state_${slot}</code>.</li>
+          <li><strong>Condition</strong>: <code>RPi_GPIO:gpio_state_${slot}</code> <em>ist gleich</em> <code>LOW</code>.</li>
+          <li><strong>Action</strong>: <em>${label} → Aux/Output: Set source</em><br>
+            Aux Output = <strong>Aux ${aux}</strong><br>
+            Input = <code>${b}</code> &nbsp;– gleiche Logik wie oben, ATEM-Eingangsnummer eintragen.</li>
+        </ol>
+        <h4 style="margin:14px 0 8px">4. Ergebnis</h4>
+        <ol class="steps">
+          <li>Taster drücken → Aux ${aux} wechselt auf Quelle <strong>${a}</strong>.</li>
+          <li>Taster loslassen → Aux ${aux} kehrt zu Quelle <strong>${b}</strong> zurück.</li>
         </ol>
       `;
+      enhanceCopyButtons(document.getElementById('wzt-steps'));
     }
-    ['wzt-label','wzt-aux','wzt-a','wzt-b'].forEach(id => {
+    ['wzt-label','wzt-aux','wzt-a','wzt-b','wzt-slot'].forEach(id => {
       const el = document.getElementById(id);
       if (el) el.addEventListener('input', () => buildToggleSteps(parseInt(gpioSel.value,10)));
+      if (el) el.addEventListener('change', () => buildToggleSteps(parseInt(gpioSel.value,10)));
     });
 
     // "Jetzt binden" button (press use-case)
@@ -1594,6 +1728,9 @@ var qrcode=function(){var t=function(t,r){var e=t,n=g[r],o=null,i=0,a=null,u=[],
         bindInFlight = false;
       }
     });
+
+    const mwLiveBtn = document.getElementById('mw-live-apply');
+    if (mwLiveBtn) mwLiveBtn.addEventListener('click', initHoldVariableInCompanion);
 
     setStep(1);
   })();
@@ -1664,7 +1801,7 @@ var qrcode=function(){var t=function(t,r){var e=t,n=g[r],o=null,i=0,a=null,u=[],
           <li>Als Variable <code>gpio:gpio${bcm}</code> auswaehlen.</li>
           <li><strong>Condition</strong>: Variable <code>gpio:gpio${bcm}</code> ist gleich <code>1</code>.</li>
           <li><strong>Action 1</strong>: <strong>Internal → Set custom variable</strong><br>Variable = <code>${varName}</code><br>Wert = <code>${atemVar}</code></li>
-          <li><strong>Action 2</strong>: <strong>${label} → Set Auxiliary source</strong><br>Aux = <strong>${aux}</strong><br>Source = <strong>${src}</strong></li>
+          <li><strong>Action 2</strong>: <strong>${label} → Aux/Output: Set source</strong><br>Aux Output = <strong>Aux ${aux}</strong><br>Input = <strong>${src}</strong></li>
         </ol>
 
         <h4 style="margin:14px 0 8px">4. Trigger für Loslassen anlegen</h4>
@@ -1674,8 +1811,8 @@ var qrcode=function(){var t=function(t,r){var e=t,n=g[r],o=null,i=0,a=null,u=[],
           <li><strong>Event</strong>: wieder <strong>Variable changes</strong></li>
           <li>Als Variable wieder <code>gpio:gpio${bcm}</code> auswaehlen.</li>
           <li><strong>Condition</strong>: Variable <code>gpio:gpio${bcm}</code> ist gleich <code>0</code>.</li>
-          <li><strong>Action</strong>: <strong>${label} → Set Auxiliary source</strong><br>Aux = <strong>${aux}</strong><br>Source = <code>${varRef}</code></li>
-          <li>Wenn das ATEM-Modul im Source-Feld keine Variable akzeptiert: nach <strong>Use variable</strong>, <strong>Input from variable</strong> oder aehnlicher Option suchen und dort <code>${varRef}</code> eintragen.</li>
+          <li><strong>Action</strong>: <strong>${label} → Aux/Output: Set source</strong><br>Aux Output = <strong>Aux ${aux}</strong><br>Input = <code>${varRef}</code></li>
+          <li>Wenn das Input-Feld rot wird: Feld auf <strong>Variable/Expression</strong> umstellen und dann <code>${varRef}</code> eintragen.</li>
         </ol>
 
         <h4 style="margin:14px 0 8px">5. Ergebnis</h4>
@@ -1685,6 +1822,7 @@ var qrcode=function(){var t=function(t,r){var e=t,n=g[r],o=null,i=0,a=null,u=[],
           <li>Wenn vorher schon Quelle <strong>${src}</strong> aktiv war, bleibt Aux auf <strong>${src}</strong>. Das ist korrekt.</li>
         </ol>
       `;
+      enhanceCopyButtons(steps);
       out.style.display = 'block';
     }
 
