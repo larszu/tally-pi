@@ -131,7 +131,8 @@ class AtemClient:
             flags = (flags_len >> 11) & 0x1F
             if flags & FLAG_SYN:
                 self.session_id = struct.unpack_from(">H", data, 2)[0]
-                remote_pkt_id = struct.unpack_from(">H", data, 6)[0]
+                # For SYN packets, the remote packet id is at offset 10
+                remote_pkt_id = struct.unpack_from(">H", data, 10)[0]
                 self.sock.sendto(make_ack(self.session_id, remote_pkt_id), (self.ip, ATEM_PORT))
                 self.connected = True
                 self.last_ping = time.time()
@@ -143,14 +144,15 @@ class AtemClient:
             return
         flags_len = struct.unpack_from(">H", data, 0)[0]
         flags = (flags_len >> 11) & 0x1F
-        remote_pkt_id = struct.unpack_from(">H", data, 6)[0]
+        # Remote (server) packet id is at offset 10, not 6
+        remote_pkt_id = struct.unpack_from(">H", data, 10)[0]
 
         # Update session id if the server sent us one
         srv_session = struct.unpack_from(">H", data, 2)[0]
         if srv_session and srv_session != 0x53AB:
             self.session_id = srv_session
 
-        # ACK reliable packets
+        # ACK reliable packets (data packets from ATEM carry state updates)
         if flags & FLAG_RELIABLE:
             self.sock.sendto(make_ack(self.session_id, remote_pkt_id), (self.ip, ATEM_PORT))
 
