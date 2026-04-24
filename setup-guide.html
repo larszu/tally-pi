@@ -354,22 +354,16 @@
     <div class="step active" data-step="1">
       <h3 style="margin-top:4px">Was möchtest du machen?</h3>
       <div class="usecase-picker" id="uc-picker">
-        <button type="button" data-uc="press" class="active">
+        <button type="button" data-uc="atem-toggle" class="active">
           <span>
-            <div class="uc-title">Taster → Companion-Button drücken</div>
-            <div class="uc-desc">Am einfachsten. Der Taster löst einen Button auf einer bestimmten Page/Zeile/Spalte aus.</div>
+            <div class="uc-title">GPIO HIGH/LOW → ATEM Aux temporär</div>
+            <div class="uc-desc">Genau wie deine gespeicherten Trigger: HIGH schaltet auf Quelle A, LOW schaltet auf Quelle B zurück.</div>
           </span>
         </button>
-        <button type="button" data-uc="atem-toggle">
+        <button type="button" data-uc="tally-out">
           <span>
-            <div class="uc-title">Taster → ATEM Aux umschalten (Toggle)</div>
-            <div class="uc-desc">Jeder Druck wechselt Aux zwischen zwei festen Quellen.</div>
-          </span>
-        </button>
-        <button type="button" data-uc="atem-hold">
-          <span>
-            <div class="uc-title">Taster halten → ATEM Aux temporär</div>
-            <div class="uc-desc">Solange du hältst, wird auf eine andere Quelle gewechselt. Beim Loslassen zurück zur vorherigen.</div>
+            <div class="uc-title">ATEM Tally Out → Relais (12V)</div>
+            <div class="uc-desc">Program = Rot, Preview = Grün über zwei GPIO-Ausgänge (Relais) pro Kamera.</div>
           </span>
         </button>
       </div>
@@ -428,29 +422,8 @@
     <div class="step" data-step="4">
       <h3 style="margin-top:4px" id="wz-step4-title">Aktion einrichten</h3>
 
-      <!-- Use-case: press -->
-      <div class="uc-body" data-uc-body="press">
-        <p>Klicke in der Status-Ansicht auf die Kachel von <strong id="wz-press-gpio">GPIO 17</strong> oder nutze den Dialog hier:</p>
-        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin:10px 0">
-          <div>
-            <label style="font-size:12px;color:var(--muted)">Page</label>
-            <input type="number" id="wz-page" value="1" min="0" max="999">
-          </div>
-          <div>
-            <label style="font-size:12px;color:var(--muted)">Row</label>
-            <input type="number" id="wz-row" value="0" min="0" max="999">
-          </div>
-          <div>
-            <label style="font-size:12px;color:var(--muted)">Col</label>
-            <input type="number" id="wz-col" value="0" min="0" max="999">
-          </div>
-        </div>
-        <button class="btn" type="button" id="wz-bind-press">Jetzt binden</button>
-        <div id="wz-bind-status" style="margin-top:8px;font-size:13px"></div>
-      </div>
-
       <!-- Use-case: ATEM toggle -->
-      <div class="uc-body" data-uc-body="atem-toggle" style="display:none">
+      <div class="uc-body" data-uc-body="atem-toggle" style="display:block">
         <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:8px;margin:10px 0">
           <div>
             <label style="font-size:12px;color:var(--muted)">ATEM-Label</label>
@@ -476,34 +449,27 @@
         <div id="wzt-steps" class="wz-instructions"></div>
       </div>
 
-      <!-- Use-case: ATEM hold (momentary) -->
-      <div class="uc-body" data-uc-body="atem-hold" style="display:none">
+      <!-- Use-case: Tally out relay -->
+      <div class="uc-body" data-uc-body="tally-out" style="display:none">
         <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:8px;margin:10px 0">
           <div>
             <label style="font-size:12px;color:var(--muted)">ATEM-Label</label>
-            <input id="mw-label" value="atem">
+            <input id="wzo-label" value="atem">
           </div>
           <div>
-            <label style="font-size:12px;color:var(--muted)">Aux</label>
-            <select id="mw-aux"><option>1</option><option>2</option><option>3</option><option>4</option><option>5</option><option>6</option></select>
+            <label style="font-size:12px;color:var(--muted)">Input-Nummer</label>
+            <input type="number" id="wzo-input" value="5" min="0">
           </div>
           <div>
-            <label style="font-size:12px;color:var(--muted)">Quelle beim Halten</label>
-            <input type="number" id="mw-src" value="3" min="0">
+            <label style="font-size:12px;color:var(--muted)">GPIO-Slot Rot (PGM)</label>
+            <input type="number" id="wzo-red-slot" value="6" min="0" max="27">
+          </div>
+          <div>
+            <label style="font-size:12px;color:var(--muted)">GPIO-Slot Grün (PVW)</label>
+            <input type="number" id="wzo-green-slot" value="7" min="0" max="27">
           </div>
         </div>
-        <!-- hidden placeholder for legacy wizard logic compatibility -->
-        <select id="mw-gpio" style="display:none"></select>
-        <button class="btn" type="button" id="mw-gen" style="display:none">generate</button>
-        <div id="mw-out" style="display:block">
-          <div id="mw-steps"></div>
-        </div>
-        <div class="card" style="margin-top:10px">
-          <strong>Companion live vorbereiten</strong>
-          <p class="hint" style="margin:6px 0">Legt <code>auxX_prev</code> direkt an und setzt den aktuellen Aux-Wert als Startwert.</p>
-          <button class="btn" type="button" id="mw-live-apply">Variable jetzt in Companion setzen</button>
-          <div id="mw-live-status" class="hint" style="margin-top:6px">—</div>
-        </div>
+        <div id="wzo-steps" class="wz-instructions"></div>
       </div>
     </div>
 
@@ -1466,7 +1432,7 @@ var qrcode=function(){var t=function(t,r){var e=t,n=g[r],o=null,i=0,a=null,u=[],
       4: 'Aktion einrichten',
     };
     let currentStep = 1;
-    let currentUC = 'press';
+    let currentUC = 'atem-toggle';
 
     const steps = document.querySelectorAll('.step[data-step]');
     const dots = document.querySelectorAll('#wz-stepper .dot');
@@ -1513,25 +1479,16 @@ var qrcode=function(){var t=function(t,r){var e=t,n=g[r],o=null,i=0,a=null,u=[],
       });
     });
 
-    // GPIO select -> update svg + step-3 labels + mirror into mw-gpio
+    // GPIO select -> update svg + step-3 labels
     function syncGpioUI() {
       const bcm = parseInt(gpioSel.value, 10);
       document.getElementById('wz-svg-gpio').textContent =
         `GPIO ${bcm} (Pin ${BCM_TO_PIN[bcm] || '?'})`;
       document.getElementById('wz-pin-hint').textContent =
         `Du brauchst zwei Pins: GPIO ${bcm} (Pin ${BCM_TO_PIN[bcm] || '?'}) und irgendeinen GND-Pin.`;
-      const mw = document.getElementById('mw-gpio');
-      if (mw && mw.options.length > 0) {
-        // mw-gpio is already populated by initMwWizard; just mirror the selection.
-        const exists = Array.from(mw.options).some(o => +o.value === bcm);
-        if (exists) {
-          mw.value = String(bcm);
-          mw.dispatchEvent(new Event('change'));
-        }
-      }
     }
     gpioSel.addEventListener('change', syncGpioUI);
-    // Defer the initial sync until after initMwWizard populated mw-gpio.
+    // Defer initial sync until dropdown is fully populated.
     setTimeout(syncGpioUI, 0);
 
     function updateStep3Labels() {
@@ -1539,16 +1496,10 @@ var qrcode=function(){var t=function(t,r){var e=t,n=g[r],o=null,i=0,a=null,u=[],
       document.getElementById('wz-pin-line').textContent = `GPIO ${bcm} (Pin ${BCM_TO_PIN[bcm] || '?'})`;
       document.getElementById('wz-varname').textContent  = `$(gpio:gpio${bcm})`;
       document.getElementById('wz-check-tile').textContent = `GPIO ${bcm}`;
-      // Trigger advice depends on use-case
       const trig = document.getElementById('wz-trig');
       const inv  = document.getElementById('wz-invert-line');
-      if (currentUC === 'atem-hold') {
-        trig.textContent = 'BOTH';
-        inv.innerHTML = '<code>Invert values</code> aktivieren, damit „gedrückt" = <code>1</code> ist.';
-      } else {
-        trig.textContent = 'FALLING';
-        inv.innerHTML = 'Optional: <code>Invert values</code> aktivieren, damit „gedrückt" = <code>1</code> ist.';
-      }
+      trig.textContent = 'BOTH';
+      inv.innerHTML = '<code>Invert values</code> aktivieren, damit „gedrückt" = <code>HIGH</code> ist.';
     }
 
     function refreshStep4() {
@@ -1557,72 +1508,14 @@ var qrcode=function(){var t=function(t,r){var e=t,n=g[r],o=null,i=0,a=null,u=[],
       document.querySelectorAll('.uc-body').forEach(b =>
         b.style.display = (b.dataset.ucBody === currentUC) ? 'block' : 'none');
 
-      // Press use-case helper button label
-      const pg = document.getElementById('wz-press-gpio');
-      if (pg) pg.textContent = `GPIO ${bcm}`;
-
-      // Build ATEM-toggle instructions
       if (currentUC === 'atem-toggle') buildToggleSteps(bcm);
-      // ATEM-hold instructions: re-run the mw-build via event
-      if (currentUC === 'atem-hold') {
-        const mwBtn = document.getElementById('mw-gen');
-        if (mwBtn) mwBtn.click();
-      }
-    }
+      if (currentUC === 'tally-out') buildTallyOutSteps(bcm);
 
-    async function companionApi(path, method, body) {
-      const r = await fetch('/companion-api', {
-        method: 'POST',
-        headers: {'Content-Type':'application/json'},
-        body: JSON.stringify({ path, method: method || 'POST', body: body || '' }),
-      });
-      return r.json();
-    }
-
-    async function initToggleVariableInCompanion() {
-      const st = document.getElementById('wzt-live-status');
-      const aux = parseInt(document.getElementById('wzt-aux').value, 10);
-      const a = parseInt(document.getElementById('wzt-a').value, 10);
-      if (!Number.isFinite(aux) || !Number.isFinite(a)) {
-        st.textContent = 'Aux/Quelle ungültig.';
-        return;
-      }
-      const varState = `aux${aux}_state`;
-      st.textContent = 'Sende an Companion ...';
-      try {
-        const res = await companionApi(`/api/custom-variable/${encodeURIComponent(varState)}/value`, 'POST', String(a));
-        if (res && res.ok) st.textContent = `OK: ${varState} = ${a} (HTTP ${res.status})`;
-        else st.textContent = `Fehler: ${(res && (res.error || ('HTTP ' + res.status))) || 'unbekannt'}`;
-      } catch (e) {
-        st.textContent = 'Fehler: ' + (e.message || e);
-      }
-    }
-
-    async function initHoldVariableInCompanion() {
-      const st = document.getElementById('mw-live-status');
-      const aux = parseInt(document.getElementById('mw-aux').value, 10);
-      const src = parseInt(document.getElementById('mw-src').value, 10);
-      if (!Number.isFinite(aux) || !Number.isFinite(src)) {
-        st.textContent = 'Aux/Quelle ungültig.';
-        return;
-      }
-      const varName = `aux${aux}_prev`;
-      let seed = src;
-      try {
-        const r = await fetch('/atem', {cache:'no-store'});
-        const j = await r.json();
-        if (j && j.connected && j.aux && j.aux[String(aux)] != null) {
-          const cur = parseInt(j.aux[String(aux)], 10);
-          if (Number.isFinite(cur)) seed = cur;
-        }
-      } catch (_) {}
-      st.textContent = 'Sende an Companion ...';
-      try {
-        const res = await companionApi(`/api/custom-variable/${encodeURIComponent(varName)}/value`, 'POST', String(seed));
-        if (res && res.ok) st.textContent = `OK: ${varName} = ${seed} (HTTP ${res.status})`;
-        else st.textContent = `Fehler: ${(res && (res.error || ('HTTP ' + res.status))) || 'unbekannt'}`;
-      } catch (e) {
-        st.textContent = 'Fehler: ' + (e.message || e);
+      const t = document.getElementById('wz-step4-title');
+      if (t) {
+        t.textContent = currentUC === 'tally-out'
+          ? 'Tally Out (Relais) einrichten'
+          : 'HIGH/LOW Trigger für temporäres Aux-Schalten';
       }
     }
 
@@ -1680,60 +1573,73 @@ var qrcode=function(){var t=function(t,r){var e=t,n=g[r],o=null,i=0,a=null,u=[],
       `;
       enhanceCopyButtons(document.getElementById('wzt-steps'));
     }
+
+    function buildTallyOutSteps(_bcm) {
+      const rawLabel = (document.getElementById('wzo-label').value || 'atem').trim();
+      const label = escHtml(rawLabel.replace(/[^A-Za-z0-9_-]/g, '') || 'atem');
+      const input = parseInt(document.getElementById('wzo-input').value, 10);
+      const redSlot = parseInt(document.getElementById('wzo-red-slot').value, 10);
+      const greenSlot = parseInt(document.getElementById('wzo-green-slot').value, 10);
+      const out = document.getElementById('wzo-steps');
+      if (!out) return;
+
+      out.innerHTML = `
+        <h4 style="margin:0 0 8px">Prinzip</h4>
+        <p class="hint" style="margin:0 0 10px">
+          Für Input <strong>${Number.isFinite(input) ? input : 'N'}</strong> werden zwei Relais-Ausgänge verwendet:
+          <strong>Rot (PGM)</strong> auf Slot <strong>${redSlot}</strong> und
+          <strong>Grün (PVW)</strong> auf Slot <strong>${greenSlot}</strong>.
+        </p>
+
+        <h4 style="margin:14px 0 8px">1. raspberry-gpio Outputs konfigurieren</h4>
+        <ol class="steps">
+          <li>Connections → <strong>RPi_GPIO</strong> öffnen.</li>
+          <li>Slot <strong>${redSlot}</strong> aktivieren, <strong>Set as IN/OUT = OUT</strong>, Initialwert <strong>LOW</strong>.</li>
+          <li>Slot <strong>${greenSlot}</strong> aktivieren, <strong>Set as IN/OUT = OUT</strong>, Initialwert <strong>LOW</strong>.</li>
+          <li>Relais-Eingänge anschließen: Rot an Slot ${redSlot}, Grün an Slot ${greenSlot}. Gemeinsame GND beachten.</li>
+        </ol>
+
+        <h4 style="margin:14px 0 8px">2. Trigger für Program (rot) anlegen</h4>
+        <ol class="steps">
+          <li>Trigger <strong>Input${Number.isFinite(input) ? input : 'N'} PGM</strong> erstellen.</li>
+          <li><strong>Event</strong>: <em>Variable changes</em> auf die ATEM-Programm-Variable von ME1 (über Variablen-Picker wählen).</li>
+          <li><strong>Condition</strong>: Programm-Input ist gleich <code>${Number.isFinite(input) ? input : 'N'}</code>.</li>
+          <li><strong>Actions</strong>: Rot-Relais <strong>HIGH</strong>, Grün-Relais <strong>LOW</strong>.</li>
+        </ol>
+
+        <h4 style="margin:14px 0 8px">3. Trigger für Preview (grün) anlegen</h4>
+        <ol class="steps">
+          <li>Trigger <strong>Input${Number.isFinite(input) ? input : 'N'} PVW</strong> erstellen.</li>
+          <li><strong>Event</strong>: <em>Variable changes</em> auf die ATEM-Preview-Variable von ME1.</li>
+          <li><strong>Condition</strong>: Preview-Input ist gleich <code>${Number.isFinite(input) ? input : 'N'}</code>.</li>
+          <li><strong>Actions</strong>: Rot-Relais <strong>LOW</strong>, Grün-Relais <strong>HIGH</strong>.</li>
+        </ol>
+
+        <h4 style="margin:14px 0 8px">4. Trigger für Safe (beide aus)</h4>
+        <ol class="steps">
+          <li>Zusatz-Trigger für Zustände außerhalb PGM/PVW anlegen.</li>
+          <li><strong>Action</strong>: beide Relais auf <strong>LOW</strong>.</li>
+        </ol>
+
+        <div class="card warn" style="margin-top:10px">
+          <strong>Hinweis:</strong> In Companion für die Output-Actions im Modul <strong>RPi_GPIO</strong> immer den gleichen Slot verwenden
+          und nur den Wert HIGH/LOW ändern. ATEM-Variablen immer über den Picker wählen, nicht tippen.
+        </div>
+      `;
+      enhanceCopyButtons(out);
+    }
+
     ['wzt-label','wzt-aux','wzt-a','wzt-b','wzt-slot'].forEach(id => {
       const el = document.getElementById(id);
       if (el) el.addEventListener('input', () => buildToggleSteps(parseInt(gpioSel.value,10)));
       if (el) el.addEventListener('change', () => buildToggleSteps(parseInt(gpioSel.value,10)));
     });
 
-    // "Jetzt binden" button (press use-case)
-    let bindInFlight = false;
-    document.getElementById('wz-bind-press').addEventListener('click', async () => {
-      if (bindInFlight) return;
-      const bcm = parseInt(gpioSel.value, 10);
-      const st = document.getElementById('wz-bind-status');
-
-      // Validate numeric inputs
-      const page = parseInt(document.getElementById('wz-page').value, 10);
-      const row  = parseInt(document.getElementById('wz-row').value,  10);
-      const col  = parseInt(document.getElementById('wz-col').value, 10);
-      if (!Number.isFinite(page) || page < 0 ||
-          !Number.isFinite(row)  || row  < 0 ||
-          !Number.isFinite(col)  || col  < 0) {
-        st.innerHTML = `<span style="color:var(--err)">Page/Row/Column müssen nicht-negative Ganzzahlen sein.</span>`;
-        return;
-      }
-
-      const binding = {
-        source:'pi', bcm,
-        trigger_edge:'falling', bias:'pull-up', debounce_ms:20, enabled:true,
-        action: { kind:'press', page, row, column: col },
-      };
-      bindInFlight = true;
-      try {
-        await loadBindings();
-        const next = bindings.filter(b => !((b.source||'pi')==='pi' && b.bcm === bcm));
-        next.push(binding);
-        const r = await fetch('/bindings', {
-          method:'POST', headers:{'Content-Type':'application/json'},
-          body: JSON.stringify(next),
-        });
-        const j = await r.json();
-        if (j.ok) {
-          bindings = next;
-          st.innerHTML = `<span style="color:var(--ok)">✓ Gebunden. Taster drücken → Button ${page}/${row}/${col}.</span>`;
-        } else {
-          st.innerHTML = `<span style="color:var(--err)">Fehler: ${escHtml(j.error||'unbekannt')}</span>`;
-        }
-      } catch (e) {
-        st.innerHTML = `<span style="color:var(--err)">Fehler: ${escHtml(e.message || e)}</span>`;
-      } finally {
-        bindInFlight = false;
-      }
+    ['wzo-label','wzo-input','wzo-red-slot','wzo-green-slot'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.addEventListener('input', () => buildTallyOutSteps(parseInt(gpioSel.value,10)));
+      if (el) el.addEventListener('change', () => buildTallyOutSteps(parseInt(gpioSel.value,10)));
     });
-
-    const mwLiveBtn = document.getElementById('mw-live-apply');
-    if (mwLiveBtn) mwLiveBtn.addEventListener('click', initHoldVariableInCompanion);
 
     setStep(1);
   })();
@@ -1745,98 +1651,6 @@ var qrcode=function(){var t=function(t,r){var e=t,n=g[r],o=null,i=0,a=null,u=[],
     setInterval(pollGpio, 500);
     setInterval(pollNumato, 500);
     setInterval(loadBindings, 3000);
-  })();
-
-  // ---- Momentary-Aux Wizard ----
-  (function initMwWizard() {
-    const gpioSel = document.getElementById('mw-gpio');
-    if (!gpioSel) return;
-    // Fill GPIO dropdown with Companion-usable pins only
-    const USABLE = [4,5,6,12,13,16,17,18,19,20,21,22,23,24,25,26,27];
-    USABLE.forEach(n => {
-      const o = document.createElement('option');
-      o.value = n; o.textContent = 'GPIO ' + n;
-      if (n === 17) o.selected = true;
-      gpioSel.appendChild(o);
-    });
-
-    const $ = id => document.getElementById(id);
-    const out = $('mw-out');
-    const steps = $('mw-steps');
-
-    function build() {
-      const rawLabel = ($('mw-label').value || 'atem').trim();
-      // Strip anything that would break $(label:var) references in Companion
-      const label = escHtml(rawLabel.replace(/[^A-Za-z0-9_-]/g, '') || 'atem');
-      const aux   = parseInt($('mw-aux').value, 10);
-      const src   = parseInt($('mw-src').value, 10);
-      const bcm   = parseInt(gpioSel.value, 10);
-      const varName = `aux${aux}_prev`;
-      const varRef  = `$(internal:custom_${varName})`;
-      const atemVar = `$(${label}:aux${aux}_input)`;
-
-      steps.innerHTML = `
-        <h4 style="margin:0 0 8px">1. Custom-Variable anlegen</h4>
-        <ol class="steps">
-          <li>In Companion links auf <strong>Variables</strong> gehen.</li>
-          <li><strong>Custom variables</strong> öffnen.</li>
-          <li>Mit <kbd>Add</kbd> eine neue Variable anlegen: Name <code>${varName}</code>.</li>
-          <li>Wert egal. Diese Variable speichert beim Drücken die aktuelle Aux-Quelle.</li>
-        </ol>
-
-        <h4 style="margin:14px 0 8px">2. GPIO-Variable sicherstellen</h4>
-        <ol class="steps">
-          <li>Connections → Raspberry GPIO öffnen.</li>
-          <li>Für <code>GPIO ${bcm}</code>: <strong>Use GPIO pin</strong> an.</li>
-          <li><strong>Set as IN/OUT</strong> = <strong>IN</strong>.</li>
-          <li><strong>Trigger type</strong> = <strong>BOTH</strong>.</li>
-          <li><strong>Debounce</strong> = <strong>20 ms</strong>.</li>
-          <li>Falls der Taster gegen GND schaltet: <strong>Invert values</strong> an, damit gedrückt = <code>1</code>.</li>
-          <li>Ergebnis: Companion-Variable <code>$(gpio:gpio${bcm})</code>.</li>
-        </ol>
-
-        <h4 style="margin:14px 0 8px">3. Trigger für Tastendruck anlegen</h4>
-        <ol class="steps">
-          <li>Links auf <strong>Triggers</strong> gehen.</li>
-          <li>Mit <kbd>+</kbd> einen neuen Trigger anlegen.</li>
-          <li><strong>Name</strong>: <code>Aux${aux} hold GPIO${bcm} down</code></li>
-          <li><strong>Event</strong>: <strong>Variable changes</strong></li>
-          <li>Als Variable <code>gpio:gpio${bcm}</code> auswaehlen.</li>
-          <li><strong>Condition</strong>: Variable <code>gpio:gpio${bcm}</code> ist gleich <code>1</code>.</li>
-          <li><strong>Action 1</strong>: <strong>Internal → Set custom variable</strong><br>Variable = <code>${varName}</code><br>Wert = <code>${atemVar}</code></li>
-          <li><strong>Action 2</strong>: <strong>${label} → Aux/Output: Set source</strong><br>Aux Output = <strong>Aux ${aux}</strong><br>Input = <strong>${src}</strong></li>
-        </ol>
-
-        <h4 style="margin:14px 0 8px">4. Trigger für Loslassen anlegen</h4>
-        <ol class="steps">
-          <li>Noch einen Trigger mit <kbd>+</kbd> anlegen.</li>
-          <li><strong>Name</strong>: <code>Aux${aux} hold GPIO${bcm} up</code></li>
-          <li><strong>Event</strong>: wieder <strong>Variable changes</strong></li>
-          <li>Als Variable wieder <code>gpio:gpio${bcm}</code> auswaehlen.</li>
-          <li><strong>Condition</strong>: Variable <code>gpio:gpio${bcm}</code> ist gleich <code>0</code>.</li>
-          <li><strong>Action</strong>: <strong>${label} → Aux/Output: Set source</strong><br>Aux Output = <strong>Aux ${aux}</strong><br>Input = <code>${varRef}</code></li>
-          <li>Wenn das Input-Feld rot wird: Feld auf <strong>Variable/Expression</strong> umstellen und dann <code>${varRef}</code> eintragen.</li>
-        </ol>
-
-        <h4 style="margin:14px 0 8px">5. Ergebnis</h4>
-        <ol class="steps">
-          <li>Taste druecken: Trigger 1 merkt sich die aktuelle Aux-${aux}-Quelle und schaltet auf <strong>${src}</strong>.</li>
-          <li>Taste loslassen: Trigger 2 liest <code>${varName}</code> und stellt genau diese Quelle wieder her.</li>
-          <li>Wenn vorher schon Quelle <strong>${src}</strong> aktiv war, bleibt Aux auf <strong>${src}</strong>. Das ist korrekt.</li>
-        </ol>
-      `;
-      enhanceCopyButtons(steps);
-      out.style.display = 'block';
-    }
-
-    $('mw-gen').addEventListener('click', build);
-    // Auto-rebuild when any hold-aux input changes
-    ['mw-label','mw-aux','mw-src','mw-gpio'].forEach(id => {
-      const el = document.getElementById(id);
-      if (el) el.addEventListener('input', build);
-      if (el) el.addEventListener('change', build);
-    });
-    build();
   })();
 
   // ============================== TALLY ==============================
