@@ -501,18 +501,6 @@
   <h2>Tally-Lampen über das Netzwerk</h2>
   <p class="hint">Jedes Gerät öffnet eine URL im Browser. Die Seite leuchtet rot (PGM), grün (PVW) oder schwarz (safe).</p>
 
-  <div class="card">
-    <h3>Modus</h3>
-    <label style="display:block;margin:4px 0">
-      <input type="radio" name="tally-mode" value="atem" checked>
-      ATEM direkt (empfohlen)
-    </label>
-    <label style="display:block;margin:4px 0">
-      <input type="radio" name="tally-mode" value="arbiter">
-      TallyArbiter (lokal auf dem Pi)
-    </label>
-  </div>
-
   <div class="card" id="tally-atem-card">
     <h3>ATEM</h3>
     <label>ATEM-IP<br>
@@ -522,14 +510,6 @@
       </div>
     </label>
     <div id="tally-atem-status" class="hint" style="margin-top:6px">—</div>
-  </div>
-
-  <div class="card" id="tally-arbiter-card" style="display:none">
-    <h3>TallyArbiter</h3>
-    <label>URL<br>
-      <input type="text" id="tally-arbiter-url" placeholder="http://localhost:4455" style="width:100%">
-    </label>
-    <p class="hint">Die Tally-Links leiten direkt in TallyArbiter weiter. Geräte müssen dort angelegt sein.</p>
   </div>
 
   <div class="card">
@@ -1660,26 +1640,11 @@ var qrcode=function(){var t=function(t,r){var e=t,n=g[r],o=null,i=0,a=null,u=[],
     const saveBtn = document.getElementById('tally-save');
     const saveSt = document.getElementById('tally-save-status');
     const atemIpEl = document.getElementById('tally-atem-ip');
-    const arbUrlEl = document.getElementById('tally-arbiter-url');
-    const atemCard = document.getElementById('tally-atem-card');
-    const arbCard = document.getElementById('tally-arbiter-card');
     const atemStatus = document.getElementById('tally-atem-status');
     const atemApplyBtn = document.getElementById('tally-atem-apply');
     if (!host || !addBtn || !saveBtn) return;
 
     let devices = [];
-
-    function currentMode(){
-      const r = document.querySelector('input[name="tally-mode"]:checked');
-      return r ? r.value : 'atem';
-    }
-    function applyMode(){
-      const m = currentMode();
-      atemCard.style.display = (m === 'atem') ? '' : 'none';
-      arbCard.style.display = (m === 'arbiter') ? '' : 'none';
-    }
-    document.querySelectorAll('input[name="tally-mode"]').forEach(r =>
-      r.addEventListener('change', applyMode));
 
     function baseUrl(){
       // If accessed via localhost/127.x, substitute the Pi's LAN IP so QR codes work on phones.
@@ -1732,7 +1697,8 @@ var qrcode=function(){var t=function(t,r){var e=t,n=g[r],o=null,i=0,a=null,u=[],
     function render(){
       host.innerHTML = '';
       devices.forEach((d, i) => {
-        const url = baseUrl() + '/tally/' + encodeURIComponent(d.id||'');
+        const inputNum = Number(d.input) || 0;
+        const url = baseUrl() + '/tally/' + encodeURIComponent(String(inputNum));
         const card = document.createElement('div');
         card.style.cssText = 'border:1px solid #334155;border-radius:8px;padding:10px;margin:8px 0;display:flex;gap:12px;align-items:flex-start;flex-wrap:wrap';
         card.innerHTML = `
@@ -1765,8 +1731,8 @@ var qrcode=function(){var t=function(t,r){var e=t,n=g[r],o=null,i=0,a=null,u=[],
                 .filter(n => !isNaN(n) && n>0);
             }
             else devices[i][f] = inp.value;
-            if (f === 'id') {
-              const newUrl = baseUrl() + '/tally/' + encodeURIComponent(devices[i].id||'');
+            if (f === 'id' || f === 'input') {
+              const newUrl = baseUrl() + '/tally/' + encodeURIComponent(String(Number(devices[i].input) || 0));
               const link = card.querySelector('.tally-qr a');
               if (link) { link.href = newUrl; link.textContent = newUrl; }
               renderQr(qrBox, newUrl);
@@ -1777,7 +1743,7 @@ var qrcode=function(){var t=function(t,r){var e=t,n=g[r],o=null,i=0,a=null,u=[],
           devices.splice(i,1); render();
         });
         card.querySelector('[data-act=refresh-qr]').addEventListener('click', () => {
-          renderQr(qrBox, baseUrl() + '/tally/' + encodeURIComponent(devices[i].id||''));
+          renderQr(qrBox, baseUrl() + '/tally/' + encodeURIComponent(String(Number(devices[i].input) || 0)));
         });
         host.appendChild(card);
       });
@@ -1792,9 +1758,9 @@ var qrcode=function(){var t=function(t,r){var e=t,n=g[r],o=null,i=0,a=null,u=[],
     saveBtn.addEventListener('click', async () => {
       saveSt.textContent = 'speichere ...';
       const cfg = {
-        mode: currentMode(),
+        mode: 'atem',
         atem_ip: (atemIpEl.value||'').trim(),
-        arbiter_url: (arbUrlEl.value||'').trim(),
+        arbiter_url: 'http://localhost:4455',
         devices: devices,
       };
       try {
@@ -1816,18 +1782,13 @@ var qrcode=function(){var t=function(t,r){var e=t,n=g[r],o=null,i=0,a=null,u=[],
       try {
         const r = await fetch('/tally-config', {cache:'no-store'});
         const cfg = await r.json();
-        const mode = (cfg.mode === 'arbiter') ? 'arbiter' : 'atem';
-        const radio = document.querySelector('input[name="tally-mode"][value="'+mode+'"]');
-        if (radio) radio.checked = true;
         atemIpEl.value = cfg.atem_ip || '';
-        arbUrlEl.value = cfg.arbiter_url || '';
         devices = Array.isArray(cfg.devices) ? cfg.devices.slice().map(d => ({
           id: d.id||'', name: d.name||'',
           input: Number(d.input)||0,
           me: Number(d.me)||1,
           aux: Array.isArray(d.aux) ? d.aux.slice() : [],
         })) : [];
-        applyMode();
         render();
       } catch(e) {
         atemStatus.textContent = 'Config konnte nicht geladen werden';
@@ -1869,9 +1830,9 @@ var qrcode=function(){var t=function(t,r){var e=t,n=g[r],o=null,i=0,a=null,u=[],
           // Merge into existing config to avoid clobbering devices/mode when user just changes IP
           const cur = await fetch('/tally-config', {cache:'no-store'}).then(r => r.json()).catch(() => ({}));
           const cfg = {
-            mode: currentMode(),
+            mode: 'atem',
             atem_ip: ip,
-            arbiter_url: (arbUrlEl.value || cur.arbiter_url || '').trim(),
+            arbiter_url: 'http://localhost:4455',
             devices: devices.length ? devices : (Array.isArray(cur.devices) ? cur.devices : []),
           };
           const r = await fetch('/tally-config', {
