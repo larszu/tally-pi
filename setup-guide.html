@@ -1645,6 +1645,7 @@ var qrcode=function(){var t=function(t,r){var e=t,n=g[r],o=null,i=0,a=null,u=[],
     if (!host || !addBtn || !saveBtn) return;
 
     let devices = [];
+    let atemInputs = {};
 
     function baseUrl(){
       // If accessed via localhost/127.x, substitute the Pi's LAN IP so QR codes work on phones.
@@ -1694,17 +1695,31 @@ var qrcode=function(){var t=function(t,r){var e=t,n=g[r],o=null,i=0,a=null,u=[],
       }
     }
 
+    function refreshAtemRefs(){
+      const cards = host.querySelectorAll('[data-tally-card]');
+      cards.forEach((card, i) => {
+        const ref = card.querySelector('.tally-atem-ref');
+        if (!ref) return;
+        const inputNum = Number((devices[i] || {}).input) || 0;
+        const info = atemInputs[String(inputNum)] || {};
+        const name = info.long || info.short || '—';
+        ref.textContent = 'ATEM: Input ' + inputNum + ' = ' + name;
+      });
+    }
+
     function render(){
       host.innerHTML = '';
       devices.forEach((d, i) => {
         const inputNum = Number(d.input) || 0;
         const url = baseUrl() + '/tally/' + encodeURIComponent(String(inputNum));
         const card = document.createElement('div');
+        card.setAttribute('data-tally-card', '1');
         card.style.cssText = 'border:1px solid #334155;border-radius:8px;padding:10px;margin:8px 0;display:flex;gap:12px;align-items:flex-start;flex-wrap:wrap';
         card.innerHTML = `
           <div class="tally-qr" style="flex:0 0 auto;display:flex;flex-direction:column;align-items:center;gap:4px">
             <div class="tally-qr-box" style="background:#fff;padding:4px;border-radius:4px;line-height:0"></div>
             <a href="${escHtml(url)}" target="_blank" style="font-size:11px;word-break:break-all;max-width:140px;text-align:center">${escHtml(url)}</a>
+            <div class="tally-atem-ref" style="font-size:11px;color:var(--muted);max-width:160px;text-align:center">ATEM: Input ${inputNum} = —</div>
           </div>
           <div style="flex:1 1 240px;display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:6px">
             <label>ID<br><input data-f="id" value="${escHtml(d.id||'')}" placeholder="cam1" style="width:100%"></label>
@@ -1736,6 +1751,7 @@ var qrcode=function(){var t=function(t,r){var e=t,n=g[r],o=null,i=0,a=null,u=[],
               const link = card.querySelector('.tally-qr a');
               if (link) { link.href = newUrl; link.textContent = newUrl; }
               renderQr(qrBox, newUrl);
+              refreshAtemRefs();
             }
           });
         });
@@ -1747,6 +1763,7 @@ var qrcode=function(){var t=function(t,r){var e=t,n=g[r],o=null,i=0,a=null,u=[],
         });
         host.appendChild(card);
       });
+      refreshAtemRefs();
     }
 
     addBtn.addEventListener('click', () => {
@@ -1800,14 +1817,20 @@ var qrcode=function(){var t=function(t,r){var e=t,n=g[r],o=null,i=0,a=null,u=[],
         const r = await fetch('/atem', {cache:'no-store'});
         const a = await r.json();
         if (a.connected) {
+          atemInputs = (a.inputs && typeof a.inputs === 'object') ? a.inputs : {};
           const pgm = Object.values(a.pgm||{}).join(',') || '—';
           const pvw = Object.values(a.pvw||{}).join(',') || '—';
           atemStatus.textContent = '● verbunden – PGM '+pgm+' / PVW '+pvw;
+          refreshAtemRefs();
         } else {
+          atemInputs = {};
           atemStatus.textContent = '○ ' + (a.error||'nicht verbunden');
+          refreshAtemRefs();
         }
       } catch(e) {
+        atemInputs = {};
         atemStatus.textContent = '○ watcher nicht erreichbar';
+        refreshAtemRefs();
       }
     }
 
