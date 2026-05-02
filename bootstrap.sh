@@ -81,7 +81,6 @@ install -m 755 guide_server.py     /opt/pi-guide/
 install -m 755 gpio_watcher.py     /opt/pi-guide/
 install -m 755 numato_watcher.py   /opt/pi-guide/
 install -m 755 pi_status.py        /opt/pi-status/
-install -m 755 gpio-fixup.sh       /usr/local/bin/
 [ -f /opt/pi-guide/bindings.json ] || echo '[]' > /opt/pi-guide/bindings.json
 chmod 664 /opt/pi-guide/bindings.json
 
@@ -90,7 +89,6 @@ install -m 644 pi-guide.service          /etc/systemd/system/
 install -m 644 pi-gpio-watcher.service   /etc/systemd/system/
 install -m 644 pi-numato-watcher.service /etc/systemd/system/
 install -m 644 pi-status.service         /etc/systemd/system/
-install -m 644 pi-gpio-fixup.service     /etc/systemd/system/
 install -m 644 10-modesetting.conf       /etc/X11/xorg.conf.d/
 install -m 644 99-numato.rules           /etc/udev/rules.d/
 udevadm control --reload-rules || true
@@ -150,7 +148,6 @@ systemctl enable companion                >/dev/null 2>&1 || true
 systemctl enable pi-guide                 >/dev/null 2>&1 || true
 systemctl enable pi-gpio-watcher          >/dev/null 2>&1 || true
 systemctl enable pi-numato-watcher        >/dev/null 2>&1 || true
-systemctl enable pi-gpio-fixup            >/dev/null 2>&1 || true
 systemctl enable getty@tty1               >/dev/null 2>&1 || true
 # pi-status stays disabled until an OLED is physically present
 systemctl disable pi-status               >/dev/null 2>&1 || true
@@ -159,7 +156,6 @@ systemctl disable pi-status               >/dev/null 2>&1 || true
 systemctl restart pi-guide          || true
 systemctl restart pi-gpio-watcher   || true
 systemctl restart pi-numato-watcher || true
-systemctl restart pi-gpio-fixup     || true
 
 log "=================================================================="
 log "  Installation complete."
