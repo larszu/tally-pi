@@ -34,7 +34,8 @@ apt-get install -y --no-install-recommends \
     python3-serial python3-libgpiod \
     libjpeg-dev zlib1g-dev libfreetype6-dev \
     xserver-xorg xinit x11-xserver-utils openbox unclutter chromium \
-    fonts-dejavu
+    fonts-dejavu \
+    onboard at-spi2-core
 
 log "2/7 Cloning / updating repository at $REPO_DIR"
 if [ -d "$REPO_DIR/.git" ]; then
@@ -45,13 +46,29 @@ else
 fi
 cd "$REPO_DIR"
 
-log "3/7 Enabling I²C in /boot/firmware/config.txt"
+log "3/7 Enabling I²C + HDMI compatibility in /boot/firmware/config.txt"
 CONFIG_TXT="/boot/firmware/config.txt"
 if [ -f "$CONFIG_TXT" ]; then
     if ! grep -qE '^\s*dtparam=i2c_arm=on' "$CONFIG_TXT"; then
         echo "dtparam=i2c_arm=on" >> "$CONFIG_TXT"
         REBOOT_NEEDED=1
     fi
+    # HDMI: force output even with couplers/adapters that block HPD or EDID
+    for setting in \
+        "hdmi_force_hotplug=1" \
+        "hdmi_drive=2" \
+        "config_hdmi_boost=7" \
+        "hdmi_ignore_edid=0xa5000080" \
+        "hdmi_group=2" \
+        "hdmi_mode=82"
+    do
+        key="${setting%%=*}"
+        if grep -qE "^\s*${key}=" "$CONFIG_TXT"; then
+            sed -i "s|^\s*${key}=.*|${setting}|" "$CONFIG_TXT"
+        else
+            echo "$setting" >> "$CONFIG_TXT"
+        fi
+    done
 fi
 adduser "$TARGET_USER" i2c    >/dev/null 2>&1 || true
 adduser "$TARGET_USER" dialout >/dev/null 2>&1 || true

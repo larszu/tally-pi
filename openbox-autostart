@@ -1,3 +1,6 @@
+# On-screen keyboard (auto-shows when a text field is touched)
+onboard --size=800x200 --layout=Phone &
+
 # Wait for Companion to be up
 for i in $(seq 1 60); do
   if curl -fs http://localhost:8000/ >/dev/null 2>&1; then break; fi
@@ -8,6 +11,7 @@ chromium \
   --no-first-run --disable-translate --disable-infobars \
   --noerrdialogs --disable-session-crashed-bubble --disable-features=TranslateUI \
   --start-maximized --new-window \
+  --force-renderer-accessibility \
   "http://localhost:8080/" \
   "http://localhost:8000/" \
   "http://localhost:8000/#/connections" &
