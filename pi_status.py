@@ -107,8 +107,6 @@ def main() -> None:
         font = ImageFont.load_default()
         font_bold = font
 
-    Y_POSITIONS = [0, 13, 23]
-
     while True:
         ip = current_ip()
         temp = cpu_temp()
@@ -122,26 +120,34 @@ def main() -> None:
         gpio_row1 = " ".join(gpio_tokens[:mid]) if gpio_tokens else "keine Bindings"
         gpio_row2 = " ".join(gpio_tokens[mid:])
 
+        # Each page: list of (text, font, y_px)
         pages = [
             [
-                ("Admin UI", font_bold),
-                (f"{ip}:8080/", font),
-                ("", font),
+                ("Admin UI",    font_bold, 0),
+                (f"{ip}:8080/", font,      13),
+                ("",            font,      23),
             ],
             [
-                ("Companion UI", font_bold),
-                (f"{ip}:8000/", font),
-                ("", font),
+                ("Companion UI", font_bold, 0),
+                (f"{ip}:8000/",  font,      13),
+                ("",             font,      23),
             ],
             [
-                ("CPU / System", font_bold),
-                (f"Temp: {temp}", font),
-                (f"up: {up}", font),
+                ("CPU / System",  font_bold, 0),
+                (f"Temp: {temp}", font,      13),
+                (f"up: {up}",     font,      23),
             ],
             [
-                ("GPIO Status", font_bold),
-                (gpio_row1, font),
-                (gpio_row2, font),
+                ("GPIO Status", font_bold, 0),
+                (gpio_row1,     font,      13),
+                (gpio_row2,     font,      23),
+            ],
+            # XLR 3-pin breakout wiring reference (4 small lines)
+            [
+                ("XLR Breakout",     font, 0),
+                ("PIN 1: GPI Return", font, 9),
+                ("PIN 2: GND",        font, 18),
+                ("PIN 3: GPO Tally",  font, 27),
             ],
             # [
             #     ("SSH Zugang", font_bold),
@@ -152,7 +158,7 @@ def main() -> None:
 
         for page in pages:
             with canvas(device) as draw:
-                for (text, f), y in zip(page, Y_POSITIONS):
+                for text, f, y in page:
                     draw.text((0, y), text, font=f, fill=255)
             time.sleep(5)
 
