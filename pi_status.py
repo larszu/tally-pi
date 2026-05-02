@@ -79,13 +79,13 @@ def main() -> None:
             "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf", 8
         )
         font_bold = ImageFont.truetype(
-            "/usr/share/fonts/truetype/dejavu/DejaVuSansMono-Bold.ttf", 8
+            "/usr/share/fonts/truetype/dejavu/DejaVuSansMono-Bold.ttf", 11
         )
     except Exception:
         font = ImageFont.load_default()
         font_bold = font
 
-    LINE_H = 10
+    Y_POSITIONS = [0, 13, 23]
 
     while True:
         ip = current_ip()
@@ -119,10 +119,8 @@ def main() -> None:
 
         for page in pages:
             with canvas(device) as draw:
-                y = 0
-                for text, f in page:
+                for (text, f), y in zip(page, Y_POSITIONS):
                     draw.text((0, y), text, font=f, fill=255)
-                    y += LINE_H
             time.sleep(5)
 
 
