@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
-"""Companion Pi status display on SSD1306 128x64 I2C OLED.
-Cycles pages: hostname/IP, URLs, stats.
-"""
+"""Companion Pi status display on SSD1306 128x32 I2C OLED."""
+import pwd
 import socket
 import subprocess
 import time
@@ -13,20 +12,21 @@ from luma.oled.device import ssd1306
 from PIL import ImageFont
 
 
-def iface_ip(name: str) -> str:
-    try:
-        out = subprocess.check_output(
-            ["ip", "-4", "-o", "addr", "show", "dev", name],
-            stderr=subprocess.DEVNULL,
-            text=True,
-        )
-        for line in out.splitlines():
-            parts = line.split()
-            if "inet" in parts:
-                i = parts.index("inet")
-                return parts[i + 1].split("/")[0]
-    except Exception:
-        pass
+def current_ip() -> str:
+    for iface in ("eth0", "wlan0"):
+        try:
+            out = subprocess.check_output(
+                ["ip", "-4", "-o", "addr", "show", "dev", iface],
+                stderr=subprocess.DEVNULL,
+                text=True,
+            )
+            for line in out.splitlines():
+                parts = line.split()
+                if "inet" in parts:
+                    idx = parts.index("inet")
+                    return parts[idx + 1].split("/")[0]
+        except Exception:
+            pass
     return "-"
 
 
@@ -36,6 +36,16 @@ def cpu_temp() -> str:
         return f"{int(p.read_text().strip()) / 1000:.1f}C"
     except Exception:
         return "-"
+
+
+def ssh_user() -> str:
+    try:
+        for p in pwd.getpwall():
+            if p.pw_uid >= 1000 and p.pw_shell not in ("/usr/sbin/nologin", "/bin/false"):
+                return p.pw_name
+    except Exception:
+        pass
+    return "pi"
 
 
 def hostname() -> str:
@@ -62,45 +72,57 @@ def uptime() -> str:
 
 def main() -> None:
     serial = i2c(port=1, address=0x3C)
-    device = ssd1306(serial, width=128, height=64)
+    device = ssd1306(serial, width=128, height=32)
+
     try:
-        font_big = ImageFont.truetype(
-            "/usr/share/fonts/truetype/dejavu/DejaVuSansMono-Bold.ttf", 12
+        font = ImageFont.truetype(
+            "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf", 8
         )
-        font_small = ImageFont.truetype(
-            "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf", 10
+        font_bold = ImageFont.truetype(
+            "/usr/share/fonts/truetype/dejavu/DejaVuSansMono-Bold.ttf", 8
         )
     except Exception:
-        font_big = ImageFont.load_default()
-        font_small = font_big
+        font = ImageFont.load_default()
+        font_bold = font
+
+    LINE_H = 10
 
     while True:
-        eth = iface_ip("eth0")
-        wlan = iface_ip("wlan0")
-        host = hostname()
+        ip = current_ip()
         temp = cpu_temp()
         up = uptime()
+        host = hostname()
+        user = ssh_user()
+
         pages = [
             [
-                (host, font_big),
-                (f"eth0 {eth}", font_small),
-                (f"wlan0 {wlan}", font_small),
-                (f"temp {temp}  up {up}", font_small),
+                ("Admin UI", font_bold),
+                (f"{ip}:8080/", font),
+                ("", font),
             ],
             [
-                ("Companion UI", font_big),
-                (f"http://{wlan if wlan != '-' else eth}:8000", font_small),
-                ("", font_small),
-                (f"{host}.local:8000", font_small),
+                ("Companion UI", font_bold),
+                (f"{ip}:8000/", font),
+                ("", font),
             ],
+            [
+                ("CPU / System", font_bold),
+                (f"Temp: {temp}", font),
+                (f"up: {up}", font),
+            ],
+            # [
+            #     ("SSH Zugang", font_bold),
+            #     (f"ssh {user}@{ip}", font),
+            #     ("Port: 22", font),
+            # ],
         ]
+
         for page in pages:
             with canvas(device) as draw:
                 y = 0
-                for text, font in page:
-                    draw.text((0, y), text, font=font, fill=255)
-                    bbox = font.getbbox(text or "Ag")
-                    y += (bbox[3] - bbox[1]) + 3
+                for text, f in page:
+                    draw.text((0, y), text, font=f, fill=255)
+                    y += LINE_H
             time.sleep(5)
 
 
