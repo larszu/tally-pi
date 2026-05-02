@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Companion Pi status display on SSD1306 128x32 I2C OLED."""
+import json
 import pwd
+import re
 import socket
 import subprocess
 import time
@@ -36,6 +38,26 @@ def cpu_temp() -> str:
         return f"{int(p.read_text().strip()) / 1000:.1f}C"
     except Exception:
         return "-"
+
+
+def gpio_states() -> list:
+    try:
+        bindings = json.loads(Path("/opt/pi-guide/bindings.json").read_text())
+        bcm_list = sorted(b["bcm"] for b in bindings if b.get("enabled", True) and "bcm" in b)
+    except Exception:
+        return []
+    if not bcm_list:
+        return []
+    states = {}
+    try:
+        text = Path("/sys/kernel/debug/gpio").read_text(errors="replace")
+        for line in text.splitlines():
+            m = re.search(r"GPIO(\d+)[^)]*\)\s+(?:in|out)\s+(hi|lo)", line)
+            if m:
+                states[int(m.group(1))] = "H" if m.group(2) == "hi" else "L"
+    except Exception:
+        pass
+    return [(bcm, states.get(bcm, "?")) for bcm in bcm_list]
 
 
 def ssh_user() -> str:
@@ -93,6 +115,12 @@ def main() -> None:
         up = uptime()
         host = hostname()
         user = ssh_user()
+        gpio = gpio_states()
+
+        gpio_tokens = [f"{bcm}:{v}" for bcm, v in gpio]
+        mid = (len(gpio_tokens) + 1) // 2
+        gpio_row1 = " ".join(gpio_tokens[:mid]) if gpio_tokens else "keine Bindings"
+        gpio_row2 = " ".join(gpio_tokens[mid:])
 
         pages = [
             [
@@ -109,6 +137,11 @@ def main() -> None:
                 ("CPU / System", font_bold),
                 (f"Temp: {temp}", font),
                 (f"up: {up}", font),
+            ],
+            [
+                ("GPIO Status", font_bold),
+                (gpio_row1, font),
+                (gpio_row2, font),
             ],
             # [
             #     ("SSH Zugang", font_bold),
