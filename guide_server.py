@@ -320,6 +320,43 @@ def get_atem_state():
         return {"connected": False, "error": "state parse error"}
 
 
+# ---------------------------------------------------------------------------
+# pi-gpio-watcher service control (used by Tally tab to free GPIO pins
+# so Companion's RPi_GPIO module can drive them as tally outputs).
+# ---------------------------------------------------------------------------
+WATCHER_UNIT = "pi-gpio-watcher.service"
+
+
+def watcher_status():
+    def _run(args):
+        try:
+            r = subprocess.run(["systemctl", *args, WATCHER_UNIT],
+                               capture_output=True, text=True, timeout=3)
+            return (r.stdout or r.stderr).strip()
+        except Exception as e:
+            return f"error: {e}"
+    active = _run(["is-active"])
+    enabled = _run(["is-enabled"])
+    return {
+        "active": active == "active",
+        "enabled": enabled == "enabled",
+        "active_state": active,
+        "enabled_state": enabled,
+    }
+
+
+def watcher_set(action):
+    if action == "enable":
+        cmd = ["systemctl", "enable", "--now", WATCHER_UNIT]
+    elif action == "disable":
+        cmd = ["systemctl", "disable", "--now", WATCHER_UNIT]
+    else:
+        raise ValueError("action must be 'enable' or 'disable'")
+    r = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+    if r.returncode != 0:
+        raise RuntimeError(r.stderr.strip() or r.stdout.strip() or f"exit {r.returncode}")
+
+
 def tally_state_for_device(cfg, device_id, atem_state=None):
     """Return 'pgm' | 'pvw' | 'safe' for a device based on current atem state.
 
@@ -540,6 +577,9 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         elif self.path == "/tally-config":
             self._send_json(load_tally_config())
             return
+        elif self.path == "/service/pi-gpio-watcher":
+            self._send_json(watcher_status())
+            return
         elif self.path.startswith("/logs"):
             self._handle_logs()
             return
@@ -723,6 +763,22 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 self._send_json({"ok": True})
             except Exception as e:
                 log_event("config", action="tally_save_failed", error=str(e))
+                self._send_json({"ok": False, "error": str(e)}, code=400)
+            return
+        if self.path == "/service/pi-gpio-watcher":
+            body = self._read_body()
+            try:
+                data = json.loads(body or b"{}")
+                action = data.get("action")
+                if action not in ("enable", "disable"):
+                    raise ValueError("action must be 'enable' or 'disable'")
+                watcher_set(action)
+                log_event("guide", action="watcher_" + action)
+                resp = {"ok": True}
+                resp.update(watcher_status())
+                self._send_json(resp)
+            except Exception as e:
+                log_event("guide", action="watcher_failed", error=str(e))
                 self._send_json({"ok": False, "error": str(e)}, code=400)
             return
         if self.path == "/sysfs-release":

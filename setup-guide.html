@@ -522,6 +522,20 @@
     <button type="button" id="tally-save" class="btn primary">Speichern</button>
     <span id="tally-save-status" class="hint" style="margin-left:8px"></span>
   </div>
+
+  <div class="card" id="watcher-card">
+    <h3>GPIO Watcher</h3>
+    <p class="hint">
+      Liest GPIO-Eingänge für Admin-UI-Aktionen (GPI Returns).
+      Im aktiven Zustand belegt er aber Pins, die in Companion als Tally-Outputs
+      konfiguriert sind, und blockiert dort die Ausgabe. Im Tally-Setup daher
+      deaktivieren.
+    </p>
+    <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap">
+      <span id="watcher-status" class="hint">Status: lade…</span>
+      <button type="button" id="watcher-toggle" class="btn primary" disabled>—</button>
+    </div>
+  </div>
 </section>
 
 </div><!-- /tally -->
@@ -1875,6 +1889,52 @@ var qrcode=function(){var t=function(t,r){var e=t,n=g[r],o=null,i=0,a=null,u=[],
         }
       });
     }
+  })();
+
+  // ============================== GPIO WATCHER TOGGLE ==============================
+  (function initWatcher(){
+    const statusEl = document.getElementById('watcher-status');
+    const btn = document.getElementById('watcher-toggle');
+    if (!statusEl || !btn) return;
+
+    async function refresh(){
+      try {
+        const r = await fetch('/service/pi-gpio-watcher', {cache:'no-store'});
+        const s = await r.json();
+        const active = s.active === true;
+        const enabled = s.enabled === true;
+        const stTxt = active ? 'läuft' : 'gestoppt';
+        const enTxt = enabled ? 'Autostart aktiv' : 'Autostart aus';
+        statusEl.textContent = 'Status: ' + stTxt + ' · ' + enTxt;
+        btn.textContent = active ? 'Deaktivieren' : 'Aktivieren';
+        btn.dataset.action = active ? 'disable' : 'enable';
+        btn.disabled = false;
+      } catch(e){
+        statusEl.textContent = 'Status: Fehler – ' + (e.message||e);
+      }
+    }
+
+    btn.addEventListener('click', async () => {
+      const action = btn.dataset.action;
+      if (!action) return;
+      btn.disabled = true;
+      statusEl.textContent = 'Status: wechsle…';
+      try {
+        const r = await fetch('/service/pi-gpio-watcher', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({action: action}),
+        });
+        const j = await r.json();
+        if (!j.ok) throw new Error(j.error || ('HTTP ' + r.status));
+      } catch(e){
+        alert('Fehler: ' + (e.message||e));
+      }
+      setTimeout(refresh, 800);
+    });
+
+    refresh();
+    setInterval(refresh, 5000);
   })();
 
   // ============================== LOG ==============================
