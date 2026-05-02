@@ -142,12 +142,11 @@ def main() -> None:
                 (gpio_row1,     font,      13),
                 (gpio_row2,     font,      23),
             ],
-            # XLR 3-pin breakout wiring reference (4 small lines)
+            # XLR 3-pin breakout wiring reference
             [
-                ("XLR Breakout",     font, 0),
-                ("PIN 1: GPI Return", font, 9),
-                ("PIN 2: GND",        font, 18),
-                ("PIN 3: GPO Tally",  font, 27),
+                ("PIN 1: GPI Return", font, 0),
+                ("PIN 2: GND",        font, 13),
+                ("PIN 3: GPO Tally",  font, 23),
             ],
             # [
             #     ("SSH Zugang", font_bold),
