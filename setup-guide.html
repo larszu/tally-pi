@@ -82,24 +82,6 @@
   .gtile.sys .gval { color:#a78bfa; }
   .gtile .pressed { position:absolute; top:6px; right:8px; background:#fbbf24; color:#111; padding:1px 6px; border-radius:3px; font-size:10px; font-weight:bold; animation:pulse 1s infinite; }
   @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.5} }
-  .gtile { cursor:pointer; }
-  .gtile:hover { outline:2px solid var(--accent); }
-  .gtile .bound { position:absolute; bottom:6px; right:8px; background:var(--accent); color:#0b0e13; padding:1px 6px; border-radius:3px; font-size:10px; font-weight:bold; }
-
-  /* Modal */
-  .modal-bg { position:fixed; inset:0; background:rgba(0,0,0,.7); display:none; align-items:center; justify-content:center; z-index:100; }
-  .modal-bg.show { display:flex; }
-  .modal { background:var(--panel); border:1px solid #2a3548; border-radius:12px; padding:24px; width:min(560px,92vw); max-height:92vh; overflow:auto; }
-  .modal h3 { margin-top:0; color:var(--accent); }
-  .modal label { display:block; margin:10px 0 4px; font-size:13px; color:var(--muted); }
-  .modal input, .modal select { width:100%; background:#0b0e13; color:var(--fg); border:1px solid #2a3548; border-radius:6px; padding:8px; font-family:Consolas,monospace; font-size:14px; }
-  .modal .row { display:grid; grid-template-columns:1fr 1fr 1fr; gap:8px; }
-  .modal .actions { display:flex; gap:8px; margin-top:20px; flex-wrap:wrap; }
-  .modal .btn.danger { background:#ef4444; color:white; }
-  .modal .status { margin-top:10px; font-size:13px; }
-  .modal .status.ok { color:var(--ok); }
-  .modal .status.err { color:var(--err); }
-
   /* Compact collapsible topbar */
   #topbar { position:sticky; top:0; z-index:20; background:#0b0e13; border-bottom:1px solid #2a3548; }
   #topbar-mini { display:flex; align-items:center; gap:8px; padding:4px 10px; font-size:12px; }
@@ -154,7 +136,6 @@
     .pin { padding:6px 8px; font-size:11px; }
     .cols { grid-template-columns:1fr !important; gap:12px; }
     pre, code { font-size:11px; }
-    .modal { padding:14px; }
   }
   /* Very narrow (Waveshare bar) */
   @media (max-width: 360px) {
@@ -166,7 +147,7 @@
     header h1 { font-size:14px; }
   }
 
-  /* ========== View-Tabs (Status / Einrichten / Hilfe) ========== */
+  /* ========== View-Tabs (Status / Tally / Hilfe) ========== */
   .view-tabs {
     display:flex; gap:4px; padding:6px 8px;
     background:#0b0e13; border-bottom:1px solid #2a3548;
@@ -190,50 +171,6 @@
   .view { display:none; }
   .view.active { display:block; }
 
-  /* ========== Wizard use-case picker ========== */
-  .usecase-picker { display:grid; gap:10px; margin:14px 0 20px; }
-  .usecase-picker button {
-    text-align:left; background:var(--panel2); color:var(--fg);
-    border:2px solid #2a3548; border-radius:10px; padding:14px;
-    font-size:14px; cursor:pointer; display:flex; align-items:flex-start; gap:12px;
-    width:100%; font-family:inherit;
-  }
-  .usecase-picker button:hover { border-color:var(--accent); background:#1f2838; }
-  .usecase-picker button.active { border-color:var(--accent); background:#1a2540; }
-  .usecase-picker .ucic { font-size:28px; flex:0 0 auto; line-height:1; }
-  .usecase-picker .uc-title { font-weight:700; font-size:15px; margin-bottom:4px; color:var(--fg); }
-  .usecase-picker .uc-desc { color:var(--muted); font-size:12px; line-height:1.4; }
-
-  /* ========== Stepper ========== */
-  .stepper { display:flex; align-items:center; gap:4px; padding:10px 2px 18px; }
-  .stepper .dot {
-    flex:0 0 30px; height:30px; border-radius:50%;
-    background:#222937; color:var(--muted);
-    display:flex; align-items:center; justify-content:center;
-    font-size:13px; font-weight:bold; border:2px solid #2a3548; cursor:pointer;
-    transition:all .15s;
-  }
-  .stepper .dot.active { background:var(--accent); color:#0b0e13; border-color:var(--accent); transform:scale(1.1); }
-  .stepper .dot.done { background:var(--ok); color:#0b0e13; border-color:var(--ok); }
-  .stepper .line { flex:1; height:3px; background:#2a3548; border-radius:2px; min-width:8px; }
-  .stepper .line.done { background:var(--ok); }
-
-  .step-label { font-size:12px; color:var(--muted); text-align:center; margin:-8px 0 10px; }
-  .step-label strong { color:var(--fg); font-size:14px; }
-
-  .step { display:none; }
-  .step.active { display:block; animation:fadeIn .2s ease; }
-  @keyframes fadeIn { from { opacity:0; transform:translateY(4px); } to { opacity:1; transform:translateY(0); } }
-
-  .step-nav {
-    position:sticky; bottom:0; display:flex; gap:8px;
-    padding:10px; background:rgba(15,17,21,.96);
-    border-top:1px solid #2a3548; margin:20px -10px 0; z-index:5;
-    backdrop-filter:blur(6px);
-  }
-  .step-nav .btn { flex:1; padding:12px 10px; font-size:15px; text-align:center; }
-  .step-nav .btn[disabled] { opacity:.4; pointer-events:none; }
-
   /* ========== Stronger narrow-screen rules (Waveshare 320px) ========== */
   @media (max-width:420px) {
     .view-tabs { padding:4px; gap:3px; }
@@ -248,15 +185,8 @@
     section.acc > .acc-body { padding:8px 10px 14px; }
     h3 { font-size:14px; margin-top:14px; }
 
-    .usecase-picker button { padding:10px; gap:8px; }
-    .usecase-picker .ucic { font-size:24px; }
-
-    .stepper .dot { flex-basis:26px; height:26px; font-size:12px; }
-
     .btn { padding:9px 10px; font-size:13px; }
     input, select, textarea { min-height:42px; font-size:15px; }
-    .modal input, .modal select { min-height:40px; font-size:14px; }
-    .modal .row { grid-template-columns:1fr; gap:6px; }
 
     .gpio-grid { grid-template-columns:repeat(2,1fr) !important; gap:6px; }
     .pinheader { padding:6px; }
@@ -287,9 +217,6 @@
   <button type="button" data-view="dashboard" class="active" role="tab" onclick="window.showView&&window.showView('dashboard')">
     <span>Status</span>
   </button>
-  <button type="button" data-view="setup" role="tab" onclick="window.showView&&window.showView('setup')">
-    <span>Companion einrichten</span>
-  </button>
   <button type="button" data-view="tally" role="tab" onclick="window.showView&&window.showView('tally')">
     <span>Tally</span>
   </button>
@@ -308,14 +235,14 @@
 
 <section id="live">
   <h2>Live GPIO-Status <span id="live-ts" style="font-size:12px;color:var(--muted);font-weight:normal;margin-left:12px"></span></h2>
-  <p>Echtzeit-Übersicht aller GPIO-Pins des 40-Pin-Headers. Aktualisiert sich alle 500 ms. <strong>Klicke eine Kachel</strong>, um eine Companion-Aktion an den Pin zu binden (z.B. „Knopf 1/0/0 drücken").</p>
+  <p>Echtzeit-Übersicht aller GPIO-Pins des 40-Pin-Headers. Aktualisiert sich alle 500 ms. Reine Status-Anzeige — Trigger/Outputs werden in Companion konfiguriert.</p>
   <div class="legend">
     <span><span class="dot" style="background:#374151"></span>Frei (nicht verwendet)</span>
-    <span><span class="dot" style="background:#4ade80"></span>Input, HIGH (Taster nicht gedrückt)</span>
-    <span><span class="dot" style="background:#fbbf24"></span>Input, LOW (Taster gedrückt!)</span>
-    <span><span class="dot" style="background:#60a5fa"></span>Output</span>
+    <span><span class="dot" style="background:#4ade80"></span>Input, HIGH</span>
+    <span><span class="dot" style="background:#fbbf24"></span>Input, LOW</span>
+    <span><span class="dot" style="background:#60a5fa"></span>Output, HIGH</span>
+    <span><span class="dot" style="background:#3b82f6"></span>Output, LOW (aktiv-low / Tally an)</span>
     <span><span class="dot" style="background:#a78bfa"></span>System (I2C / SPI / UART)</span>
-    <span><span class="dot" style="background:#4da3ff"></span>Gebunden an Companion-Aktion</span>
   </div>
   <div class="gpio-toolbar">
     <label><input type="checkbox" id="filter-usable" checked> Nur Companion-nutzbare Pins <span style="color:var(--muted);font-size:12px">(I²C/UART/SPI ausblenden)</span></label>
@@ -330,7 +257,7 @@
       Numato USB GPIO (32 Kanäle + ADC)
       <span id="numato-status" style="font-size:13px;font-weight:normal;margin-left:12px"></span>
     </summary>
-    <p id="numato-hint" style="color:var(--muted)">Steck ein Numato 32-Channel USB GPIO-Modul ein und es erscheint hier automatisch. Klick einen Kanal, um eine Companion-Aktion an ihn zu binden.</p>
+    <p id="numato-hint" style="color:var(--muted)">Steck ein Numato 32-Channel USB GPIO-Modul ein und es erscheint hier automatisch. Reine Status-Anzeige — Trigger werden in Companion konfiguriert.</p>
     <div id="numato-grid" class="gpio-grid" style="display:none"></div>
     <div id="numato-adc-wrap" style="display:none;margin-top:16px">
       <h3 style="margin-top:0">Analoge Eingänge (ADC · 10 bit · 0–1023)</h3>
@@ -342,156 +269,6 @@
 </div><!-- /dashboard -->
 
 
-<!-- ============================== SETUP WIZARD VIEW ============================== -->
-<div class="view" data-view="setup">
-
-<section class="acc open" id="wizard">
-  <h2 class="acc-head">Einrichten in 3 Schritten</h2>
-  <div class="acc-body">
-    <p style="color:var(--muted);margin-top:0">Folge den Schritten der Reihe nach. Alles ist schon ausgefüllt — du klickst es nur in der Companion-UI nach.</p>
-
-    <!-- Step 1: pick use-case -->
-    <div class="step active" data-step="1">
-      <h3 style="margin-top:4px">Was möchtest du machen?</h3>
-      <div class="usecase-picker" id="uc-picker">
-        <button type="button" data-uc="atem-toggle" class="active">
-          <span>
-            <div class="uc-title">GPIO HIGH/LOW → ATEM Aux temporär</div>
-            <div class="uc-desc">Genau wie deine gespeicherten Trigger: HIGH schaltet auf Quelle A, LOW schaltet auf Quelle B zurück.</div>
-          </span>
-        </button>
-        <button type="button" data-uc="tally-out">
-          <span>
-            <div class="uc-title">ATEM Tally Out → Relais (12V)</div>
-            <div class="uc-desc">Program = Rot, Preview = Grün über zwei GPIO-Ausgänge (Relais) pro Kamera.</div>
-          </span>
-        </button>
-      </div>
-    </div>
-
-    <!-- Step 2: wire the button -->
-    <div class="step" data-step="2">
-      <h3 style="margin-top:4px">Taster verkabeln</h3>
-      <p>Ein 2-Pin-Taster zwischen einem <strong>GPIO-Pin</strong> und einem <strong>GND-Pin</strong> reicht. Der Pi aktiviert intern einen Pull-Up, d.h. Ruhe = HIGH, gedrückt = LOW.</p>
-      <div class="card warn" style="margin:10px 0"><strong>Wichtig:</strong> Niemals 5 V an GPIO! Die Pins vertragen maximal 3.3 V.</div>
-
-      <label style="display:block;margin:14px 0 4px;font-size:13px;color:var(--muted)">GPIO-Pin (BCM-Nummer)</label>
-      <select id="wz-gpio" style="width:100%"></select>
-      <p id="wz-pin-hint" style="color:var(--muted);font-size:12px;margin:6px 0 12px"></p>
-
-      <svg class="svg-wire" viewBox="0 0 400 200" xmlns="http://www.w3.org/2000/svg">
-        <rect x="20" y="20" width="360" height="160" fill="#0b0e13" stroke="#2a3548" rx="8"/>
-        <circle cx="80" cy="70" r="8" fill="#4ade80"/>
-        <text x="100" y="75" fill="#e6ebf2" font-size="13" font-family="Consolas" id="wz-svg-gpio">GPIO 17 (Pin 11)</text>
-        <circle cx="80" cy="130" r="8" fill="#374151" stroke="#9ca3af"/>
-        <text x="100" y="135" fill="#e6ebf2" font-size="13" font-family="Consolas">GND</text>
-        <line x1="88" y1="70" x2="250" y2="70" stroke="#4ade80" stroke-width="2"/>
-        <line x1="88" y1="130" x2="250" y2="130" stroke="#9ca3af" stroke-width="2"/>
-        <line x1="250" y1="70" x2="250" y2="90" stroke="#4ade80" stroke-width="2"/>
-        <line x1="250" y1="110" x2="250" y2="130" stroke="#9ca3af" stroke-width="2"/>
-        <rect x="225" y="85" width="50" height="30" fill="#1a1f2b" stroke="#4da3ff" rx="4"/>
-        <text x="250" y="104" fill="#4da3ff" font-size="11" font-family="Consolas" text-anchor="middle">TASTER</text>
-      </svg>
-      <p style="color:var(--muted);font-size:12px">Pinout-Übersicht findest du im Tab „Hilfe".</p>
-    </div>
-
-    <!-- Step 3: configure GPIO module in Companion -->
-    <div class="step" data-step="3">
-      <h3 style="margin-top:4px">GPIO-Modul in Companion aktivieren</h3>
-      <ol class="steps">
-        <li>In Companion oben <strong>Connections</strong> öffnen.</li>
-        <li>Rechts <strong>+ Add connection</strong> → nach <code>raspberry</code> suchen → <strong>„Raspberry Pi foundation · RPi GPIO (Dev)"</strong> wählen.</li>
-        <li>Namen vergeben (z.B. <code>gpio</code>) und speichern. Dann auf die Verbindung klicken, um sie zu konfigurieren.</li>
-        <li>Scrolle zu <strong id="wz-pin-line">GPIO 17</strong> und setze:
-          <ul>
-            <li><code>Use GPIO pin</code> aktivieren</li>
-            <li><code>Set as IN/OUT</code> = <strong>IN</strong></li>
-            <li><code>Trigger type</code> = <strong id="wz-trig">FALLING</strong></li>
-            <li><code>Enable debouncing</code> aktivieren, <code>Debounce time</code> = <strong>20 ms</strong></li>
-            <li id="wz-invert-line">Optional: <code>Invert values</code> aktivieren, damit „gedrückt" = 1 ist.</li>
-          </ul>
-        </li>
-        <li>Speichern. Der Pin liefert jetzt die Variable <code id="wz-varname">$(gpio:gpio17)</code>.</li>
-      </ol>
-      <div class="card ok" style="margin-top:10px">
-        <strong>Prüfen:</strong> Wechsel zum Tab <strong>Status</strong>, drück den Taster — die Kachel <strong id="wz-check-tile">GPIO 17</strong> wird gelb und zeigt „GEDRÜCKT".
-      </div>
-    </div>
-
-    <!-- Step 4: action (varies by use-case) -->
-    <div class="step" data-step="4">
-      <h3 style="margin-top:4px" id="wz-step4-title">Aktion einrichten</h3>
-
-      <!-- Use-case: ATEM toggle -->
-      <div class="uc-body" data-uc-body="atem-toggle" style="display:block">
-        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:8px;margin:10px 0">
-          <div>
-            <label style="font-size:12px;color:var(--muted)">ATEM-Label</label>
-            <input id="wzt-label" value="atem">
-          </div>
-          <div>
-            <label style="font-size:12px;color:var(--muted)">Aux</label>
-            <select id="wzt-aux"><option>1</option><option>2</option><option>3</option><option>4</option><option>5</option><option>6</option></select>
-          </div>
-          <div>
-            <label style="font-size:12px;color:var(--muted)">Quelle bei HIGH</label>
-            <input type="number" id="wzt-a" value="1" min="0">
-          </div>
-          <div>
-            <label style="font-size:12px;color:var(--muted)">Quelle bei LOW</label>
-            <input type="number" id="wzt-b" value="2" min="0">
-          </div>
-          <div>
-            <label style="font-size:12px;color:var(--muted)">GPIO-Slot</label>
-            <input type="number" id="wzt-slot" value="4" min="0" max="7">
-          </div>
-        </div>
-        <div id="wzt-steps" class="wz-instructions"></div>
-      </div>
-
-      <!-- Use-case: Tally out relay -->
-      <div class="uc-body" data-uc-body="tally-out" style="display:none">
-        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:8px;margin:10px 0">
-          <div>
-            <label style="font-size:12px;color:var(--muted)">ATEM-Label</label>
-            <input id="wzo-label" value="atem">
-          </div>
-          <div>
-            <label style="font-size:12px;color:var(--muted)">Input-Nummer</label>
-            <input type="number" id="wzo-input" value="5" min="0">
-          </div>
-          <div>
-            <label style="font-size:12px;color:var(--muted)">GPIO-Slot Rot (PGM)</label>
-            <input type="number" id="wzo-red-slot" value="6" min="0" max="27">
-          </div>
-          <div>
-            <label style="font-size:12px;color:var(--muted)">GPIO-Slot Grün (PVW)</label>
-            <input type="number" id="wzo-green-slot" value="7" min="0" max="27">
-          </div>
-        </div>
-        <div id="wzo-steps" class="wz-instructions"></div>
-      </div>
-    </div>
-
-    <!-- Step-Nav -->
-    <div class="step-nav">
-      <button class="btn sec" type="button" id="wz-back" disabled>← Zurück</button>
-      <button class="btn" type="button" id="wz-next">Weiter →</button>
-    </div>
-
-    <!-- Stepper (sticky bottom label) -->
-    <div class="stepper" id="wz-stepper" style="margin-top:10px">
-      <div class="dot active" data-s="1">1</div><div class="line"></div>
-      <div class="dot" data-s="2">2</div><div class="line"></div>
-      <div class="dot" data-s="3">3</div><div class="line"></div>
-      <div class="dot" data-s="4">4</div>
-    </div>
-    <div class="step-label" id="wz-stepperlabel"><strong>Schritt 1 / 4:</strong> Ziel wählen</div>
-
-  </div>
-</section>
-
-</div><!-- /setup -->
 
 
 <!-- ============================== TALLY VIEW ============================== -->
@@ -636,73 +413,6 @@ sudo systemctl restart getty@tty1</pre>
 </div><!-- /help -->
 
 </main>
-<div class="modal-bg" id="modal-bg">
-  <div class="modal" id="modal">
-    <h3 id="modal-title">GPIO binden</h3>
-    <div id="modal-claim-warn" class="card warn" style="display:none;margin:8px 0 0">
-      <strong>Achtung:</strong> Dieser Pin ist bereits belegt (<span id="modal-claim-consumer"></span>).
-      Falls er in Companions GPIO-Modul konfiguriert ist, deaktiviere ihn dort, sonst kollidieren beide Systeme.
-      <div id="modal-sysfs-row" style="display:none;margin-top:8px">
-        Der Pin ist per <code>sysfs</code> (klassisches <code>/sys/class/gpio</code>) exportiert &mdash;
-        das blockiert libgpiod. Das ist fast immer Companions <em>raspberry-gpio</em>-Modul.
-        Dauerhaft beheben: in Companion unter <em>Connections &rarr; Raspberry Pi GPIO</em> den Pin
-        deaktivieren. Einmalig freigeben:
-        <button class="btn sec" id="btn-sysfs-release" style="margin-left:8px">sysfs jetzt freigeben</button>
-      </div>
-    </div>
-
-    <label>Wann auslösen?</label>
-    <select id="f-edge">
-      <option value="falling">Taster gedrückt (Falling Edge, HIGH→LOW)</option>
-      <option value="rising">Taster losgelassen (Rising Edge, LOW→HIGH)</option>
-      <option value="both">Beide Flanken (z.B. Down/Up an Companion)</option>
-    </select>
-
-    <label>Pull-Widerstand</label>
-    <div id="f-bias-wrap">
-    <select id="f-bias">
-      <option value="pull-up">Pull-Up (Taster nach GND, Standard)</option>
-      <option value="pull-down">Pull-Down (Taster nach 3.3V)</option>
-      <option value="none">Keiner (externer Widerstand)</option>
-    </select>
-    </div>
-
-    <label>Debounce (ms) <span style="color:var(--muted)">— Entprellung</span></label>
-    <input type="number" id="f-debounce" min="0" max="5000" value="20">
-
-    <label>Aktion</label>
-    <select id="f-kind">
-      <option value="press">Companion-Button drücken (press)</option>
-      <option value="down_up">Button-Druck halten (down bei press, up bei release) — benötigt „Beide Flanken"</option>
-      <option value="variable">Custom-Variable in Companion setzen</option>
-    </select>
-
-    <div id="f-press-fields">
-      <label>Companion Location (Page / Row / Column)</label>
-      <div class="row">
-        <input type="number" id="f-page" min="0" max="999" value="1" placeholder="Page">
-        <input type="number" id="f-row" min="0" max="999" value="0" placeholder="Row">
-        <input type="number" id="f-col" min="0" max="999" value="0" placeholder="Column">
-      </div>
-      <p style="font-size:12px;color:var(--muted);margin:6px 0">In Companion: Button-Position im Grid. Erste Seite/Zeile/Spalte = 1/0/0.</p>
-    </div>
-
-    <div id="f-var-fields" style="display:none">
-      <label>Variablenname <span style="color:var(--muted)">— nur Buchstaben/Zahlen/_</span></label>
-      <input type="text" id="f-varname" placeholder="z.B. aux1_state" pattern="[A-Za-z0-9_]{1,64}">
-      <label>Wert (beim Auslösen setzen)</label>
-      <input type="text" id="f-varvalue" placeholder="z.B. 1 oder foo">
-    </div>
-
-    <div class="status" id="modal-status"></div>
-    <div class="actions">
-      <button class="btn" id="btn-save">Speichern</button>
-      <button class="btn sec" id="btn-test">Aktion testen</button>
-      <button class="btn danger" id="btn-delete" style="display:none">Binding löschen</button>
-      <button class="btn sec" id="btn-cancel" style="margin-left:auto">Abbrechen</button>
-    </div>
-  </div>
-</div>
 <script>
 /* qrcode-generator 1.4.4 MIT by Kazuhiko Arase � embedded inline */
 /**
@@ -873,7 +583,7 @@ var qrcode=function(){var t=function(t,r){var e=t,n=g[r],o=null,i=0,a=null,u=[],
   // Turn every <section id="…"> into a collapsible accordion.
   // Default: all sections open (each view has only 1-3 sections).
   (function initAccordions() {
-    const defaultOpen = new Set(['live','numato','wizard']);
+    const defaultOpen = new Set(['live','numato']);
     const sections = document.querySelectorAll('main section[id]');
     sections.forEach(sec => {
       const h2 = sec.querySelector(':scope > h2');
@@ -938,7 +648,6 @@ var qrcode=function(){var t=function(t,r){var e=t,n=g[r],o=null,i=0,a=null,u=[],
       <div class="gdir" id="d${bcm}">—</div>
       <div class="gval" id="v${bcm}">—</div>
       <div class="gcons" id="c${bcm}"></div>`;
-    el.addEventListener('click', () => openModal('pi', bcm));
     grid.appendChild(el);
     tiles[bcm] = el;
     if (GPIO_ROLE[bcm]) {
@@ -1082,7 +791,6 @@ var qrcode=function(){var t=function(t,r){var e=t,n=g[r],o=null,i=0,a=null,u=[],
         <div class="head"><span class="gname">CH ${ch}</span><span class="gpin">Numato</span></div>
         <div class="gdir">Digital</div>
         <div class="gval" id="nv${ch}">—</div>`;
-      el.addEventListener('click', () => openModal('numato', ch));
       ng.appendChild(el);
       numatoTiles[ch] = el;
 
@@ -1166,477 +874,10 @@ var qrcode=function(){var t=function(t,r){var e=t,n=g[r],o=null,i=0,a=null,u=[],
     }
   }
 
-  // ---- Modal ----
   const $ = id => document.getElementById(id);
-  let currentSource = 'pi';
-  let currentKey = null;  // bcm or channel
-
-  function openModal(source, key) {
-    currentSource = source;
-    currentKey = key;
-    const b = findBinding(source, key) || {};
-    const a = b.action || {};
-
-    if (source === 'pi') {
-      const s = lastState[String(key)] || {};
-      $('modal-title').textContent = `GPIO ${key} (Pin ${s.pin || BCM_TO_PIN[key] || '?'}) binden`;
-      const claimed = s.claimed && !findBinding('pi', key);
-      $('modal-claim-warn').style.display = claimed ? 'block' : 'none';
-      $('modal-claim-consumer').textContent = s.consumer || '';
-      $('modal-sysfs-row').style.display = (claimed && s.sysfs) ? 'block' : 'none';
-      $('f-bias-wrap').style.display = 'block';
-    } else {
-      $('modal-title').textContent = `Numato USB · Kanal ${key} binden`;
-      $('modal-claim-warn').style.display = 'none';
-      $('modal-sysfs-row').style.display = 'none';
-      $('f-bias-wrap').style.display = 'none'; // bias fixed by module firmware
-    }
-
-    $('f-edge').value = b.trigger_edge || 'falling';
-    $('f-bias').value = b.bias || 'pull-up';
-    $('f-debounce').value = b.debounce_ms ?? 20;
-    $('f-kind').value = a.kind || 'press';
-    $('f-page').value = a.page ?? 1;
-    $('f-row').value  = a.row  ?? 0;
-    $('f-col').value  = a.column ?? 0;
-    $('f-varname').value  = a.variable || '';
-    $('f-varvalue').value = a.value ?? '1';
-    onKindChange();
-
-    $('btn-delete').style.display = findBinding(source, key) ? 'inline-block' : 'none';
-    $('modal-status').textContent = '';
-    $('modal-status').className = 'status';
-    $('modal-bg').classList.add('show');
-  }
-  function closeModal() { $('modal-bg').classList.remove('show'); }
-
-  function onKindChange() {
-    const k = $('f-kind').value;
-    $('f-press-fields').style.display = (k === 'press' || k === 'down_up') ? 'block' : 'none';
-    $('f-var-fields').style.display = (k === 'variable') ? 'block' : 'none';
-  }
-  $('f-kind').addEventListener('change', onKindChange);
-
-  function readForm() {
-    const kind = $('f-kind').value;
-    const action = { kind };
-    if (kind === 'press' || kind === 'down_up') {
-      action.page = parseInt($('f-page').value, 10);
-      action.row = parseInt($('f-row').value, 10);
-      action.column = parseInt($('f-col').value, 10);
-    } else if (kind === 'variable') {
-      action.variable = $('f-varname').value.trim();
-      action.value = $('f-varvalue').value;
-    }
-    const base = {
-      source: currentSource,
-      trigger_edge: $('f-edge').value,
-      bias: $('f-bias').value,
-      debounce_ms: parseInt($('f-debounce').value, 10) || 0,
-      enabled: true,
-      action,
-    };
-    if (currentSource === 'pi') base.bcm = currentKey;
-    else base.channel = currentKey;
-    return base;
-  }
-
-  function sameKey(b) {
-    if (currentSource === 'pi') return (b.source||'pi') === 'pi' && b.bcm === currentKey;
-    return b.source === 'numato' && b.channel === currentKey;
-  }
-
-  let modalInFlight = false;
-
-  function validateActionForModal(a) {
-    if (a.kind === 'press' || a.kind === 'down_up') {
-      for (const k of ['page','row','column']) {
-        if (!Number.isFinite(a[k]) || a[k] < 0) return `${k} muss eine nicht-negative Ganzzahl sein.`;
-      }
-    } else if (a.kind === 'variable') {
-      if (!/^[A-Za-z0-9_]{1,64}$/.test(a.variable || '')) {
-        return 'Variablenname: nur A–Z, 0–9, _ (max 64).';
-      }
-    }
-    return null;
-  }
-
-  async function saveBinding() {
-    if (modalInFlight) return;
-    const b = readForm();
-    const st = $('modal-status');
-    const err = validateActionForModal(b.action);
-    if (err) { st.textContent = err; st.className = 'status err'; return; }
-    modalInFlight = true;
-    try {
-      await loadBindings(); // pull latest to minimize lost-update window
-      const next = bindings.filter(x => !sameKey(x));
-      next.push(b);
-      const r = await fetch('/bindings', {
-        method:'POST', headers:{'Content-Type':'application/json'},
-        body: JSON.stringify(next),
-      });
-      const j = await r.json();
-      if (j.ok) {
-        bindings = next;
-        st.textContent = 'Gespeichert. Watcher lädt Config automatisch neu (~2s).';
-        st.className = 'status ok';
-        setTimeout(closeModal, 900);
-      } else {
-        st.textContent = 'Fehler: ' + (j.error || 'unbekannt');
-        st.className = 'status err';
-      }
-    } catch (e) {
-      st.textContent = 'Fehler: ' + (e.message || e);
-      st.className = 'status err';
-    } finally {
-      modalInFlight = false;
-    }
-  }
-
-  async function deleteBinding() {
-    if (modalInFlight) return;
-    const st = $('modal-status');
-    modalInFlight = true;
-    try {
-      await loadBindings();
-      const next = bindings.filter(x => !sameKey(x));
-      const r = await fetch('/bindings', {
-        method:'POST', headers:{'Content-Type':'application/json'},
-        body: JSON.stringify(next),
-      });
-      const j = await r.json();
-      if (j.ok) {
-        bindings = next;
-        st.textContent = 'Gelöscht.';
-        st.className = 'status ok';
-        setTimeout(closeModal, 600);
-      } else {
-        st.textContent = 'Fehler: ' + (j.error || 'unbekannt');
-        st.className = 'status err';
-      }
-    } catch (e) {
-      st.textContent = 'Fehler: ' + (e.message || e);
-      st.className = 'status err';
-    } finally {
-      modalInFlight = false;
-    }
-  }
-
-  async function testAction() {
-    const b = readForm();
-    const a = b.action;
-    const st = $('modal-status');
-    async function companionApi(path, method, body) {
-      const r = await fetch('/companion-api', {
-        method: 'POST',
-        headers: {'Content-Type':'application/json'},
-        body: JSON.stringify({ path, method: method || 'POST', body: body || '' }),
-      });
-      return r.json();
-    }
-    try {
-      let res;
-      if (a.kind === 'press' || a.kind === 'down_up') {
-        const sub = a.kind === 'press' ? 'press' : 'down';
-        res = await companionApi(`/api/location/${a.page}/${a.row}/${a.column}/${sub}`, 'POST', '');
-        if (a.kind === 'down_up') {
-          setTimeout(() => {
-            companionApi(`/api/location/${a.page}/${a.row}/${a.column}/up`, 'POST', '');
-          }, 200);
-        }
-      } else if (a.kind === 'variable') {
-        res = await companionApi(
-          `/api/custom-variable/${encodeURIComponent(a.variable)}/value`,
-          'POST',
-          String(a.value),
-        );
-      }
-      if (res == null) {
-        st.textContent = 'Unbekannte Aktion.'; st.className = 'status err';
-      } else if (res.error) {
-        st.textContent = 'Companion-Proxy Fehler: ' + res.error;
-        st.className = 'status err';
-      } else {
-        st.textContent = `Companion API: HTTP ${res.status}`;
-        st.className = 'status ' + (res.ok ? 'ok' : 'err');
-      }
-    } catch (e) {
-      st.textContent = 'Fehler: ' + (e.message || e);
-      st.className = 'status err';
-    }
-  }
-
-  $('btn-save').addEventListener('click', saveBinding);
-  $('btn-delete').addEventListener('click', deleteBinding);
-  $('btn-test').addEventListener('click', testAction);
-  $('btn-cancel').addEventListener('click', closeModal);
-  $('btn-sysfs-release').addEventListener('click', async () => {
-    if (currentSource !== 'pi') return;
-    const st = $('modal-status');
-    st.textContent = 'Gebe sysfs-Sperre frei …';
-    st.className = 'status';
-    try {
-      const r = await fetch('/sysfs-release', {
-        method:'POST', headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({bcm: currentKey}),
-      });
-      const j = await r.json();
-      if (j.ok) {
-        st.textContent = j.message || 'freigegeben';
-        st.className = 'status ok';
-        setTimeout(() => { pollGpio(); }, 300);
-        setTimeout(() => {
-          const s = lastState[String(currentKey)] || {};
-          $('modal-claim-warn').style.display = (s.claimed && !findBinding('pi', currentKey)) ? 'block' : 'none';
-          $('modal-sysfs-row').style.display = (s.claimed && s.sysfs) ? 'block' : 'none';
-        }, 800);
-      } else {
-        st.textContent = 'Fehler: ' + (j.message || j.error || 'unbekannt');
-        st.className = 'status err';
-      }
-    } catch (e) {
-      st.textContent = 'Fehler: ' + e;
-      st.className = 'status err';
-    }
-  });
-  $('modal-bg').addEventListener('click', e => { if (e.target.id === 'modal-bg') closeModal(); });
-
-  const BCM_TO_PIN = {2:3,3:5,4:7,5:29,6:31,7:26,8:24,9:21,10:19,11:23,12:32,13:33,14:8,15:10,16:36,17:11,18:12,19:35,20:38,21:40,22:15,23:16,24:18,25:22,26:37,27:13};
 
   // ---------- View tabs already wired up at the top of the script ----------
 
-  // ---------- Setup wizard (3 use-cases, 4 steps) ----------
-  (function initSetupWizard() {
-    const USABLE = [4,5,6,12,13,16,17,18,19,20,21,22,23,24,25,26,27];
-    const gpioSel = document.getElementById('wz-gpio');
-    if (!gpioSel) return;
-    USABLE.forEach(n => {
-      const o = document.createElement('option');
-      o.value = n;
-      o.textContent = `GPIO ${n}  ·  Pin ${BCM_TO_PIN[n] || '?'}`;
-      if (n === 17) o.selected = true;
-      gpioSel.appendChild(o);
-    });
-
-    const stepLabels = {
-      1: 'Ziel wählen',
-      2: 'Taster verkabeln',
-      3: 'GPIO-Modul aktivieren',
-      4: 'Aktion einrichten',
-    };
-    let currentStep = 1;
-    let currentUC = 'atem-toggle';
-
-    const steps = document.querySelectorAll('.step[data-step]');
-    const dots = document.querySelectorAll('#wz-stepper .dot');
-    const lines = document.querySelectorAll('#wz-stepper .line');
-
-    function setStep(n) {
-      n = Math.max(1, Math.min(4, n));
-      currentStep = n;
-      steps.forEach(s => s.classList.toggle('active', +s.dataset.step === n));
-      dots.forEach((d, i) => {
-        d.classList.toggle('active', i+1 === n);
-        d.classList.toggle('done', i+1 < n);
-      });
-      lines.forEach((l, i) => l.classList.toggle('done', i+1 < n));
-      document.getElementById('wz-stepperlabel').innerHTML =
-        `<strong>Schritt ${n} / 4:</strong> ${stepLabels[n]}`;
-      document.getElementById('wz-back').disabled = (n === 1);
-      const nextBtn = document.getElementById('wz-next');
-      nextBtn.textContent = n === 4 ? '✓ Fertig' : 'Weiter →';
-      if (n === 3) updateStep3Labels();
-      if (n === 4) refreshStep4();
-    }
-
-    document.getElementById('wz-back').addEventListener('click', () => setStep(currentStep-1));
-    document.getElementById('wz-next').addEventListener('click', () => {
-      if (currentStep === 4) {
-        // Last step → jump back to Status
-        window.showView && window.showView('dashboard');
-        return;
-      }
-      setStep(currentStep+1);
-    });
-    dots.forEach((d, i) => d.addEventListener('click', () => setStep(i+1)));
-
-    // Use-case picker
-    document.querySelectorAll('#uc-picker button[data-uc]').forEach(btn => {
-      btn.addEventListener('click', () => {
-        document.querySelectorAll('#uc-picker button').forEach(b => b.classList.remove('active'));
-        btn.classList.add('active');
-        currentUC = btn.dataset.uc;
-        // If the user is already past step 1, refresh step 3/4 so labels & forms match.
-        if (currentStep >= 3) updateStep3Labels();
-        if (currentStep === 4) refreshStep4();
-      });
-    });
-
-    // GPIO select -> update svg + step-3 labels
-    function syncGpioUI() {
-      const bcm = parseInt(gpioSel.value, 10);
-      document.getElementById('wz-svg-gpio').textContent =
-        `GPIO ${bcm} (Pin ${BCM_TO_PIN[bcm] || '?'})`;
-      document.getElementById('wz-pin-hint').textContent =
-        `Du brauchst zwei Pins: GPIO ${bcm} (Pin ${BCM_TO_PIN[bcm] || '?'}) und irgendeinen GND-Pin.`;
-    }
-    gpioSel.addEventListener('change', syncGpioUI);
-    // Defer initial sync until dropdown is fully populated.
-    setTimeout(syncGpioUI, 0);
-
-    function updateStep3Labels() {
-      const bcm = parseInt(gpioSel.value, 10);
-      document.getElementById('wz-pin-line').textContent = `GPIO ${bcm} (Pin ${BCM_TO_PIN[bcm] || '?'})`;
-      document.getElementById('wz-varname').textContent  = `$(gpio:gpio${bcm})`;
-      document.getElementById('wz-check-tile').textContent = `GPIO ${bcm}`;
-      const trig = document.getElementById('wz-trig');
-      const inv  = document.getElementById('wz-invert-line');
-      trig.textContent = 'BOTH';
-      inv.innerHTML = '<code>Invert values</code> aktivieren, damit „gedrückt" = <code>HIGH</code> ist.';
-    }
-
-    function refreshStep4() {
-      // Show the matching use-case body
-      const bcm = parseInt(gpioSel.value, 10);
-      document.querySelectorAll('.uc-body').forEach(b =>
-        b.style.display = (b.dataset.ucBody === currentUC) ? 'block' : 'none');
-
-      if (currentUC === 'atem-toggle') buildToggleSteps(bcm);
-      if (currentUC === 'tally-out') buildTallyOutSteps(bcm);
-
-      const t = document.getElementById('wz-step4-title');
-      if (t) {
-        t.textContent = currentUC === 'tally-out'
-          ? 'Tally Out (Relais) einrichten'
-          : 'HIGH/LOW Trigger für temporäres Aux-Schalten';
-      }
-    }
-
-    function buildToggleSteps(bcm) {
-      const rawLabel = (document.getElementById('wzt-label').value || 'atem').trim();
-      const label = escHtml(rawLabel.replace(/[^A-Za-z0-9_-]/g, '') || 'atem');
-      const aux  = parseInt(document.getElementById('wzt-aux').value,  10);
-      const a    = parseInt(document.getElementById('wzt-a').value,    10);
-      const b    = parseInt(document.getElementById('wzt-b').value,    10);
-      const slot = parseInt(document.getElementById('wzt-slot').value, 10);
-      const varName = `RPi_GPIO:gpio_state_${slot}`;
-      document.getElementById('wzt-steps').innerHTML = `
-        <h4 style="margin:0 0 8px">Wie es funktioniert</h4>
-        <p class="hint" style="margin:0 0 10px">
-          Das Companion-Modul <strong>raspberry-gpio</strong> liest den Pin direkt.
-          Je nach Signal (<strong>HIGH</strong> = gedrückt, <strong>LOW</strong> = losgelassen)
-          feuert ein eigener Trigger mit einer festen ATEM-Action – keine Variable nötig, kein rotes Feld.
-        </p>
-        <h4 style="margin:14px 0 8px">1. raspberry-gpio Modul konfigurieren</h4>
-        <ol class="steps">
-          <li>In Companion links auf <strong>Connections</strong> → <kbd>+</kbd>.</li>
-          <li>Modul <strong>raspberry-gpio</strong> suchen und hinzufügen. Label: <code>RPi_GPIO</code>.</li>
-          <li>In der Modul-Konfiguration: <strong>Slot ${slot}</strong> aktivieren (<em>Use GPIO pin</em> an) – das entspricht BCM-GPIO ${bcm}.</li>
-          <li><strong>Set as IN/OUT</strong> = <strong>IN</strong>.</li>
-          <li><strong>Trigger type</strong> = <strong>BOTH</strong>.</li>
-          <li><strong>Debounce</strong> = <strong>20 ms</strong>.</li>
-          <li><strong>Invert values</strong> = <strong>AN</strong> (Taster zieht Pin auf GND → invertiert = HIGH).</li>
-          <li>Speichern. Companion liefert jetzt die Variable <code>RPi_GPIO:gpio_state_${slot}</code>.</li>
-        </ol>
-        <h4 style="margin:14px 0 8px">2. Trigger für Tastendruck (HIGH) anlegen</h4>
-        <ol class="steps">
-          <li>Links auf <strong>Triggers</strong> → <kbd>+</kbd>.</li>
-          <li><strong>Name</strong>: <code>Aux${aux} HIGH GPIO${bcm}</code></li>
-          <li><strong>Event</strong>: <em>Variable changes</em>, Variable = <code>RPi_GPIO:gpio_state_${slot}</code>.</li>
-          <li><strong>Condition</strong>: <code>RPi_GPIO:gpio_state_${slot}</code> <em>ist gleich</em> <code>HIGH</code>.</li>
-          <li><strong>Action</strong>: <em>${label} → Aux/Output: Set source</em><br>
-            Aux Output = <strong>Aux ${aux}</strong><br>
-            Input = <code>${a}</code> &nbsp;– das ist die ATEM-Eingangsnummer (z.B. <code>1</code> = Cam 1 / PC, <code>10010</code> = Program-Bus). Die richtige Zahl seht ihr wenn ihr den Input-Dropdown in Companion aufklappt und den Wert danach im JSON nachschaut, oder einfach den Companion-Tooltip nutzt.</li>
-        </ol>
-        <h4 style="margin:14px 0 8px">3. Trigger für Loslassen (LOW) anlegen</h4>
-        <ol class="steps">
-          <li>Noch einen Trigger mit <kbd>+</kbd>.</li>
-          <li><strong>Name</strong>: <code>Aux${aux} LOW GPIO${bcm}</code></li>
-          <li><strong>Event</strong>: <em>Variable changes</em>, Variable = <code>RPi_GPIO:gpio_state_${slot}</code>.</li>
-          <li><strong>Condition</strong>: <code>RPi_GPIO:gpio_state_${slot}</code> <em>ist gleich</em> <code>LOW</code>.</li>
-          <li><strong>Action</strong>: <em>${label} → Aux/Output: Set source</em><br>
-            Aux Output = <strong>Aux ${aux}</strong><br>
-            Input = <code>${b}</code> &nbsp;– gleiche Logik wie oben, ATEM-Eingangsnummer eintragen.</li>
-        </ol>
-        <h4 style="margin:14px 0 8px">4. Ergebnis</h4>
-        <ol class="steps">
-          <li>Taster drücken → Aux ${aux} wechselt auf Quelle <strong>${a}</strong>.</li>
-          <li>Taster loslassen → Aux ${aux} kehrt zu Quelle <strong>${b}</strong> zurück.</li>
-        </ol>
-      `;
-      enhanceCopyButtons(document.getElementById('wzt-steps'));
-    }
-
-    function buildTallyOutSteps(_bcm) {
-      const rawLabel = (document.getElementById('wzo-label').value || 'atem').trim();
-      const label = escHtml(rawLabel.replace(/[^A-Za-z0-9_-]/g, '') || 'atem');
-      const input = parseInt(document.getElementById('wzo-input').value, 10);
-      const redSlot = parseInt(document.getElementById('wzo-red-slot').value, 10);
-      const greenSlot = parseInt(document.getElementById('wzo-green-slot').value, 10);
-      const out = document.getElementById('wzo-steps');
-      if (!out) return;
-
-      out.innerHTML = `
-        <h4 style="margin:0 0 8px">Prinzip</h4>
-        <p class="hint" style="margin:0 0 10px">
-          Für Input <strong>${Number.isFinite(input) ? input : 'N'}</strong> werden zwei Relais-Ausgänge verwendet:
-          <strong>Rot (PGM)</strong> auf Slot <strong>${redSlot}</strong> und
-          <strong>Grün (PVW)</strong> auf Slot <strong>${greenSlot}</strong>.
-        </p>
-
-        <h4 style="margin:14px 0 8px">1. raspberry-gpio Outputs konfigurieren</h4>
-        <ol class="steps">
-          <li>Connections → <strong>RPi_GPIO</strong> öffnen.</li>
-          <li>Slot <strong>${redSlot}</strong> aktivieren, <strong>Set as IN/OUT = OUT</strong>, Initialwert <strong>LOW</strong>.</li>
-          <li>Slot <strong>${greenSlot}</strong> aktivieren, <strong>Set as IN/OUT = OUT</strong>, Initialwert <strong>LOW</strong>.</li>
-          <li>Relais-Eingänge anschließen: Rot an Slot ${redSlot}, Grün an Slot ${greenSlot}. Gemeinsame GND beachten.</li>
-        </ol>
-
-        <h4 style="margin:14px 0 8px">2. Trigger für Program (rot) anlegen</h4>
-        <ol class="steps">
-          <li>Trigger <strong>Input${Number.isFinite(input) ? input : 'N'} PGM</strong> erstellen.</li>
-          <li><strong>Event</strong>: <em>Variable changes</em> auf die ATEM-Programm-Variable von ME1 (über Variablen-Picker wählen).</li>
-          <li><strong>Condition</strong>: Programm-Input ist gleich <code>${Number.isFinite(input) ? input : 'N'}</code>.</li>
-          <li><strong>Actions</strong>: Rot-Relais <strong>HIGH</strong>, Grün-Relais <strong>LOW</strong>.</li>
-        </ol>
-
-        <h4 style="margin:14px 0 8px">3. Trigger für Preview (grün) anlegen</h4>
-        <ol class="steps">
-          <li>Trigger <strong>Input${Number.isFinite(input) ? input : 'N'} PVW</strong> erstellen.</li>
-          <li><strong>Event</strong>: <em>Variable changes</em> auf die ATEM-Preview-Variable von ME1.</li>
-          <li><strong>Condition</strong>: Preview-Input ist gleich <code>${Number.isFinite(input) ? input : 'N'}</code>.</li>
-          <li><strong>Actions</strong>: Rot-Relais <strong>LOW</strong>, Grün-Relais <strong>HIGH</strong>.</li>
-        </ol>
-
-        <h4 style="margin:14px 0 8px">4. Trigger für Safe (beide aus)</h4>
-        <ol class="steps">
-          <li>Zusatz-Trigger für Zustände außerhalb PGM/PVW anlegen.</li>
-          <li><strong>Action</strong>: beide Relais auf <strong>LOW</strong>.</li>
-        </ol>
-
-        <div class="card warn" style="margin-top:10px">
-          <strong>Hinweis:</strong> In Companion für die Output-Actions im Modul <strong>RPi_GPIO</strong> immer den gleichen Slot verwenden
-          und nur den Wert HIGH/LOW ändern. ATEM-Variablen immer über den Picker wählen, nicht tippen.
-        </div>
-      `;
-      enhanceCopyButtons(out);
-    }
-
-    ['wzt-label','wzt-aux','wzt-a','wzt-b','wzt-slot'].forEach(id => {
-      const el = document.getElementById(id);
-      if (el) el.addEventListener('input', () => buildToggleSteps(parseInt(gpioSel.value,10)));
-      if (el) el.addEventListener('change', () => buildToggleSteps(parseInt(gpioSel.value,10)));
-    });
-
-    ['wzo-label','wzo-input','wzo-red-slot','wzo-green-slot'].forEach(id => {
-      const el = document.getElementById(id);
-      if (el) el.addEventListener('input', () => buildTallyOutSteps(parseInt(gpioSel.value,10)));
-      if (el) el.addEventListener('change', () => buildTallyOutSteps(parseInt(gpioSel.value,10)));
-    });
-
-    setStep(1);
-  })();
 
   (async () => {
     await loadBindings();
