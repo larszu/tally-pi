@@ -39,6 +39,36 @@ LINE_RE = re.compile(
     r"(?:\s+(hi|lo))?"
 )
 
+# `pinctrl get` output, e.g. "17: ip    pd | lo // GPIO17 = input"
+PINCTRL_RE = re.compile(
+    r"^\s*(\d+):\s+(\S+)\s+(\S+)\s*\|\s*(\S+)"
+)
+
+
+def read_pinctrl_bias():
+    """Return dict[bcm] -> 'pu' | 'pd' | 'none' by parsing `pinctrl get`."""
+    try:
+        out = subprocess.run(
+            ["pinctrl", "get"],
+            capture_output=True, text=True, timeout=2, check=False,
+        ).stdout
+    except (FileNotFoundError, subprocess.SubprocessError):
+        return {}
+    result = {}
+    for line in out.splitlines():
+        m = PINCTRL_RE.match(line)
+        if not m:
+            continue
+        bcm = int(m.group(1))
+        pull = m.group(3)
+        if pull == "pu":
+            result[bcm] = "pu"
+        elif pull == "pd":
+            result[bcm] = "pd"
+        else:
+            result[bcm] = "none"
+    return result
+
 
 def parse_gpio_state():
     result = {}
@@ -46,6 +76,7 @@ def parse_gpio_state():
         text = DEBUG_GPIO.read_text(errors="replace")
     except Exception as e:
         return {"error": str(e)}
+    bias_map = read_pinctrl_bias()
     for line in text.splitlines():
         m = LINE_RE.search(line)
         if not m:
@@ -65,6 +96,7 @@ def parse_gpio_state():
             "claimed": bool(consumer),
             "direction": direction,
             "value": value,
+            "bias": bias_map.get(bcm),
             "global_line": global_line,
             "sysfs": consumer == "sysfs",
         }

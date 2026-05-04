@@ -717,18 +717,21 @@ var qrcode=function(){var t=function(t,r){var e=t,n=g[r],o=null,i=0,a=null,u=[],
     } else if (s.direction === 'out') {
       el.classList.add('out');
     } else if (s.direction === 'in') {
-      if (s.value === 0) {
-        el.classList.add('in-lo');
-        if (s.claimed) {
-          const tag = document.createElement('span');
-          tag.className = 'pressed';
-          tag.textContent = 'GEDRÜCKT';
-          el.appendChild(tag);
-        }
-      } else if (s.value === 1) {
-        el.classList.add('in-hi');
-      } else {
-        el.classList.add('free');
+      // "Pressed" only when the level deviates from the pull bias' resting
+      // state. With pull-up: idle=HIGH, pressed=LOW. With pull-down:
+      // idle=LOW, pressed=HIGH. Without a known bias we can't tell, so we
+      // show the level but never the GEDRÜCKT badge to avoid false positives.
+      const pressed =
+        (s.bias === 'pu' && s.value === 0) ||
+        (s.bias === 'pd' && s.value === 1);
+      if (s.value === 0) el.classList.add('in-lo');
+      else if (s.value === 1) el.classList.add('in-hi');
+      else el.classList.add('free');
+      if (pressed && s.claimed) {
+        const tag = document.createElement('span');
+        tag.className = 'pressed';
+        tag.textContent = 'GEDRÜCKT';
+        el.appendChild(tag);
       }
     } else {
       el.classList.add('free');
