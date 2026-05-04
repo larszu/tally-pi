@@ -146,7 +146,11 @@ chown "$TARGET_USER:$TARGET_USER" "$HOME_DIR/.config/openbox/rc.xml"
 log "7/7 Enabling services"
 systemctl enable companion                >/dev/null 2>&1 || true
 systemctl enable pi-guide                 >/dev/null 2>&1 || true
-systemctl enable pi-gpio-watcher          >/dev/null 2>&1 || true
+# Onboard GPIOs are owned exclusively by Companion's raspberry-gpio module.
+# pi-gpio-watcher would conflict (claims /dev/gpiochip0 lines), so it stays
+# disabled by default. Enable manually if you intentionally want HTTP-based
+# bindings instead of Companion's built-in GPIO handling.
+systemctl disable --now pi-gpio-watcher   >/dev/null 2>&1 || true
 systemctl enable pi-numato-watcher        >/dev/null 2>&1 || true
 systemctl enable getty@tty1               >/dev/null 2>&1 || true
 # pi-status stays disabled until an OLED is physically present
@@ -154,7 +158,6 @@ systemctl disable pi-status               >/dev/null 2>&1 || true
 
 # Restart what's safe to bounce now
 systemctl restart pi-guide          || true
-systemctl restart pi-gpio-watcher   || true
 systemctl restart pi-numato-watcher || true
 
 log "=================================================================="
