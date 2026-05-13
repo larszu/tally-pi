@@ -80,14 +80,25 @@ install -m 644 setup-guide.html    /opt/pi-guide/
 install -m 755 guide_server.py     /opt/pi-guide/
 install -m 755 gpio_watcher.py     /opt/pi-guide/
 install -m 755 numato_watcher.py   /opt/pi-guide/
+install -m 755 atem_watcher.py     /opt/pi-guide/
 install -m 755 pi_status.py        /opt/pi-status/
 [ -f /opt/pi-guide/bindings.json ] || echo '[]' > /opt/pi-guide/bindings.json
-chmod 664 /opt/pi-guide/bindings.json
+[ -f /opt/pi-guide/tally.json ]   || echo '{"atem_ip":"","devices":[]}' > /opt/pi-guide/tally.json
+chmod 664 /opt/pi-guide/bindings.json /opt/pi-guide/tally.json
+
+# Optional: build the pi-status venv if it doesn't exist yet. pi-status itself
+# stays disabled — enable manually once an OLED is connected.
+if [ ! -d /opt/pi-status/venv ]; then
+    python3 -m venv /opt/pi-status/venv
+    /opt/pi-status/venv/bin/pip install --quiet --upgrade pip
+    /opt/pi-status/venv/bin/pip install --quiet luma.oled || true
+fi
 
 log "5/7 Installing systemd units and udev rules"
 install -m 644 pi-guide.service          /etc/systemd/system/
 install -m 644 pi-gpio-watcher.service   /etc/systemd/system/
 install -m 644 pi-numato-watcher.service /etc/systemd/system/
+install -m 644 pi-atem-watcher.service   /etc/systemd/system/
 install -m 644 pi-status.service         /etc/systemd/system/
 install -m 644 10-modesetting.conf       /etc/X11/xorg.conf.d/
 install -m 644 99-numato.rules           /etc/udev/rules.d/
@@ -144,27 +155,37 @@ EOF
 chown "$TARGET_USER:$TARGET_USER" "$HOME_DIR/.config/openbox/rc.xml"
 
 log "7/7 Enabling services"
+# Companion may or may not be present (image vs. plain Raspberry Pi OS).
 systemctl enable companion                >/dev/null 2>&1 || true
 systemctl enable pi-guide                 >/dev/null 2>&1 || true
-# Onboard GPIOs are owned exclusively by Companion's raspberry-gpio module.
-# pi-gpio-watcher would conflict (claims /dev/gpiochip0 lines), so it stays
-# disabled by default. Enable manually if you intentionally want HTTP-based
-# bindings instead of Companion's built-in GPIO handling.
-systemctl disable --now pi-gpio-watcher   >/dev/null 2>&1 || true
+# pi-guide owns GPIO OUTPUTS (Tally-Lampen, open-drain) and pi-gpio-watcher
+# owns GPIO INPUTS (Trigger-Taster). Both run together — the config UI
+# enforces disjoint pins.
+systemctl enable pi-gpio-watcher          >/dev/null 2>&1 || true
+systemctl enable pi-atem-watcher          >/dev/null 2>&1 || true
 systemctl enable pi-numato-watcher        >/dev/null 2>&1 || true
 systemctl enable getty@tty1               >/dev/null 2>&1 || true
 # pi-status stays disabled until an OLED is physically present
 systemctl disable pi-status               >/dev/null 2>&1 || true
 
-# Restart what's safe to bounce now
+# Restart what's safe to bounce now (without flapping Companion / kiosk).
 systemctl restart pi-guide          || true
+systemctl restart pi-gpio-watcher   || true
+systemctl restart pi-atem-watcher   || true
 systemctl restart pi-numato-watcher || true
 
+PI_IP="$(hostname -I | awk '{print $1}')"
 log "=================================================================="
 log "  Installation complete."
-log "  Web UI:       http://$(hostname -I | awk '{print $1}'):8080/"
-log "  Companion:    http://$(hostname -I | awk '{print $1}'):8000/"
+log "  Setup-Guide:  http://${PI_IP}:8080/"
+log "  Companion:    http://${PI_IP}:8000/"
 log "  Exit kiosk:   Ctrl+Alt+Q"
+log ""
+log "  Next steps:"
+log "    1. Setup-Guide öffnen → Tab 'Tally'"
+log "    2. ATEM-IP eintragen → 'Übernehmen'"
+log "    3. Geräte (Kameras) anlegen, pro Gerät GPIO-Pin wählen"
+log ""
 if [ -n "${REBOOT_NEEDED:-}" ]; then
     log "  REBOOT REQUIRED to activate I²C. Run: sudo reboot"
 else
