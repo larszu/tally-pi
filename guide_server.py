@@ -264,6 +264,7 @@ DEFAULT_TALLY_CONFIG = {
     "atem_ip": "",
     "arbiter_url": "http://localhost:4455",
     "devices": [],               # [{id, name, input, me?, aux?}]
+    "outputs": [],               # [{bcm, name?}] – open-drain tally outputs
 }
 
 
@@ -278,6 +279,8 @@ def load_tally_config():
         out.update({k: v for k, v in d.items() if k in DEFAULT_TALLY_CONFIG})
         if not isinstance(out["devices"], list):
             out["devices"] = []
+        if not isinstance(out["outputs"], list):
+            out["outputs"] = []
         return out
     except Exception:
         return dict(DEFAULT_TALLY_CONFIG)
@@ -341,6 +344,22 @@ def validate_tally_config(cfg):
         for a in aux:
             if not isinstance(a, int) or a < 1 or a > 32:
                 raise ValueError("device aux entries must be int 1..32")
+    outs = cfg.get("outputs", [])
+    if not isinstance(outs, list):
+        raise ValueError("outputs must be list")
+    seen_bcm = set()
+    for o in outs:
+        if not isinstance(o, dict):
+            raise ValueError("output entry must be object")
+        bcm = o.get("bcm")
+        if not isinstance(bcm, int) or bcm < 0 or bcm > 27:
+            raise ValueError("output bcm must be int 0..27")
+        if bcm in seen_bcm:
+            raise ValueError(f"duplicate output bcm: {bcm}")
+        seen_bcm.add(bcm)
+        nm = o.get("name", "")
+        if not isinstance(nm, str) or len(nm) > 64:
+            raise ValueError("output name must be string, max 64 chars")
 
 
 def get_atem_state():
@@ -350,6 +369,144 @@ def get_atem_state():
         return json.loads(ATEM_STATE_FILE.read_text())
     except Exception:
         return {"connected": False, "error": "state parse error"}
+
+
+# ---------------------------------------------------------------------------
+# Tally outputs — own GPIO pins in open-drain mode.
+#
+# Idle = HIGH on an open-drain line = high-impedance, i.e. the pin behaves
+# like an open switch contact. Active = LOW = pulled to GND, i.e. as if the
+# contact was bridged. Companion (or any other system) toggles state via
+# POST /tally-out/<bcm>/on|off|pulse so it never needs to drive the pin
+# itself.
+# ---------------------------------------------------------------------------
+GPIO_CHIP = "/dev/gpiochip0"
+TALLY_OUT_CONSUMER = "pi-tally-out"
+
+
+class TallyOutputs:
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._req = None
+        self._bcms = []        # active line offsets, in claim order
+        self._values = {}      # bcm -> bool (True = active/LOW/bridged)
+        self._pulse_timers = {}  # bcm -> threading.Timer
+        self._error = None
+
+    def configure(self, bcms):
+        """Claim the given BCM pins as open-drain outputs. Idempotent."""
+        try:
+            import gpiod
+            from gpiod.line import Direction, Drive, Value
+        except Exception as e:
+            with self._lock:
+                self._error = f"gpiod not available: {e}"
+                self._release_locked()
+            return
+
+        bcms = sorted({int(b) for b in bcms if isinstance(b, int) and 0 <= b <= 27})
+        with self._lock:
+            if bcms == self._bcms and self._req is not None:
+                return  # no change
+            # Cancel any pending pulses on pins we're about to release
+            for t in self._pulse_timers.values():
+                try: t.cancel()
+                except Exception: pass
+            self._pulse_timers.clear()
+            self._release_locked()
+            if not bcms:
+                self._error = None
+                return
+            try:
+                config = {
+                    b: gpiod.LineSettings(
+                        direction=Direction.OUTPUT,
+                        drive=Drive.OPEN_DRAIN,
+                        output_value=Value.ACTIVE,  # HIGH = Hi-Z = open
+                    ) for b in bcms
+                }
+                self._req = gpiod.request_lines(
+                    GPIO_CHIP, consumer=TALLY_OUT_CONSUMER, config=config,
+                )
+                self._bcms = bcms
+                self._values = {b: False for b in bcms}
+                self._error = None
+                print(f"[tally-out] claimed open-drain GPIOs: {bcms}", flush=True)
+            except Exception as e:
+                self._error = f"claim failed: {e}"
+                self._req = None
+                self._bcms = []
+                self._values = {}
+                print(f"[tally-out] {self._error}", flush=True)
+
+    def _release_locked(self):
+        if self._req is not None:
+            try: self._req.release()
+            except Exception: pass
+            self._req = None
+        self._bcms = []
+        self._values = {}
+
+    def set(self, bcm, on):
+        """on=True bridges pin to GND; on=False releases pin to Hi-Z (open)."""
+        try:
+            from gpiod.line import Value
+        except Exception as e:
+            return False, f"gpiod not available: {e}"
+        with self._lock:
+            if self._req is None or bcm not in self._values:
+                return False, f"GPIO{bcm} not configured as tally output"
+            try:
+                # open-drain: ACTIVE/HIGH = release (Hi-Z), INACTIVE/LOW = pull GND
+                self._req.set_value(bcm, Value.INACTIVE if on else Value.ACTIVE)
+                self._values[bcm] = bool(on)
+                # cancel any pulse timer for this pin – explicit set wins
+                t = self._pulse_timers.pop(bcm, None)
+                if t:
+                    try: t.cancel()
+                    except Exception: pass
+                return True, "ok"
+            except Exception as e:
+                return False, f"set failed: {e}"
+
+    def pulse(self, bcm, ms):
+        ok, msg = self.set(bcm, True)
+        if not ok:
+            return ok, msg
+        ms = max(1, min(60_000, int(ms)))
+
+        def _release():
+            with self._lock:
+                self._pulse_timers.pop(bcm, None)
+            self.set(bcm, False)
+
+        timer = threading.Timer(ms / 1000.0, _release)
+        timer.daemon = True
+        with self._lock:
+            old = self._pulse_timers.get(bcm)
+            if old:
+                try: old.cancel()
+                except Exception: pass
+            self._pulse_timers[bcm] = timer
+        timer.start()
+        return True, f"pulse {ms}ms"
+
+    def state(self):
+        with self._lock:
+            return {
+                "configured": list(self._bcms),
+                "values": {str(b): self._values.get(b, False) for b in self._bcms},
+                "error": self._error,
+            }
+
+
+TALLY_OUTPUTS = TallyOutputs()
+
+
+def reconfigure_tally_outputs():
+    cfg = load_tally_config()
+    bcms = [o.get("bcm") for o in (cfg.get("outputs") or []) if isinstance(o.get("bcm"), int)]
+    TALLY_OUTPUTS.configure(bcms)
 
 
 # ---------------------------------------------------------------------------
@@ -609,6 +766,9 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         elif self.path == "/tally-config":
             self._send_json(load_tally_config())
             return
+        elif self.path == "/tally-out":
+            self._send_json(TALLY_OUTPUTS.state())
+            return
         elif self.path == "/service/pi-gpio-watcher":
             self._send_json(watcher_status())
             return
@@ -788,14 +948,19 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 data = json.loads(body or b"{}")
                 validate_tally_config(data)
                 save_tally_config(data)
+                reconfigure_tally_outputs()
                 log_event("config", action="tally_save",
                           mode=data.get("mode"),
                           atem_ip=data.get("atem_ip"),
-                          devices=len(data.get("devices") or []))
+                          devices=len(data.get("devices") or []),
+                          outputs=len(data.get("outputs") or []))
                 self._send_json({"ok": True})
             except Exception as e:
                 log_event("config", action="tally_save_failed", error=str(e))
                 self._send_json({"ok": False, "error": str(e)}, code=400)
+            return
+        if self.path.startswith("/tally-out/"):
+            self._handle_tally_out_post()
             return
         if self.path == "/service/pi-gpio-watcher":
             body = self._read_body()
@@ -852,6 +1017,39 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return
         self.send_error(404)
 
+    def _handle_tally_out_post(self):
+        # /tally-out/<bcm>/(on|off|pulse)
+        from urllib.parse import urlparse, parse_qs
+        p = urlparse(self.path)
+        parts = [seg for seg in p.path.split("/") if seg]
+        if len(parts) != 3 or parts[0] != "tally-out":
+            self._send_json({"ok": False, "error": "bad path"}, code=400)
+            return
+        try:
+            bcm = int(parts[1])
+        except ValueError:
+            self._send_json({"ok": False, "error": "bad bcm"}, code=400)
+            return
+        action = parts[2]
+        if action == "on":
+            ok, msg = TALLY_OUTPUTS.set(bcm, True)
+        elif action == "off":
+            ok, msg = TALLY_OUTPUTS.set(bcm, False)
+        elif action == "pulse":
+            qs = parse_qs(p.query)
+            try:
+                ms = int(qs.get("ms", ["200"])[0])
+            except ValueError:
+                self._send_json({"ok": False, "error": "bad ms"}, code=400)
+                return
+            ok, msg = TALLY_OUTPUTS.pulse(bcm, ms)
+        else:
+            self._send_json({"ok": False, "error": "unknown action"}, code=400)
+            return
+        log_event("tally-out", bcm=bcm, action=action, ok=ok, msg=msg)
+        self._send_json({"ok": ok, "message": msg, "state": TALLY_OUTPUTS.state()},
+                        code=200 if ok else 409)
+
     def log_message(self, *a, **k):
         pass
 
@@ -906,6 +1104,10 @@ if __name__ == "__main__":
     # the LAN. Set GUIDE_HOST=127.0.0.1 in the systemd unit to lock it down.
     host = os.environ.get("GUIDE_HOST", "0.0.0.0")
     socketserver.ThreadingTCPServer.allow_reuse_address = True
+    try:
+        reconfigure_tally_outputs()
+    except Exception as e:
+        print(f"[tally-out] init failed: {e}", flush=True)
     start_transition_logger()
     log_event("guide", action="start", host=host, port=PORT)
     # Threading server so SSE streams do not block other requests.
