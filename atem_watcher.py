@@ -6,15 +6,18 @@ Reads ATEM IP from /opt/pi-guide/tally.json (key: "atem_ip").
 """
 import json
 import os
+import queue
 import signal
 import socket
 import struct
 import tempfile
+import threading
 import time
 from pathlib import Path
 
 STATE_FILE = Path("/run/pi-guide/atem.json")
 CONFIG_FILE = Path("/opt/pi-guide/tally.json")
+CMD_SOCKET = Path("/run/pi-guide/atem-cmd.sock")
 ATEM_PORT = 9910
 RECV_TIMEOUT = 2.0          # socket recv timeout (seconds)
 KEEPALIVE_INTERVAL = 1.0    # send keepalive ping every N seconds
@@ -25,6 +28,9 @@ STATE_WRITE_INTERVAL = 0.1  # throttle disk writes
 FLAG_RELIABLE = 0x01   # server wants ACK
 FLAG_SYN      = 0x02   # handshake
 FLAG_ACK      = 0x10   # we're ACKing
+
+# Outbound command queue, drained from the main loop after each tick().
+CMD_QUEUE: "queue.Queue[dict]" = queue.Queue(maxsize=256)
 
 
 def atomic_write(path: Path, payload: dict) -> None:
@@ -73,6 +79,17 @@ def make_ping(session_id: int, local_pkt_id: int) -> bytes:
     """Build a 12-byte empty reliable packet (keepalive)."""
     # flags=RELIABLE (0x01) -> (0x01 << 11) | 12 = 0x080C
     return struct.pack(">HHHHHH", 0x080C, session_id, 0x0000, local_pkt_id, 0x0000, 0x0000)
+
+
+def make_caus(session_id: int, local_pkt_id: int, aux_index_0based: int, source_input: int) -> bytes:
+    """Build a 24-byte reliable packet containing one CAuS (set aux source) command."""
+    # 12-byte header (RELIABLE) + 12-byte command block.
+    # flags=RELIABLE (0x01) -> (0x01 << 11) | 24 = 0x0818
+    header = struct.pack(">HHHHHH", 0x0818, session_id, 0x0000, local_pkt_id, 0x0000, 0x0000)
+    # cmd_len=12, pad=0, name="CAuS", mask=0x01 (source), aux_idx, source (BE)
+    cmd = struct.pack(">HH4sBBH", 12, 0x0000, b"CAuS",
+                      0x01, aux_index_0based & 0xFF, source_input & 0xFFFF)
+    return header + cmd
 
 
 def parse_commands(data: bytes):
@@ -220,6 +237,16 @@ class AtemClient:
 
         return True
 
+    def send_aux(self, aux_1based: int, source: int) -> None:
+        """Tell the ATEM: route `source` to Aux output `aux_1based`."""
+        if not self.sock or not self.connected:
+            raise RuntimeError("not connected")
+        if not (1 <= aux_1based <= 24):
+            raise ValueError(f"aux out of range: {aux_1based}")
+        self.local_pkt_id = (self.local_pkt_id + 1) & 0x7FFF
+        pkt = make_caus(self.session_id, self.local_pkt_id, aux_1based - 1, int(source))
+        self.sock.sendto(pkt, (self.ip, ATEM_PORT))
+
     def close(self):
         if self.sock:
             try:
@@ -228,6 +255,85 @@ class AtemClient:
                 pass
             self.sock = None
         self.connected = False
+
+
+def cmd_listener_thread():
+    """Listen on a Unix socket for JSON commands and enqueue them.
+
+    Wire format: one JSON object per connection, terminated by newline.
+    Examples:
+        {"cmd": "set_aux", "aux": 1, "source": 5}
+
+    The response is a single JSON line: {"ok": bool, "error": "..."}.
+    """
+    try:
+        CMD_SOCKET.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            CMD_SOCKET.unlink()
+        except FileNotFoundError:
+            pass
+        srv = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        srv.bind(str(CMD_SOCKET))
+        try:
+            os.chmod(str(CMD_SOCKET), 0o660)
+        except Exception:
+            pass
+        srv.listen(8)
+    except Exception as e:
+        print(f"atem cmd listener bind failed: {e}", flush=True)
+        return
+
+    while True:
+        try:
+            conn, _ = srv.accept()
+        except Exception:
+            time.sleep(0.5)
+            continue
+        try:
+            conn.settimeout(2.0)
+            buf = b""
+            while b"\n" not in buf and len(buf) < 8192:
+                chunk = conn.recv(4096)
+                if not chunk:
+                    break
+                buf += chunk
+            try:
+                req = json.loads(buf.split(b"\n", 1)[0].decode("utf-8"))
+                if not isinstance(req, dict):
+                    raise ValueError("expected JSON object")
+            except Exception as e:
+                conn.sendall((json.dumps({"ok": False, "error": str(e)}) + "\n").encode())
+                continue
+            try:
+                CMD_QUEUE.put_nowait(req)
+                conn.sendall((json.dumps({"ok": True, "queued": True}) + "\n").encode())
+            except queue.Full:
+                conn.sendall((json.dumps({"ok": False, "error": "queue full"}) + "\n").encode())
+        except Exception:
+            pass
+        finally:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+
+def drain_commands(client):
+    """Pop pending commands and send them through the open ATEM connection."""
+    while True:
+        try:
+            req = CMD_QUEUE.get_nowait()
+        except queue.Empty:
+            return
+        cmd = req.get("cmd")
+        try:
+            if cmd == "set_aux":
+                client.send_aux(int(req["aux"]), int(req["source"]))
+                print(f"atem set_aux {req['aux']} <- {req['source']}", flush=True)
+            else:
+                print(f"atem cmd unknown: {cmd!r}", flush=True)
+        except Exception as e:
+            print(f"atem cmd {cmd} failed: {e}", flush=True)
 
 
 
@@ -240,6 +346,9 @@ def run():
 
     signal.signal(signal.SIGTERM, _sig)
     signal.signal(signal.SIGINT, _sig)
+
+    threading.Thread(target=cmd_listener_thread, name="atem-cmd",
+                     daemon=True).start()
 
     last_ip = None
     client = None
@@ -286,6 +395,7 @@ def run():
                 continue
 
         ok = client.tick()
+        drain_commands(client)
         flush(client.state)
 
         if not ok:

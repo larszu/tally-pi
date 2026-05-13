@@ -207,12 +207,34 @@ def get_numato_state():
 # Tally support (ATEM only).
 # ---------------------------------------------------------------------------
 GPIO_TRIGGER_MODES = ("pgm", "pgm_pvw", "manual")
+GPIO_INPUT_EDGES = ("falling", "rising", "both")
+GPIO_INPUT_ACTIONS = ("none", "companion", "atem_aux")
+
+# BCM pins safe to claim (avoid I2C/UART/SPI/EEPROM).
+USABLE_BCMS = (4, 5, 6, 12, 13, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27)
 
 DEFAULT_TALLY_CONFIG = {
     "atem_ip": "",
-    # [{id, name, input, me?, aux?, gpio?, gpio_trigger?}]
+    # Each device groups the configuration for one ATEM source:
+    #   id, name, input, me?, aux?           (browser-tally)
+    #   out_gpio?, out_trigger?              (hardware tally-lamp output)
+    #   in_gpio?, in_edge?, in_action_type?  (trigger-button input)
+    #     in_atem_aux?, in_atem_source?      (when in_action_type=atem_aux)
+    #     in_companion_page?, in_companion_row?, in_companion_col?
+    #                                        (when in_action_type=companion)
     "devices": [],
 }
+
+
+def _migrate_device(d):
+    """Rename legacy gpio/gpio_trigger fields to out_gpio/out_trigger."""
+    if not isinstance(d, dict):
+        return d
+    if "out_gpio" not in d and "gpio" in d:
+        d["out_gpio"] = d.pop("gpio")
+    if "out_trigger" not in d and "gpio_trigger" in d:
+        d["out_trigger"] = d.pop("gpio_trigger")
+    return d
 
 
 def load_tally_config():
@@ -226,6 +248,8 @@ def load_tally_config():
         out.update({k: v for k, v in d.items() if k in DEFAULT_TALLY_CONFIG})
         if not isinstance(out["devices"], list):
             out["devices"] = []
+        out["devices"] = [_migrate_device(dev) for dev in out["devices"]
+                          if isinstance(dev, dict)]
         return out
     except Exception:
         return dict(DEFAULT_TALLY_CONFIG)
@@ -285,16 +309,44 @@ def validate_tally_config(cfg):
         for a in aux:
             if not isinstance(a, int) or a < 1 or a > 32:
                 raise ValueError("device aux entries must be int 1..32")
-        gpio = d.get("gpio")
-        if gpio is not None:
-            if not isinstance(gpio, int) or gpio < 0 or gpio > 27:
-                raise ValueError("device gpio must be int 0..27")
-            if gpio in seen_gpio:
-                raise ValueError(f"duplicate device gpio: {gpio}")
-            seen_gpio.add(gpio)
-        trig = d.get("gpio_trigger", "pgm")
+
+        def _check_pin(value, label):
+            if value is None:
+                return None
+            if not isinstance(value, int) or value not in USABLE_BCMS:
+                raise ValueError(f"{label} must be one of {USABLE_BCMS}")
+            if value in seen_gpio:
+                raise ValueError(f"GPIO {value} already used by another device "
+                                 f"({label})")
+            seen_gpio.add(value)
+            return value
+
+        # Hardware tally-lamp output (Pi drives pin from ATEM state).
+        _check_pin(d.get("out_gpio"), "out_gpio")
+        trig = d.get("out_trigger", "pgm")
         if trig not in GPIO_TRIGGER_MODES:
-            raise ValueError(f"gpio_trigger must be one of {GPIO_TRIGGER_MODES}")
+            raise ValueError(f"out_trigger must be one of {GPIO_TRIGGER_MODES}")
+
+        # Trigger button input (Pi watches pin, fires action on edge).
+        in_pin = _check_pin(d.get("in_gpio"), "in_gpio")
+        edge = d.get("in_edge", "falling")
+        if edge not in GPIO_INPUT_EDGES:
+            raise ValueError(f"in_edge must be one of {GPIO_INPUT_EDGES}")
+        act = d.get("in_action_type", "none")
+        if act not in GPIO_INPUT_ACTIONS:
+            raise ValueError(f"in_action_type must be one of {GPIO_INPUT_ACTIONS}")
+        if in_pin is not None and act == "atem_aux":
+            aux_n = d.get("in_atem_aux")
+            if not isinstance(aux_n, int) or aux_n < 1 or aux_n > 32:
+                raise ValueError("in_atem_aux must be int 1..32")
+            src = d.get("in_atem_source")
+            if src is not None and (not isinstance(src, int) or src < 0 or src > 99999):
+                raise ValueError("in_atem_source must be int 0..99999 or null")
+        if in_pin is not None and act == "companion":
+            for f in ("in_companion_page", "in_companion_row", "in_companion_col"):
+                v = d.get(f, 0)
+                if not isinstance(v, int) or v < 0 or v > 99:
+                    raise ValueError(f"{f} must be int 0..99")
 
 
 def get_atem_state():
@@ -457,8 +509,8 @@ TALLY_OUTPUTS = TallyOutputs()
 
 def reconfigure_tally_outputs():
     cfg = load_tally_config()
-    bcms = [d.get("gpio") for d in (cfg.get("devices") or [])
-            if isinstance(d.get("gpio"), int)]
+    bcms = [d.get("out_gpio") for d in (cfg.get("devices") or [])
+            if isinstance(d.get("out_gpio"), int)]
     TALLY_OUTPUTS.configure(bcms)
 
 
@@ -888,7 +940,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 log_event("config", action="tally_save",
                           atem_ip=data.get("atem_ip"),
                           devices=len(devs),
-                          gpio_devices=sum(1 for d in devs if isinstance(d.get("gpio"), int)))
+                          out_gpios=sum(1 for d in devs if isinstance(d.get("out_gpio"), int)),
+                          in_gpios=sum(1 for d in devs if isinstance(d.get("in_gpio"), int)))
                 self._send_json({"ok": True})
             except Exception as e:
                 log_event("config", action="tally_save_failed", error=str(e))
@@ -985,8 +1038,8 @@ def start_transition_logger():
                                   input=d.get("input"), me=d.get("me", 1))
                         last_states[did] = state
                     # Auto-drive hardware tally output if configured.
-                    bcm = d.get("gpio")
-                    trig = d.get("gpio_trigger", "pgm")
+                    bcm = d.get("out_gpio")
+                    trig = d.get("out_trigger", "pgm")
                     if isinstance(bcm, int) and trig != "manual":
                         if trig == "pgm_pvw":
                             on = state in ("pgm", "pvw")

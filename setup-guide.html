@@ -307,9 +307,9 @@
   <div class="card" id="watcher-card">
     <h3>GPIO-Input-Watcher</h3>
     <p class="hint">
-      Liest GPIO-<em>Eingänge</em> (Taster) gemäß <code>bindings.json</code> und ruft die Companion-API auf.
-      Belegt Eingangs-Pins exklusiv — wenn ein Pin gleichzeitig als Tally-Output konfiguriert ist,
-      gibt’s einen Konflikt.
+      Liest die oben konfigurierten <strong>Trigger-Taster</strong> (sowie alte <code>bindings.json</code>-Einträge)
+      und führt die Aktion aus — Companion-Button drücken oder ATEM direkt umschalten.
+      Muss aktiv sein, damit Trigger-Taster funktionieren. Belegte Eingangs-Pins überschneiden sich nicht mit Tally-Output-Pins (Validierung erzwungen).
     </p>
     <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap">
       <span id="watcher-status" class="hint">Status: lade…</span>
@@ -968,12 +968,12 @@ var qrcode=function(){var t=function(t,r){var e=t,n=g[r],o=null,i=0,a=null,u=[],
       });
     }
 
-    // BCM pins safe for tally-out (no I2C/UART/SPI/EEPROM).
+    // BCM pins safe to claim (no I2C/UART/SPI/EEPROM).
     const USABLE_BCM = [4,5,6,12,13,16,17,18,19,20,21,22,23,24,25,26,27];
 
-    function gpioOptions(selected){
+    function gpioOptions(selected, label){
       const sel = (selected == null) ? '' : String(selected);
-      let html = `<option value="">— kein —</option>`;
+      let html = `<option value="">— ${label||'kein'} —</option>`;
       for (const b of USABLE_BCM) {
         const s = (sel === String(b)) ? ' selected' : '';
         html += `<option value="${b}"${s}>GPIO ${b}</option>`;
@@ -981,17 +981,27 @@ var qrcode=function(){var t=function(t,r){var e=t,n=g[r],o=null,i=0,a=null,u=[],
       return html;
     }
 
-    function triggerOptions(selected){
-      const v = selected || 'pgm';
-      const opts = [
-        ['pgm',     'nur Live (PGM)'],
-        ['pgm_pvw', 'Live + Preview'],
-        ['manual',  'nur manuell (HTTP)'],
-      ];
-      return opts.map(([k,l]) =>
-        `<option value="${k}"${v===k?' selected':''}>${l}</option>`
+    function optionsFrom(pairs, selected){
+      return pairs.map(([k,l]) =>
+        `<option value="${k}"${selected===k?' selected':''}>${l}</option>`
       ).join('');
     }
+
+    const OUT_TRIGGERS = [
+      ['pgm',     'nur Live (PGM)'],
+      ['pgm_pvw', 'Live + Preview'],
+      ['manual',  'nur manuell (HTTP)'],
+    ];
+    const IN_EDGES = [
+      ['falling', 'Druck (HIGH→LOW)'],
+      ['rising',  'Loslassen (LOW→HIGH)'],
+      ['both',    'beide Flanken'],
+    ];
+    const IN_ACTIONS = [
+      ['none',      '— keine —'],
+      ['atem_aux',  'ATEM direkt: Aux setzen'],
+      ['companion', 'Companion-Button drücken'],
+    ];
 
     function render(){
       host.innerHTML = '';
@@ -1000,52 +1010,137 @@ var qrcode=function(){var t=function(t,r){var e=t,n=g[r],o=null,i=0,a=null,u=[],
         const url = baseUrl() + '/tally/' + encodeURIComponent(String(inputNum));
         const card = document.createElement('div');
         card.setAttribute('data-tally-card', '1');
-        card.style.cssText = 'border:1px solid #334155;border-radius:8px;padding:10px;margin:8px 0;display:flex;gap:12px;align-items:flex-start;flex-wrap:wrap';
-        const gpioVal = (d.gpio == null) ? '' : d.gpio;
+        card.style.cssText = 'border:1px solid #334155;border-radius:10px;padding:12px;margin:10px 0;display:flex;flex-direction:column;gap:10px';
+        const outGpio = (d.out_gpio == null) ? '' : d.out_gpio;
+        const inGpio  = (d.in_gpio  == null) ? '' : d.in_gpio;
+        const inSrc   = (d.in_atem_source == null) ? '' : d.in_atem_source;
         card.innerHTML = `
-          <div class="tally-qr" style="flex:0 0 auto;display:flex;flex-direction:column;align-items:center;gap:4px">
-            <div class="tally-qr-box" style="background:#fff;padding:4px;border-radius:4px;line-height:0"></div>
-            <a href="${escHtml(url)}" target="_blank" style="font-size:11px;word-break:break-all;max-width:140px;text-align:center">${escHtml(url)}</a>
-            <div class="tally-atem-ref" style="font-size:11px;color:var(--muted);max-width:160px;text-align:center">ATEM: Input ${inputNum} = —</div>
+          <!-- header row -->
+          <div style="display:grid;grid-template-columns:2fr 1fr 1fr auto;gap:8px;align-items:end">
+            <label style="font-size:12px">Name<br>
+              <input data-f="name" value="${escHtml(d.name||'')}" placeholder="Kamera 1" style="width:100%">
+            </label>
+            <label style="font-size:12px">ATEM-Input<br>
+              <input data-f="input" type="number" min="0" value="${inputNum}" style="width:100%">
+            </label>
+            <label style="font-size:12px">ME<br>
+              <input data-f="me" type="number" min="1" max="4" value="${Number(d.me)||1}" style="width:100%">
+            </label>
+            <button type="button" class="btn" data-act="del" title="Gerät entfernen">✕</button>
           </div>
-          <div style="flex:1 1 240px;display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:6px">
-            <label>Name<br><input data-f="name" value="${escHtml(d.name||'')}" placeholder="Kamera 1" style="width:100%"></label>
-            <label>ATEM-Input<br><input data-f="input" type="number" min="0" value="${Number(d.input)||0}" style="width:100%"></label>
-            <label>ME<br><input data-f="me" type="number" min="1" max="4" value="${Number(d.me)||1}" style="width:100%"></label>
-            <label>Aux (Liste, z.B. 1,2)<br><input data-f="aux" value="${escHtml((d.aux||[]).join(','))}" placeholder="" style="width:100%"></label>
-            <label>Tally-GPIO<br><select data-f="gpio" style="width:100%">${gpioOptions(gpioVal)}</select></label>
-            <label>Auslöser<br><select data-f="gpio_trigger" style="width:100%">${triggerOptions(d.gpio_trigger)}</select></label>
-          </div>
-          <div style="flex:0 0 auto;display:flex;flex-direction:column;gap:4px;min-width:110px">
-            <button type="button" class="btn" data-act="test" ${gpioVal===''?'disabled':''} title="GPIO 500 ms nach GND ziehen">Test ⚡</button>
-            <span data-role="test-status" class="hint" style="font-size:11px;min-height:14px"></span>
-            <button type="button" class="btn" data-act="refresh-qr">QR neu</button>
-            <button type="button" class="btn" data-act="del" style="margin-top:4px">Entfernen</button>
-          </div>
+
+          <!-- block 1: Browser-Tally -->
+          <details open style="border:1px solid #1f2937;border-radius:6px;padding:8px">
+            <summary style="cursor:pointer;font-weight:600">📱 Browser-Tally <span style="font-weight:normal;color:var(--muted);font-size:12px">– QR-Code für Smartphone/Tablet</span></summary>
+            <div style="display:flex;gap:12px;margin-top:8px;flex-wrap:wrap">
+              <div class="tally-qr" style="flex:0 0 auto;display:flex;flex-direction:column;align-items:center;gap:4px">
+                <div class="tally-qr-box" style="background:#fff;padding:4px;border-radius:4px;line-height:0"></div>
+                <a href="${escHtml(url)}" target="_blank" style="font-size:11px;word-break:break-all;max-width:140px;text-align:center">${escHtml(url)}</a>
+                <div class="tally-atem-ref" style="font-size:11px;color:var(--muted);max-width:160px;text-align:center">ATEM: Input ${inputNum} = —</div>
+                <button type="button" class="btn" data-act="refresh-qr" style="font-size:11px;padding:2px 6px">QR neu</button>
+              </div>
+              <label style="font-size:12px;flex:1 1 160px">Aux-Ausgänge, die als PGM zählen (Liste z.B. 1,2)<br>
+                <input data-f="aux" value="${escHtml((d.aux||[]).join(','))}" placeholder="" style="width:100%">
+              </label>
+            </div>
+          </details>
+
+          <!-- block 2: Hardware-Tally (Output) -->
+          <details ${outGpio===''?'':'open'} style="border:1px solid #1f2937;border-radius:6px;padding:8px">
+            <summary style="cursor:pointer;font-weight:600">💡 Tally-Lampe (GPIO-Output) <span style="font-weight:normal;color:var(--muted);font-size:12px">– Pi zieht Pin nach GND wenn diese Quelle on-air</span></summary>
+            <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:8px;margin-top:8px;align-items:end">
+              <label style="font-size:12px">GPIO-Pin<br>
+                <select data-f="out_gpio" style="width:100%">${gpioOptions(outGpio,'aus')}</select>
+              </label>
+              <label style="font-size:12px">Auslöser<br>
+                <select data-f="out_trigger" style="width:100%">${optionsFrom(OUT_TRIGGERS, d.out_trigger||'pgm')}</select>
+              </label>
+              <div style="display:flex;flex-direction:column;gap:4px">
+                <button type="button" class="btn" data-act="test-out" ${outGpio===''?'disabled':''} title="GPIO 500 ms nach GND ziehen">Test ⚡</button>
+                <span data-role="test-out-status" class="hint" style="font-size:11px;min-height:14px"></span>
+              </div>
+            </div>
+          </details>
+
+          <!-- block 3: Hardware-Trigger (Input) -->
+          <details ${inGpio===''?'':'open'} style="border:1px solid #1f2937;border-radius:6px;padding:8px">
+            <summary style="cursor:pointer;font-weight:600">🔘 Trigger-Taster (GPIO-Input) <span style="font-weight:normal;color:var(--muted);font-size:12px">– externer Kurzschluss gegen GND löst Aktion aus</span></summary>
+            <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:8px;margin-top:8px;align-items:end">
+              <label style="font-size:12px">GPIO-Pin<br>
+                <select data-f="in_gpio" style="width:100%">${gpioOptions(inGpio,'aus')}</select>
+              </label>
+              <label style="font-size:12px">Flanke<br>
+                <select data-f="in_edge" style="width:100%">${optionsFrom(IN_EDGES, d.in_edge||'falling')}</select>
+              </label>
+              <label style="font-size:12px">Aktion<br>
+                <select data-f="in_action_type" style="width:100%">${optionsFrom(IN_ACTIONS, d.in_action_type||'none')}</select>
+              </label>
+            </div>
+            <!-- conditional ATEM-Aux row -->
+            <div data-show="atem_aux" style="display:none;margin-top:8px;padding:8px;background:#0f172a;border-radius:4px">
+              <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+                <label style="font-size:12px">ATEM Aux-Ausgang<br>
+                  <input data-f="in_atem_aux" type="number" min="1" max="24" value="${Number(d.in_atem_aux)||1}" style="width:100%">
+                </label>
+                <label style="font-size:12px">Source-Input <span style="color:var(--muted)">(leer = ATEM-Input dieses Geräts)</span><br>
+                  <input data-f="in_atem_source" type="number" min="0" value="${inSrc}" placeholder="${inputNum}" style="width:100%">
+                </label>
+              </div>
+            </div>
+            <!-- conditional Companion row -->
+            <div data-show="companion" style="display:none;margin-top:8px;padding:8px;background:#0f172a;border-radius:4px">
+              <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px">
+                <label style="font-size:12px">Page<br>
+                  <input data-f="in_companion_page" type="number" min="1" max="99" value="${Number(d.in_companion_page)||1}" style="width:100%">
+                </label>
+                <label style="font-size:12px">Row<br>
+                  <input data-f="in_companion_row" type="number" min="0" max="99" value="${Number(d.in_companion_row)||0}" style="width:100%">
+                </label>
+                <label style="font-size:12px">Column<br>
+                  <input data-f="in_companion_col" type="number" min="0" max="99" value="${Number(d.in_companion_col)||0}" style="width:100%">
+                </label>
+              </div>
+            </div>
+          </details>
         `;
         const qrBox = card.querySelector('.tally-qr-box');
         renderQr(qrBox, url);
 
-        const updateTestBtn = () => {
-          const btn = card.querySelector('[data-act=test]');
-          if (btn) btn.disabled = (devices[i].gpio == null);
+        const showActionDetails = () => {
+          const t = devices[i].in_action_type || 'none';
+          card.querySelectorAll('[data-show]').forEach(el => {
+            el.style.display = (el.dataset.show === t) ? '' : 'none';
+          });
+        };
+        showActionDetails();
+
+        const updateOutTestBtn = () => {
+          const btn = card.querySelector('[data-act=test-out]');
+          if (btn) btn.disabled = (devices[i].out_gpio == null);
         };
 
         card.querySelectorAll('input, select').forEach(el => {
           el.addEventListener('input', () => {
             const f = el.dataset.f;
-            if (f === 'input' || f === 'me') {
-              devices[i][f] = parseInt(el.value,10) || (f==='me'?1:0);
+            const v = el.value;
+            if (f === 'input' || f === 'me' || f === 'in_atem_aux' ||
+                f === 'in_companion_page' || f === 'in_companion_row' || f === 'in_companion_col') {
+              const def = (f === 'me' || f === 'in_atem_aux' || f === 'in_companion_page') ? 1 : 0;
+              devices[i][f] = parseInt(v, 10) || def;
             } else if (f === 'aux') {
-              devices[i].aux = (el.value||'').split(',')
+              devices[i].aux = (v||'').split(',')
                 .map(s => parseInt(s.trim(),10))
                 .filter(n => !isNaN(n) && n>0);
-            } else if (f === 'gpio') {
-              const v = el.value;
-              devices[i].gpio = (v === '') ? null : parseInt(v,10);
-              updateTestBtn();
+            } else if (f === 'out_gpio' || f === 'in_gpio') {
+              devices[i][f] = (v === '') ? null : parseInt(v,10);
+              if (f === 'out_gpio') updateOutTestBtn();
+            } else if (f === 'in_atem_source') {
+              devices[i].in_atem_source = (v === '') ? null : parseInt(v,10);
+            } else if (f === 'in_action_type') {
+              devices[i].in_action_type = v;
+              showActionDetails();
             } else {
-              devices[i][f] = el.value;
+              devices[i][f] = v;
             }
             if (f === 'input') {
               const newUrl = baseUrl() + '/tally/' + encodeURIComponent(String(Number(devices[i].input) || 0));
@@ -1056,16 +1151,18 @@ var qrcode=function(){var t=function(t,r){var e=t,n=g[r],o=null,i=0,a=null,u=[],
             }
           });
         });
+
         card.querySelector('[data-act=del]').addEventListener('click', () => {
+          if (devices[i].name && !confirm('"'+devices[i].name+'" wirklich entfernen?')) return;
           devices.splice(i,1); render();
         });
         card.querySelector('[data-act=refresh-qr]').addEventListener('click', () => {
           renderQr(qrBox, baseUrl() + '/tally/' + encodeURIComponent(String(Number(devices[i].input) || 0)));
         });
-        card.querySelector('[data-act=test]').addEventListener('click', async () => {
-          const bcm = devices[i].gpio;
+        card.querySelector('[data-act=test-out]').addEventListener('click', async () => {
+          const bcm = devices[i].out_gpio;
           if (bcm == null) return;
-          const st = card.querySelector('[data-role=test-status]');
+          const st = card.querySelector('[data-role=test-out-status]');
           st.textContent = 'pulse…';
           try {
             const r = await fetch('/tally-out/' + bcm + '/pulse?ms=500', {method:'POST'});
@@ -1090,17 +1187,28 @@ var qrcode=function(){var t=function(t,r){var e=t,n=g[r],o=null,i=0,a=null,u=[],
       return 'cam' + Date.now();
     }
 
-    addBtn.addEventListener('click', () => {
-      const n = devices.length + 1;
-      devices.push({
+    function newDevice(n){
+      return {
         id: uniqueCamId(),
         name: 'Kamera ' + n,
         input: n,
         me: 1,
         aux: [],
-        gpio: null,
-        gpio_trigger: 'pgm',
-      });
+        out_gpio: null,
+        out_trigger: 'pgm',
+        in_gpio: null,
+        in_edge: 'falling',
+        in_action_type: 'none',
+        in_atem_aux: 1,
+        in_atem_source: null,
+        in_companion_page: 1,
+        in_companion_row: 0,
+        in_companion_col: 0,
+      };
+    }
+
+    addBtn.addEventListener('click', () => {
+      devices.push(newDevice(devices.length + 1));
       render();
     });
 
@@ -1135,8 +1243,19 @@ var qrcode=function(){var t=function(t,r){var e=t,n=g[r],o=null,i=0,a=null,u=[],
           input: Number(d.input)||0,
           me: Number(d.me)||1,
           aux: Array.isArray(d.aux) ? d.aux.slice() : [],
-          gpio: (typeof d.gpio === 'number') ? d.gpio : null,
-          gpio_trigger: d.gpio_trigger || 'pgm',
+          // hardware tally output
+          out_gpio: (typeof d.out_gpio === 'number') ? d.out_gpio
+                  : (typeof d.gpio === 'number') ? d.gpio : null,
+          out_trigger: d.out_trigger || d.gpio_trigger || 'pgm',
+          // hardware trigger input
+          in_gpio: (typeof d.in_gpio === 'number') ? d.in_gpio : null,
+          in_edge: d.in_edge || 'falling',
+          in_action_type: d.in_action_type || 'none',
+          in_atem_aux: Number(d.in_atem_aux) || 1,
+          in_atem_source: (typeof d.in_atem_source === 'number') ? d.in_atem_source : null,
+          in_companion_page: Number(d.in_companion_page) || 1,
+          in_companion_row: Number(d.in_companion_row) || 0,
+          in_companion_col: Number(d.in_companion_col) || 0,
         })) : [];
         render();
       } catch(e) {
