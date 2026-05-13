@@ -11,9 +11,8 @@ sudo cp /tmp/pi-setup/pi-gpio-watcher.service /etc/systemd/system/
 sudo cp /tmp/pi-setup/pi-numato-watcher.service /etc/systemd/system/ 2>/dev/null || true
 sudo cp /tmp/pi-setup/pi-atem-watcher.service /etc/systemd/system/ 2>/dev/null || true
 [ -f /opt/pi-guide/bindings.json ] || { echo '[]' | sudo tee /opt/pi-guide/bindings.json >/dev/null; }
-[ -f /opt/pi-guide/tally.json ] || { echo '{"mode":"atem","atem_ip":"","arbiter_url":"http://localhost:4455","devices":[]}' | sudo tee /opt/pi-guide/tally.json >/dev/null; }
+[ -f /opt/pi-guide/tally.json ] || { echo '{"atem_ip":"","devices":[]}' | sudo tee /opt/pi-guide/tally.json >/dev/null; }
 sudo chmod 664 /opt/pi-guide/bindings.json /opt/pi-guide/tally.json
-# pyatem is optional – only needed for ATEM-direct mode
 pip3 show pyatem >/dev/null 2>&1 || sudo pip3 install --break-system-packages pyatem || true
 sudo systemctl daemon-reload
 sudo systemctl restart pi-guide

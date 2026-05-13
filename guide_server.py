@@ -10,8 +10,6 @@ import subprocess
 import tempfile
 import threading
 import time
-import urllib.error
-import urllib.request
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
@@ -101,27 +99,6 @@ def parse_gpio_state():
             "sysfs": consumer == "sysfs",
         }
     return result
-
-
-def sysfs_release(bcm):
-    """Try to release a sysfs-held GPIO line. Returns (ok, message)."""
-    if bcm not in BCM_TO_PIN:
-        return False, f"unknown bcm {bcm}"
-    state = parse_gpio_state()
-    info = state.get(str(bcm)) if isinstance(state, dict) else None
-    if not info or "global_line" not in info:
-        return False, "gpio not found in debug/gpio"
-    if info.get("consumer") != "sysfs":
-        return False, f"not held by sysfs (consumer={info.get('consumer') or 'none'})"
-    line = info["global_line"]
-    unexport = Path("/sys/class/gpio/unexport")
-    if not unexport.exists():
-        return False, "/sys/class/gpio/unexport not present"
-    try:
-        unexport.write_text(f"{line}\n")
-        return True, f"unexported gpio {line} (GPIO{bcm})"
-    except Exception as e:
-        return False, f"unexport failed: {e}"
 
 
 def load_bindings():
@@ -226,45 +203,15 @@ def get_numato_state():
         return {"connected": False, "device": None, "error": "state parse error"}
 
 
-COMPANION_API_PATH_RE = re.compile(
-    r"^/api/(location/\d+/\d+/\d+/(press|down|up)|custom-variable/[A-Za-z0-9_]{1,64}/value)$"
-)
-
-
-def companion_api_call(path, method="POST", body=b"", content_type="text/plain; charset=utf-8"):
-    """Call local Companion API safely through an allow-listed proxy."""
-    if not isinstance(path, str) or not COMPANION_API_PATH_RE.match(path):
-        raise ValueError("unsupported companion api path")
-    method = (method or "POST").upper()
-    if method not in ("GET", "POST"):
-        raise ValueError("method must be GET or POST")
-
-    url = f"http://127.0.0.1:8000{path}"
-    headers = {}
-    data = None
-    if method == "POST":
-        data = body if isinstance(body, (bytes, bytearray)) else b""
-        headers["Content-Type"] = content_type or "text/plain; charset=utf-8"
-
-    req = urllib.request.Request(url, data=data, method=method, headers=headers)
-    try:
-        with urllib.request.urlopen(req, timeout=4) as resp:
-            text = resp.read().decode("utf-8", errors="replace")
-            return True, int(resp.status), text
-    except urllib.error.HTTPError as e:
-        text = e.read().decode("utf-8", errors="replace")
-        return False, int(e.code), text
-
-
 # ---------------------------------------------------------------------------
-# Tally support (ATEM direct or TallyArbiter client)
+# Tally support (ATEM only).
 # ---------------------------------------------------------------------------
+GPIO_TRIGGER_MODES = ("pgm", "pgm_pvw", "manual")
+
 DEFAULT_TALLY_CONFIG = {
-    "mode": "atem",              # "atem" or "arbiter"
     "atem_ip": "",
-    "arbiter_url": "http://localhost:4455",
-    "devices": [],               # [{id, name, input, me?, aux?}]
-    "outputs": [],               # [{bcm, name?}] – open-drain tally outputs
+    # [{id, name, input, me?, aux?, gpio?, gpio_trigger?}]
+    "devices": [],
 }
 
 
@@ -279,8 +226,6 @@ def load_tally_config():
         out.update({k: v for k, v in d.items() if k in DEFAULT_TALLY_CONFIG})
         if not isinstance(out["devices"], list):
             out["devices"] = []
-        if not isinstance(out["outputs"], list):
-            out["outputs"] = []
         return out
     except Exception:
         return dict(DEFAULT_TALLY_CONFIG)
@@ -308,18 +253,14 @@ def save_tally_config(cfg):
 def validate_tally_config(cfg):
     if not isinstance(cfg, dict):
         raise ValueError("config must be object")
-    if cfg.get("mode") not in ("atem", "arbiter"):
-        raise ValueError("mode must be 'atem' or 'arbiter'")
     atem_ip = cfg.get("atem_ip", "") or ""
     if atem_ip and not re.match(r"^[0-9a-zA-Z\.\-]{1,64}$", atem_ip):
         raise ValueError("atem_ip contains invalid characters")
-    arb = cfg.get("arbiter_url", "") or ""
-    if arb and not re.match(r"^https?://[A-Za-z0-9\.\-:/_]{1,256}$", arb):
-        raise ValueError("arbiter_url must be http(s) URL")
     devs = cfg.get("devices") or []
     if not isinstance(devs, list):
         raise ValueError("devices must be list")
     ids = set()
+    seen_gpio = set()
     for d in devs:
         if not isinstance(d, dict):
             raise ValueError("device entry must be object")
@@ -344,22 +285,16 @@ def validate_tally_config(cfg):
         for a in aux:
             if not isinstance(a, int) or a < 1 or a > 32:
                 raise ValueError("device aux entries must be int 1..32")
-    outs = cfg.get("outputs", [])
-    if not isinstance(outs, list):
-        raise ValueError("outputs must be list")
-    seen_bcm = set()
-    for o in outs:
-        if not isinstance(o, dict):
-            raise ValueError("output entry must be object")
-        bcm = o.get("bcm")
-        if not isinstance(bcm, int) or bcm < 0 or bcm > 27:
-            raise ValueError("output bcm must be int 0..27")
-        if bcm in seen_bcm:
-            raise ValueError(f"duplicate output bcm: {bcm}")
-        seen_bcm.add(bcm)
-        nm = o.get("name", "")
-        if not isinstance(nm, str) or len(nm) > 64:
-            raise ValueError("output name must be string, max 64 chars")
+        gpio = d.get("gpio")
+        if gpio is not None:
+            if not isinstance(gpio, int) or gpio < 0 or gpio > 27:
+                raise ValueError("device gpio must be int 0..27")
+            if gpio in seen_gpio:
+                raise ValueError(f"duplicate device gpio: {gpio}")
+            seen_gpio.add(gpio)
+        trig = d.get("gpio_trigger", "pgm")
+        if trig not in GPIO_TRIGGER_MODES:
+            raise ValueError(f"gpio_trigger must be one of {GPIO_TRIGGER_MODES}")
 
 
 def get_atem_state():
@@ -447,24 +382,41 @@ class TallyOutputs:
         self._bcms = []
         self._values = {}
 
-    def set(self, bcm, on):
-        """on=True bridges pin to GND; on=False releases pin to Hi-Z (open)."""
+    def _write(self, bcm, on):
+        from gpiod.line import Value
+        # open-drain: ACTIVE/HIGH = release (Hi-Z), INACTIVE/LOW = pull GND
+        self._req.set_value(bcm, Value.INACTIVE if on else Value.ACTIVE)
+        self._values[bcm] = bool(on)
+
+    def set(self, bcm, on, respect_pulse=False):
+        """on=True bridges pin to GND; on=False releases pin to Hi-Z (open).
+
+        respect_pulse=True: do nothing if a pulse timer is currently active
+        on this pin (used by the auto-driver so test-pulses stay visible).
+        """
         try:
-            from gpiod.line import Value
+            import gpiod  # noqa: F401
         except Exception as e:
             return False, f"gpiod not available: {e}"
         with self._lock:
             if self._req is None or bcm not in self._values:
                 return False, f"GPIO{bcm} not configured as tally output"
-            try:
-                # open-drain: ACTIVE/HIGH = release (Hi-Z), INACTIVE/LOW = pull GND
-                self._req.set_value(bcm, Value.INACTIVE if on else Value.ACTIVE)
-                self._values[bcm] = bool(on)
-                # cancel any pulse timer for this pin – explicit set wins
+            if respect_pulse and bcm in self._pulse_timers:
+                return True, "skipped (pulse active)"
+            if self._values.get(bcm) == bool(on) and not respect_pulse:
+                # cancel any leftover pulse timer; value already matches
                 t = self._pulse_timers.pop(bcm, None)
                 if t:
                     try: t.cancel()
                     except Exception: pass
+                return True, "ok"
+            try:
+                self._write(bcm, on)
+                if not respect_pulse:
+                    t = self._pulse_timers.pop(bcm, None)
+                    if t:
+                        try: t.cancel()
+                        except Exception: pass
                 return True, "ok"
             except Exception as e:
                 return False, f"set failed: {e}"
@@ -505,7 +457,8 @@ TALLY_OUTPUTS = TallyOutputs()
 
 def reconfigure_tally_outputs():
     cfg = load_tally_config()
-    bcms = [o.get("bcm") for o in (cfg.get("outputs") or []) if isinstance(o.get("bcm"), int)]
+    bcms = [d.get("gpio") for d in (cfg.get("devices") or [])
+            if isinstance(d.get("gpio"), int)]
     TALLY_OUTPUTS.configure(bcms)
 
 
@@ -547,17 +500,13 @@ def watcher_set(action):
 
 
 def tally_state_for_device(cfg, device_id, atem_state=None):
-    """Return 'pgm' | 'pvw' | 'safe' for a device based on current atem state.
+    """Return 'pgm' | 'pvw' | 'safe' | 'offline' | 'unknown' for a device.
 
     Considers device.me (which ME bus) and device.aux (list of aux outputs
     that also count as PGM if the device's input is routed there).
-    Only implemented for mode=atem. mode=arbiter is handled client-side.
-
-    If device_id is a plain integer string (e.g. "5"), treat it as an ad-hoc
-    device watching that input on ME 1 — no config entry required.
+    If device_id is a plain integer string (e.g. "5"), treat it as an
+    ad-hoc device watching that input on ME 1.
     """
-    if cfg.get("mode") != "atem":
-        return "safe"
     if atem_state is None:
         atem_state = get_atem_state()
     if not atem_state.get("connected"):
@@ -745,9 +694,6 @@ class Handler(http.server.SimpleHTTPRequestHandler):
     def do_GET(self):
         if self.path in ("/", ""):
             self.path = "/setup-guide.html"
-        elif self.path == "/hostname":
-            self._send_text(socket.gethostname())
-            return
         elif self.path == "/ipconfig":
             self._send_json(get_ipconfig())
             return
@@ -818,17 +764,6 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             name = f"Input {did}" + (f" – {long_name}" if long_name else "")
         else:
             name = did
-        if cfg.get("mode") == "arbiter":
-            # Redirect into the local TallyArbiter tally page.
-            base = (cfg.get("arbiter_url") or "").rstrip("/")
-            if not base:
-                base = "http://localhost:4455"
-            target = f"{base}/tally/{did}"
-            self.send_response(302)
-            self.send_header("Location", target)
-            self.send_header("Cache-Control", "no-store")
-            self.end_headers()
-            return
         html = (TALLY_PAGE.replace("__ID__", did).replace("__NAME__", name)).encode()
         self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=utf-8")
@@ -844,7 +779,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return
         cfg = load_tally_config()
         state = tally_state_for_device(cfg, did)
-        self._send_json({"id": did, "state": state, "mode": cfg.get("mode")})
+        self._send_json({"id": did, "state": state})
 
     def _handle_tally_stream(self):
         did = self._device_id_from_path()
@@ -864,7 +799,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 cfg = load_tally_config()
                 state = tally_state_for_device(cfg, did)
                 if state != last_state:
-                    payload = json.dumps({"id": did, "state": state, "mode": cfg.get("mode")})
+                    payload = json.dumps({"id": did, "state": state})
                     self.wfile.write(f"data: {payload}\n\n".encode())
                     self.wfile.flush()
                     last_state = state
@@ -949,11 +884,11 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 validate_tally_config(data)
                 save_tally_config(data)
                 reconfigure_tally_outputs()
+                devs = data.get("devices") or []
                 log_event("config", action="tally_save",
-                          mode=data.get("mode"),
                           atem_ip=data.get("atem_ip"),
-                          devices=len(data.get("devices") or []),
-                          outputs=len(data.get("outputs") or []))
+                          devices=len(devs),
+                          gpio_devices=sum(1 for d in devs if isinstance(d.get("gpio"), int)))
                 self._send_json({"ok": True})
             except Exception as e:
                 log_event("config", action="tally_save_failed", error=str(e))
@@ -976,43 +911,6 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 self._send_json(resp)
             except Exception as e:
                 log_event("guide", action="watcher_failed", error=str(e))
-                self._send_json({"ok": False, "error": str(e)}, code=400)
-            return
-        if self.path == "/sysfs-release":
-            body = self._read_body()
-            try:
-                data = json.loads(body or b"{}")
-                bcm = data.get("bcm")
-                if not isinstance(bcm, int):
-                    raise ValueError("bcm must be int")
-                ok, msg = sysfs_release(bcm)
-                self._send_json({"ok": ok, "message": msg}, code=200 if ok else 409)
-            except Exception as e:
-                self._send_json({"ok": False, "error": str(e)}, code=400)
-            return
-        if self.path == "/companion-api":
-            body = self._read_body(limit=16 * 1024)
-            try:
-                data = json.loads(body or b"{}")
-                path = data.get("path", "")
-                method = data.get("method", "POST")
-                payload = data.get("body", "")
-                content_type = data.get("contentType", "text/plain; charset=utf-8")
-                payload_b = str(payload).encode("utf-8")
-                ok, status, resp_body = companion_api_call(
-                    path=path,
-                    method=method,
-                    body=payload_b,
-                    content_type=content_type,
-                )
-                log_event("guide", action="companion_proxy", path=path, status=status)
-                self._send_json({
-                    "ok": bool(ok),
-                    "status": int(status),
-                    "body": (resp_body or "")[:2000],
-                }, code=200)
-            except Exception as e:
-                log_event("guide", action="companion_proxy_failed", error=str(e))
                 self._send_json({"ok": False, "error": str(e)}, code=400)
             return
         self.send_error(404)
@@ -1074,22 +972,29 @@ def start_transition_logger():
                     log_event("atem", connected=connected,
                               error=atem.get("error") or "")
                     last_atem_connected = connected
-                if cfg.get("mode") == "atem":
-                    current_ids = set()
-                    for d in cfg.get("devices") or []:
-                        did = d.get("id")
-                        if not did:
-                            continue
-                        current_ids.add(did)
-                        state = tally_state_for_device(cfg, did, atem_state=atem)
-                        prev = last_states.get(did)
-                        if prev != state:
-                            log_event("tally", id=did, state=state,
-                                      input=d.get("input"), me=d.get("me", 1))
-                            last_states[did] = state
-                    # drop removed devices
-                    for gone in [k for k in last_states if k not in current_ids]:
-                        last_states.pop(gone, None)
+                current_ids = set()
+                for d in cfg.get("devices") or []:
+                    did = d.get("id")
+                    if not did:
+                        continue
+                    current_ids.add(did)
+                    state = tally_state_for_device(cfg, did, atem_state=atem)
+                    prev = last_states.get(did)
+                    if prev != state:
+                        log_event("tally", id=did, state=state,
+                                  input=d.get("input"), me=d.get("me", 1))
+                        last_states[did] = state
+                    # Auto-drive hardware tally output if configured.
+                    bcm = d.get("gpio")
+                    trig = d.get("gpio_trigger", "pgm")
+                    if isinstance(bcm, int) and trig != "manual":
+                        if trig == "pgm_pvw":
+                            on = state in ("pgm", "pvw")
+                        else:
+                            on = state == "pgm"
+                        TALLY_OUTPUTS.set(bcm, on, respect_pulse=True)
+                for gone in [k for k in last_states if k not in current_ids]:
+                    last_states.pop(gone, None)
             except Exception:
                 pass
             time.sleep(0.25)

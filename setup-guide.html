@@ -275,8 +275,12 @@
 <div class="view" data-view="tally">
 
 <section>
-  <h2>Tally-Lampen über das Netzwerk</h2>
-  <p class="hint">Jedes Gerät öffnet eine URL im Browser. Die Seite leuchtet rot (PGM), grün (PVW) oder schwarz (safe).</p>
+  <h2>Tally</h2>
+  <p class="hint">
+    Pro Gerät zwei Wege: <strong>Browser-Tally</strong> (QR-Code öffnen, Seite leuchtet rot/grün/schwarz)
+    und/oder <strong>Hardware-Tally</strong> über einen GPIO-Pin (Open-Drain nach GND, z.B. für Lampen
+    oder Kamera-Tally-Eingänge).
+  </p>
 
   <div class="card" id="tally-atem-card">
     <h3>ATEM</h3>
@@ -301,12 +305,11 @@
   </div>
 
   <div class="card" id="watcher-card">
-    <h3>GPIO Watcher</h3>
+    <h3>GPIO-Input-Watcher</h3>
     <p class="hint">
-      Liest GPIO-Eingänge für Admin-UI-Aktionen (GPI Returns).
-      Im aktiven Zustand belegt er aber Pins, die in Companion als Tally-Outputs
-      konfiguriert sind, und blockiert dort die Ausgabe. Im Tally-Setup daher
-      deaktivieren.
+      Liest GPIO-<em>Eingänge</em> (Taster) gemäß <code>bindings.json</code> und ruft die Companion-API auf.
+      Belegt Eingangs-Pins exklusiv — wenn ein Pin gleichzeitig als Tally-Output konfiguriert ist,
+      gibt’s einen Konflikt.
     </p>
     <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap">
       <span id="watcher-status" class="hint">Status: lade…</span>
@@ -965,6 +968,31 @@ var qrcode=function(){var t=function(t,r){var e=t,n=g[r],o=null,i=0,a=null,u=[],
       });
     }
 
+    // BCM pins safe for tally-out (no I2C/UART/SPI/EEPROM).
+    const USABLE_BCM = [4,5,6,12,13,16,17,18,19,20,21,22,23,24,25,26,27];
+
+    function gpioOptions(selected){
+      const sel = (selected == null) ? '' : String(selected);
+      let html = `<option value="">— kein —</option>`;
+      for (const b of USABLE_BCM) {
+        const s = (sel === String(b)) ? ' selected' : '';
+        html += `<option value="${b}"${s}>GPIO ${b}</option>`;
+      }
+      return html;
+    }
+
+    function triggerOptions(selected){
+      const v = selected || 'pgm';
+      const opts = [
+        ['pgm',     'nur Live (PGM)'],
+        ['pgm_pvw', 'Live + Preview'],
+        ['manual',  'nur manuell (HTTP)'],
+      ];
+      return opts.map(([k,l]) =>
+        `<option value="${k}"${v===k?' selected':''}>${l}</option>`
+      ).join('');
+    }
+
     function render(){
       host.innerHTML = '';
       devices.forEach((d, i) => {
@@ -973,6 +1001,7 @@ var qrcode=function(){var t=function(t,r){var e=t,n=g[r],o=null,i=0,a=null,u=[],
         const card = document.createElement('div');
         card.setAttribute('data-tally-card', '1');
         card.style.cssText = 'border:1px solid #334155;border-radius:8px;padding:10px;margin:8px 0;display:flex;gap:12px;align-items:flex-start;flex-wrap:wrap';
+        const gpioVal = (d.gpio == null) ? '' : d.gpio;
         card.innerHTML = `
           <div class="tally-qr" style="flex:0 0 auto;display:flex;flex-direction:column;align-items:center;gap:4px">
             <div class="tally-qr-box" style="background:#fff;padding:4px;border-radius:4px;line-height:0"></div>
@@ -980,31 +1009,45 @@ var qrcode=function(){var t=function(t,r){var e=t,n=g[r],o=null,i=0,a=null,u=[],
             <div class="tally-atem-ref" style="font-size:11px;color:var(--muted);max-width:160px;text-align:center">ATEM: Input ${inputNum} = —</div>
           </div>
           <div style="flex:1 1 240px;display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:6px">
-            <label>ID<br><input data-f="id" value="${escHtml(d.id||'')}" placeholder="cam1" style="width:100%"></label>
             <label>Name<br><input data-f="name" value="${escHtml(d.name||'')}" placeholder="Kamera 1" style="width:100%"></label>
-            <label>Input<br><input data-f="input" type="number" min="0" value="${Number(d.input)||0}" style="width:100%"></label>
+            <label>ATEM-Input<br><input data-f="input" type="number" min="0" value="${Number(d.input)||0}" style="width:100%"></label>
             <label>ME<br><input data-f="me" type="number" min="1" max="4" value="${Number(d.me)||1}" style="width:100%"></label>
-            <label>Aux (kommagetrennt)<br><input data-f="aux" value="${escHtml((d.aux||[]).join(','))}" placeholder="" style="width:100%"></label>
+            <label>Aux (Liste, z.B. 1,2)<br><input data-f="aux" value="${escHtml((d.aux||[]).join(','))}" placeholder="" style="width:100%"></label>
+            <label>Tally-GPIO<br><select data-f="gpio" style="width:100%">${gpioOptions(gpioVal)}</select></label>
+            <label>Auslöser<br><select data-f="gpio_trigger" style="width:100%">${triggerOptions(d.gpio_trigger)}</select></label>
           </div>
-          <div style="flex:0 0 auto;display:flex;flex-direction:column;gap:4px">
-            <button type="button" class="btn" data-act="del">Entfernen</button>
+          <div style="flex:0 0 auto;display:flex;flex-direction:column;gap:4px;min-width:110px">
+            <button type="button" class="btn" data-act="test" ${gpioVal===''?'disabled':''} title="GPIO 500 ms nach GND ziehen">Test ⚡</button>
+            <span data-role="test-status" class="hint" style="font-size:11px;min-height:14px"></span>
             <button type="button" class="btn" data-act="refresh-qr">QR neu</button>
+            <button type="button" class="btn" data-act="del" style="margin-top:4px">Entfernen</button>
           </div>
         `;
         const qrBox = card.querySelector('.tally-qr-box');
         renderQr(qrBox, url);
 
-        card.querySelectorAll('input').forEach(inp => {
-          inp.addEventListener('input', () => {
-            const f = inp.dataset.f;
-            if (f === 'input' || f === 'me') devices[i][f] = parseInt(inp.value,10) || (f==='me'?1:0);
-            else if (f === 'aux') {
-              devices[i].aux = (inp.value||'').split(',')
+        const updateTestBtn = () => {
+          const btn = card.querySelector('[data-act=test]');
+          if (btn) btn.disabled = (devices[i].gpio == null);
+        };
+
+        card.querySelectorAll('input, select').forEach(el => {
+          el.addEventListener('input', () => {
+            const f = el.dataset.f;
+            if (f === 'input' || f === 'me') {
+              devices[i][f] = parseInt(el.value,10) || (f==='me'?1:0);
+            } else if (f === 'aux') {
+              devices[i].aux = (el.value||'').split(',')
                 .map(s => parseInt(s.trim(),10))
                 .filter(n => !isNaN(n) && n>0);
+            } else if (f === 'gpio') {
+              const v = el.value;
+              devices[i].gpio = (v === '') ? null : parseInt(v,10);
+              updateTestBtn();
+            } else {
+              devices[i][f] = el.value;
             }
-            else devices[i][f] = inp.value;
-            if (f === 'id' || f === 'input') {
+            if (f === 'input') {
               const newUrl = baseUrl() + '/tally/' + encodeURIComponent(String(Number(devices[i].input) || 0));
               const link = card.querySelector('.tally-qr a');
               if (link) { link.href = newUrl; link.textContent = newUrl; }
@@ -1019,23 +1062,52 @@ var qrcode=function(){var t=function(t,r){var e=t,n=g[r],o=null,i=0,a=null,u=[],
         card.querySelector('[data-act=refresh-qr]').addEventListener('click', () => {
           renderQr(qrBox, baseUrl() + '/tally/' + encodeURIComponent(String(Number(devices[i].input) || 0)));
         });
+        card.querySelector('[data-act=test]').addEventListener('click', async () => {
+          const bcm = devices[i].gpio;
+          if (bcm == null) return;
+          const st = card.querySelector('[data-role=test-status]');
+          st.textContent = 'pulse…';
+          try {
+            const r = await fetch('/tally-out/' + bcm + '/pulse?ms=500', {method:'POST'});
+            const j = await r.json();
+            st.textContent = j.ok ? '✓ GPIO ' + bcm : '✗ ' + (j.message || j.error || 'Fehler');
+          } catch(e) {
+            st.textContent = '✗ ' + (e.message||e);
+          }
+          setTimeout(() => { st.textContent = ''; }, 2500);
+        });
         host.appendChild(card);
       });
       refreshAtemRefs();
     }
 
+    function uniqueCamId(){
+      const used = new Set(devices.map(d => d.id).filter(Boolean));
+      for (let i = 1; i < 1000; i++) {
+        const id = 'cam' + i;
+        if (!used.has(id)) return id;
+      }
+      return 'cam' + Date.now();
+    }
+
     addBtn.addEventListener('click', () => {
       const n = devices.length + 1;
-      devices.push({id:'cam'+n, name:'Kamera '+n, input:n, me:1, aux:[]});
+      devices.push({
+        id: uniqueCamId(),
+        name: 'Kamera ' + n,
+        input: n,
+        me: 1,
+        aux: [],
+        gpio: null,
+        gpio_trigger: 'pgm',
+      });
       render();
     });
 
     saveBtn.addEventListener('click', async () => {
       saveSt.textContent = 'speichere ...';
       const cfg = {
-        mode: 'atem',
         atem_ip: (atemIpEl.value||'').trim(),
-        arbiter_url: 'http://localhost:4455',
         devices: devices,
       };
       try {
@@ -1063,6 +1135,8 @@ var qrcode=function(){var t=function(t,r){var e=t,n=g[r],o=null,i=0,a=null,u=[],
           input: Number(d.input)||0,
           me: Number(d.me)||1,
           aux: Array.isArray(d.aux) ? d.aux.slice() : [],
+          gpio: (typeof d.gpio === 'number') ? d.gpio : null,
+          gpio_trigger: d.gpio_trigger || 'pgm',
         })) : [];
         render();
       } catch(e) {
@@ -1108,12 +1182,10 @@ var qrcode=function(){var t=function(t,r){var e=t,n=g[r],o=null,i=0,a=null,u=[],
         }
         atemStatus.textContent = 'speichere ATEM-IP…';
         try {
-          // Merge into existing config to avoid clobbering devices/mode when user just changes IP
+          // Merge with existing config so we don't clobber devices when user just changes the IP.
           const cur = await fetch('/tally-config', {cache:'no-store'}).then(r => r.json()).catch(() => ({}));
           const cfg = {
-            mode: 'atem',
             atem_ip: ip,
-            arbiter_url: 'http://localhost:4455',
             devices: devices.length ? devices : (Array.isArray(cur.devices) ? cur.devices : []),
           };
           const r = await fetch('/tally-config', {
