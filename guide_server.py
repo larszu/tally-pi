@@ -326,6 +326,8 @@ def validate_tally_config(cfg):
         trig = d.get("out_trigger", "pgm")
         if trig not in GPIO_TRIGGER_MODES:
             raise ValueError(f"out_trigger must be one of {GPIO_TRIGGER_MODES}")
+        if not isinstance(d.get("out_active_high", False), bool):
+            raise ValueError("out_active_high must be true or false")
 
         # Trigger button input (Pi watches pin, fires action on edge).
         in_pin = _check_pin(d.get("in_gpio"), "in_gpio")
@@ -1062,10 +1064,14 @@ def start_transition_logger():
                     trig = d.get("out_trigger", "pgm")
                     if isinstance(bcm, int) and trig != "manual":
                         if trig == "pgm_pvw":
-                            on = state in ("pgm", "pvw")
+                            on_air = state in ("pgm", "pvw")
                         else:
-                            on = state == "pgm"
-                        TALLY_OUTPUTS.set(bcm, on, respect_pulse=True)
+                            on_air = state == "pgm"
+                        # `set()` semantics: True = drive LOW, False = drive HIGH.
+                        # active_high inverts that so the on-air state drives HIGH.
+                        active_high = bool(d.get("out_active_high", False))
+                        TALLY_OUTPUTS.set(bcm, on_air != active_high,
+                                          respect_pulse=True)
                 for gone in [k for k in last_states if k not in current_ids]:
                     last_states.pop(gone, None)
             except Exception:

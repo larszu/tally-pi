@@ -992,6 +992,10 @@ var qrcode=function(){var t=function(t,r){var e=t,n=g[r],o=null,i=0,a=null,u=[],
       ['pgm_pvw', 'Live + Preview'],
       ['manual',  'nur manuell (HTTP)'],
     ];
+    const OUT_POLARITY = [
+      ['low',  'LOW (active-low / Relais-Modul)'],
+      ['high', 'HIGH (active-high / direkt LED)'],
+    ];
     const IN_EDGES = [
       ['falling', 'Druck (HIGH→LOW)'],
       ['rising',  'Loslassen (LOW→HIGH)'],
@@ -1047,7 +1051,7 @@ var qrcode=function(){var t=function(t,r){var e=t,n=g[r],o=null,i=0,a=null,u=[],
 
           <!-- block 2: Hardware-Tally (Output) -->
           <details ${outGpio===''?'':'open'} style="border:1px solid #1f2937;border-radius:6px;padding:8px">
-            <summary style="cursor:pointer;font-weight:600">💡 Tally-Lampe (GPIO-Output) <span style="font-weight:normal;color:var(--muted);font-size:12px">– Pi zieht Pin nach GND wenn diese Quelle on-air</span></summary>
+            <summary style="cursor:pointer;font-weight:600">💡 Tally-Lampe (GPIO-Output) <span style="font-weight:normal;color:var(--muted);font-size:12px">– Pegel-Mode unten wählbar</span></summary>
             <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:8px;margin-top:8px;align-items:end">
               <label style="font-size:12px">GPIO-Pin<br>
                 <select data-f="out_gpio" style="width:100%">${gpioOptions(outGpio,'aus')}</select>
@@ -1055,8 +1059,11 @@ var qrcode=function(){var t=function(t,r){var e=t,n=g[r],o=null,i=0,a=null,u=[],
               <label style="font-size:12px">Auslöser<br>
                 <select data-f="out_trigger" style="width:100%">${optionsFrom(OUT_TRIGGERS, d.out_trigger||'pgm')}</select>
               </label>
+              <label style="font-size:12px">Pegel bei on-air<br>
+                <select data-f="out_active_high" style="width:100%">${optionsFrom(OUT_POLARITY, d.out_active_high ? 'high' : 'low')}</select>
+              </label>
               <div style="display:flex;flex-direction:column;gap:4px">
-                <button type="button" class="btn" data-act="test-out" ${outGpio===''?'disabled':''} title="GPIO 500 ms nach GND ziehen">Test ⚡</button>
+                <button type="button" class="btn" data-act="test-out" ${outGpio===''?'disabled':''} title="GPIO 500 ms aktiv">Test ⚡</button>
                 <span data-role="test-out-status" class="hint" style="font-size:11px;min-height:14px"></span>
               </div>
             </div>
@@ -1134,6 +1141,8 @@ var qrcode=function(){var t=function(t,r){var e=t,n=g[r],o=null,i=0,a=null,u=[],
             } else if (f === 'out_gpio' || f === 'in_gpio') {
               devices[i][f] = (v === '') ? null : parseInt(v,10);
               if (f === 'out_gpio') updateOutTestBtn();
+            } else if (f === 'out_active_high') {
+              devices[i].out_active_high = (v === 'high');
             } else if (f === 'in_atem_source') {
               devices[i].in_atem_source = (v === '') ? null : parseInt(v,10);
             } else if (f === 'in_action_type') {
@@ -1163,11 +1172,21 @@ var qrcode=function(){var t=function(t,r){var e=t,n=g[r],o=null,i=0,a=null,u=[],
           const bcm = devices[i].out_gpio;
           if (bcm == null) return;
           const st = card.querySelector('[data-role=test-out-status]');
+          // /on drives LOW, /off drives HIGH. For active-high pins the "active"
+          // physical level is HIGH, so swap the calls.
+          const isHigh = !!devices[i].out_active_high;
+          const activate   = isHigh ? 'off' : 'on';
+          const deactivate = isHigh ? 'on'  : 'off';
           st.textContent = 'pulse…';
           try {
-            const r = await fetch('/tally-out/' + bcm + '/pulse?ms=500', {method:'POST'});
+            const r = await fetch('/tally-out/' + bcm + '/' + activate, {method:'POST'});
             const j = await r.json();
-            st.textContent = j.ok ? '✓ GPIO ' + bcm : '✗ ' + (j.message || j.error || 'Fehler');
+            if (j.ok) {
+              st.textContent = '✓ GPIO ' + bcm + ' aktiv';
+              setTimeout(() => fetch('/tally-out/' + bcm + '/' + deactivate, {method:'POST'}), 500);
+            } else {
+              st.textContent = '✗ ' + (j.message || j.error || 'Fehler');
+            }
           } catch(e) {
             st.textContent = '✗ ' + (e.message||e);
           }
@@ -1196,6 +1215,7 @@ var qrcode=function(){var t=function(t,r){var e=t,n=g[r],o=null,i=0,a=null,u=[],
         aux: [],
         out_gpio: null,
         out_trigger: 'pgm',
+        out_active_high: false,
         in_gpio: null,
         in_edge: 'falling',
         in_action_type: 'none',
@@ -1247,6 +1267,7 @@ var qrcode=function(){var t=function(t,r){var e=t,n=g[r],o=null,i=0,a=null,u=[],
           out_gpio: (typeof d.out_gpio === 'number') ? d.out_gpio
                   : (typeof d.gpio === 'number') ? d.gpio : null,
           out_trigger: d.out_trigger || d.gpio_trigger || 'pgm',
+          out_active_high: d.out_active_high === true,
           // hardware trigger input
           in_gpio: (typeof d.in_gpio === 'number') ? d.in_gpio : null,
           in_edge: d.in_edge || 'falling',
