@@ -1033,6 +1033,24 @@ var qrcode=function(){var t=function(t,r){var e=t,n=g[r],o=null,i=0,a=null,u=[],
       ['companion', 'Companion-Button drücken'],
     ];
 
+    function setTestBtnVisual(btn, latched){
+      if (!btn) return;
+      btn.dataset.latched = latched ? '1' : '0';
+      if (latched) {
+        btn.textContent = '● AN — klick zum lösen';
+        btn.style.background = '#dc2626';
+        btn.style.color = '#fff';
+        btn.style.borderColor = '#b91c1c';
+        btn.style.boxShadow = '0 0 8px rgba(220,38,38,0.6)';
+      } else {
+        btn.textContent = 'Test ⚡';
+        btn.style.background = '';
+        btn.style.color = '';
+        btn.style.borderColor = '';
+        btn.style.boxShadow = '';
+      }
+    }
+
     function render(){
       host.innerHTML = '';
       devices.forEach((d, i) => {
@@ -1194,29 +1212,35 @@ var qrcode=function(){var t=function(t,r){var e=t,n=g[r],o=null,i=0,a=null,u=[],
         card.querySelector('[data-act=refresh-qr]').addEventListener('click', () => {
           renderQr(qrBox, baseUrl() + '/tally/' + encodeURIComponent(String(Number(devices[i].input) || 0)));
         });
-        card.querySelector('[data-act=test-out]').addEventListener('click', async () => {
+        const testBtn = card.querySelector('[data-act=test-out]');
+        testBtn.addEventListener('click', async () => {
           const bcm = devices[i].out_gpio;
           if (bcm == null) return;
           const st = card.querySelector('[data-role=test-out-status]');
-          // /on drives LOW, /off drives HIGH. For active-high pins the "active"
-          // physical level is HIGH, so swap the calls.
           const isHigh = !!devices[i].out_active_high;
-          const activate   = isHigh ? 'off' : 'on';
-          const deactivate = isHigh ? 'on'  : 'off';
-          st.textContent = 'pulse…';
+          const isLatched = testBtn.dataset.latched === '1';
+          let action;
+          if (isLatched) {
+            action = 'release';        // → auto-driver takes over again
+          } else {
+            // active-low: "on" drives LOW. active-high: "off" drives HIGH.
+            action = isHigh ? 'latch-off' : 'latch-on';
+          }
           try {
-            const r = await fetch('/tally-out/' + bcm + '/' + activate, {method:'POST'});
+            const r = await fetch('/tally-out/' + bcm + '/' + action, {method:'POST'});
             const j = await r.json();
             if (j.ok) {
-              st.textContent = '✓ GPIO ' + bcm + ' aktiv';
-              setTimeout(() => fetch('/tally-out/' + bcm + '/' + deactivate, {method:'POST'}), 500);
+              st.textContent = isLatched ? '⤺ auto' : '● GPIO ' + bcm + ' aktiv';
+              setTimeout(() => { st.textContent = ''; }, 2000);
+              // Visual state will be re-applied by the diag-poll, but flip
+              // immediately for snappy feedback.
+              setTestBtnVisual(testBtn, !isLatched);
             } else {
               st.textContent = '✗ ' + (j.message || j.error || 'Fehler');
             }
-          } catch(e) {
-            st.textContent = '✗ ' + (e.message||e);
+          } catch (e) {
+            st.textContent = '✗ ' + (e.message || e);
           }
-          setTimeout(() => { st.textContent = ''; }, 2500);
         });
         host.appendChild(card);
       });
@@ -1362,30 +1386,45 @@ var qrcode=function(){var t=function(t,r){var e=t,n=g[r],o=null,i=0,a=null,u=[],
           const cons = d.consistent;
           const consColor = cons === false ? '#f87171' : cons === true ? '#22c55e' : '#9ca3af';
           const consText  = cons === false ? '⚠ uneinig' : cons === true ? '✓' : '—';
+          const btnLabel  = d.latched ? '● AN' : 'Test ⚡';
+          const btnStyle  = d.latched
+            ? 'font-size:11px;padding:2px 8px;background:#dc2626;color:#fff;border:1px solid #b91c1c;box-shadow:0 0 8px rgba(220,38,38,0.6)'
+            : 'font-size:11px;padding:2px 8px';
           return `<tr style="border-bottom:1px solid #1f2937">
             <td style="padding:4px 6px;font-weight:600">${escHtml(d.name || d.id || '')}</td>
             <td style="padding:4px 6px">${d.atem_input ?? '—'}</td>
-            <td style="padding:4px 6px;color:${stateClass(d.state)};font-weight:600">${escHtml(d.state || '?')}</td>
+            <td style="padding:4px 6px;color:${stateClass(d.state)};font-weight:600">${escHtml(d.state || '?')}${d.latched ? ' <span style="color:#fbbf24">[LATCH]</span>' : ''}</td>
             <td style="padding:4px 6px">${d.out_gpio == null ? '—' : 'GPIO ' + d.out_gpio}</td>
             <td style="padding:4px 6px;font-size:11px;color:var(--muted)">${d.out_active_high ? 'active-HIGH' : 'active-LOW'}</td>
             <td style="padding:4px 6px">${bool3(d.sw_on)}</td>
             <td style="padding:4px 6px">${pinFmt(d.pin_level)}</td>
-            <td style="padding:4px 6px;color:${consColor}">${consText} ${cons === false ? '— Lampe folgt evtl. nicht!' : ''}</td>
-            <td style="padding:4px 6px"><button type="button" class="btn" data-diag-test="${i}" style="font-size:11px;padding:2px 6px">Pulse</button></td>
+            <td style="padding:4px 6px;color:${consColor}">${consText}${cons === false ? ' — Lampe folgt evtl. nicht!' : ''}</td>
+            <td style="padding:4px 6px"><button type="button" class="btn" data-diag-test="${i}" data-latched="${d.latched?'1':'0'}" style="${btnStyle}">${btnLabel}</button></td>
           </tr>`;
         }).join('');
-        // wire test buttons to the same /tally-out endpoint (polarity-aware)
         rowsEl.querySelectorAll('[data-diag-test]').forEach(btn => {
           btn.addEventListener('click', async () => {
             const i = parseInt(btn.dataset.diagTest, 10);
             const dev = devs[i];
             if (!dev || dev.out_gpio == null) return;
             const isHigh = !!dev.out_active_high;
-            const activate   = isHigh ? 'off' : 'on';
-            const deactivate = isHigh ? 'on'  : 'off';
-            await fetch('/tally-out/' + dev.out_gpio + '/' + activate, {method:'POST'});
-            setTimeout(() => fetch('/tally-out/' + dev.out_gpio + '/' + deactivate, {method:'POST'}), 600);
+            const action = dev.latched
+              ? 'release'
+              : (isHigh ? 'latch-off' : 'latch-on');
+            await fetch('/tally-out/' + dev.out_gpio + '/' + action, {method:'POST'});
+            // next poll (within ~700ms) will refresh the button visual
           });
+        });
+
+        // Sync the per-device-card Test buttons with their latch state.
+        const cards = document.querySelectorAll('[data-tally-card]');
+        cards.forEach((card, idx) => {
+          const cardDev = devices[idx];
+          if (!cardDev) return;
+          const diagDev = devs.find(x => x.out_gpio === cardDev.out_gpio
+                                       && cardDev.out_gpio != null);
+          const tb = card.querySelector('[data-act=test-out]');
+          if (tb && diagDev) setTestBtnVisual(tb, !!diagDev.latched);
         });
       } catch (e) {
         errEl.textContent = 'Fehler: ' + (e.message || e);

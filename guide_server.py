@@ -380,6 +380,7 @@ class TallyOutputs:
         self._bcms = []        # active line offsets, in claim order
         self._values = {}      # bcm -> bool (True = active/LOW/bridged)
         self._pulse_timers = {}  # bcm -> threading.Timer
+        self._latched = set()  # bcms currently held manually (auto-driver paused)
         self._error = None
         self._value_off = None
         self._value_on = None
@@ -466,7 +467,11 @@ class TallyOutputs:
 
     def set(self, bcm, on, respect_pulse=False):
         """on=True drives pin LOW (relay-module IN low → relay engaged).
-        on=False drives pin HIGH (idle, relay disengaged)."""
+        on=False drives pin HIGH (idle, relay disengaged).
+
+        respect_pulse=True is used by the auto-driver — it skips pins
+        with an active pulse timer or a manual latch.
+        """
         try:
             import gpiod  # noqa: F401
         except Exception as e:
@@ -476,6 +481,8 @@ class TallyOutputs:
                 return False, f"GPIO{bcm} not configured as tally output"
             if respect_pulse and bcm in self._pulse_timers:
                 return True, "skipped (pulse active)"
+            if respect_pulse and bcm in self._latched:
+                return True, "skipped (latch active)"
             if self._values.get(bcm) == bool(on) and not respect_pulse:
                 t = self._pulse_timers.pop(bcm, None)
                 if t:
@@ -517,11 +524,30 @@ class TallyOutputs:
         timer.start()
         return True, f"pulse {ms}ms"
 
+    def latch(self, bcm, on):
+        """Drive pin to `on` (True=LOW, False=HIGH) and pause the auto-driver
+        for this pin until release() is called. Used by the UI test buttons
+        as a hold/toggle."""
+        ok, msg = self.set(bcm, on)
+        if not ok:
+            return ok, msg
+        with self._lock:
+            self._latched.add(bcm)
+        return True, "latched"
+
+    def release(self, bcm):
+        """Remove the manual latch — the auto-driver will reclaim the pin
+        on its next tick."""
+        with self._lock:
+            self._latched.discard(bcm)
+        return True, "released"
+
     def state(self):
         with self._lock:
             return {
                 "configured": list(self._bcms),
                 "values": {str(b): self._values.get(b, False) for b in self._bcms},
+                "latched": sorted(self._latched),
                 "error": self._error,
             }
 
@@ -544,6 +570,7 @@ def build_tally_diagnostics():
     atem = get_atem_state()
     pins = parse_gpio_state()
     sw_values = dict(TALLY_OUTPUTS._values)  # type: ignore[attr-defined]
+    latched   = set(TALLY_OUTPUTS._latched)  # type: ignore[attr-defined]
 
     devices_out = []
     for d in cfg.get("devices") or []:
@@ -583,6 +610,7 @@ def build_tally_diagnostics():
             "pin_level": pin_level,     # 0=lo, 1=hi, None=not claimed
             "kernel_on": kernel_on,     # True if pin's physical level matches "on" for this polarity
             "consistent": consistent,   # True if sw and kernel agree
+            "latched": (bcm in latched) if isinstance(bcm, int) else False,
         })
 
     return {
@@ -1057,7 +1085,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         self.send_error(404)
 
     def _handle_tally_out_post(self):
-        # /tally-out/<bcm>/(on|off|pulse)
+        # /tally-out/<bcm>/(on|off|pulse|latch-on|latch-off|release)
         from urllib.parse import urlparse, parse_qs
         p = urlparse(self.path)
         parts = [seg for seg in p.path.split("/") if seg]
@@ -1082,6 +1110,12 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 self._send_json({"ok": False, "error": "bad ms"}, code=400)
                 return
             ok, msg = TALLY_OUTPUTS.pulse(bcm, ms)
+        elif action == "latch-on":
+            ok, msg = TALLY_OUTPUTS.latch(bcm, True)
+        elif action == "latch-off":
+            ok, msg = TALLY_OUTPUTS.latch(bcm, False)
+        elif action == "release":
+            ok, msg = TALLY_OUTPUTS.release(bcm)
         else:
             self._send_json({"ok": False, "error": "unknown action"}, code=400)
             return
