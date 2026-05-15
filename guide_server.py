@@ -450,9 +450,17 @@ class TallyOutputs:
         self._values = {}
 
     def _write(self, bcm, on):
-        # Single request – set_value writes to one line of the multi-line claim.
-        self._req.set_value(bcm, self._value_on if on else self._value_off)
+        # Update our internal state, then push the entire state of ALL
+        # claimed lines atomically via set_values(). This is the canonical
+        # libgpiod-2.x API for multi-line requests — `set_value(offset, val)`
+        # on a multi-line request only reliably updates the first line on
+        # this chip, leaving the others unchanged.
         self._values[bcm] = bool(on)
+        values_to_write = {
+            b: (self._value_on if v else self._value_off)
+            for b, v in self._values.items()
+        }
+        self._req.set_values(values_to_write)
 
     def set(self, bcm, on, respect_pulse=False):
         """on=True drives pin LOW (relay-module IN low → relay engaged).
