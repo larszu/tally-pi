@@ -469,18 +469,54 @@ class TallyOutputs:
         # (BCM 20 reproducibly stuck at HIGH after a successful API call).
         # set_values(list) is not supported by the binding ("list indices
         # must be integers or slices, not Value"). Per-line set_value()
-        # works reliably because each call is a separate kernel transaction.
+        # mostly works, but on some BCM pins (20, 22 observed on this Pi 5)
+        # the kernel still reports the old level after a "successful" call.
+        # Verify via read-back and fall back to pinctrl(8) if the kernel
+        # didn't follow our write.
         prev = self._values.get(bcm)
         self._values[bcm] = bool(on)
         for b in self._bcms:
             v = self._value_on if self._values[b] else self._value_off
             self._req.set_value(b, v)
+            # Read back: if the kernel-reported value disagrees with what
+            # we just wrote, this line is the buggy-set_value() case.
+            actual = None
+            try:
+                actual = self._req.get_value(b)
+            except Exception:
+                pass
+            if actual is not None and actual != v:
+                try:
+                    log_event("pin_writeback_mismatch", bcm=b,
+                              wanted=str(v), actual=str(actual), source=source)
+                except Exception:
+                    pass
+                # Sledgehammer fallback — bypass libgpiod entirely.
+                # `pinctrl op <bcm> dh|dl` works even when set_value silently
+                # no-ops, as confirmed by user testing.
+                try:
+                    self._pinctrl_set(b, v == self._value_off)
+                    log_event("pin_pinctrl_fallback", bcm=b,
+                              value=("HIGH" if v == self._value_off else "LOW"),
+                              source=source)
+                except Exception as e:
+                    log_event("pin_pinctrl_fallback_failed", bcm=b, error=str(e))
         # Log only real transitions so the event log stays useful.
         if prev is not None and prev != bool(on):
             try:
                 log_event("pin", bcm=bcm, value=bool(on), source=source)
             except Exception:
                 pass
+
+    @staticmethod
+    def _pinctrl_set(bcm, high):
+        """Fallback path: use `pinctrl op <bcm> dh|dl` to force the level.
+        Required on this Pi 5 (libgpiod 2.2.0 set_value silently no-ops for
+        some pins). `pinctrl` is part of raspi-utils and ships with Raspberry
+        Pi OS by default."""
+        cmd = ["pinctrl", "op", str(int(bcm)), "dh" if high else "dl"]
+        subprocess.run(cmd, check=True, timeout=2.0,
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
     def set(self, bcm, on, respect_pulse=False, source=None):
         """on=True drives pin LOW (relay-module IN low → relay engaged).
