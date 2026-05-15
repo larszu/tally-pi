@@ -348,9 +348,11 @@
       <label style="font-size:12px;color:var(--muted);font-weight:normal;margin-left:12px">
         <input type="checkbox" id="tally-log-pause" style="vertical-align:middle"> Pause
       </label>
+      <button type="button" id="tally-log-copy" class="btn sec" style="font-size:11px;padding:2px 8px;margin-left:8px;font-weight:normal">📋 Kopieren</button>
+      <button type="button" id="tally-log-clear" class="btn sec" style="font-size:11px;padding:2px 8px;margin-left:4px;font-weight:normal">Leeren</button>
     </h3>
     <p class="hint">
-      Letzte ATEM-Bus-Wechsel, Pin-Übergänge, Latch-Aktionen und Tally-State-Änderungen.
+      ATEM-Bus-Wechsel, Pin-Übergänge (Output), Trigger-Taster (Input), Latch-Aktionen und Tally-State-Änderungen.
       Spart den SSH-Blick auf <code>/sys/kernel/debug/gpio</code>.
     </p>
     <div id="tally-log-list" style="font-family:ui-monospace,monospace;font-size:12px;max-height:280px;overflow-y:auto;background:#0b1220;border:1px solid #1f2937;border-radius:6px;padding:6px 8px">
@@ -1462,12 +1464,15 @@ var qrcode=function(){var t=function(t,r){var e=t,n=g[r],o=null,i=0,a=null,u=[],
     setInterval(pollTallyDiag, 700);
 
     // ───── Live-Tally-Log ──────────────────────────────────────────────
-    const LOG_KINDS = new Set(['atem','pin','latch','tally','tally-out']);
+    const LOG_KINDS = new Set(['atem','pin','latch','tally','tally-out','input','watcher']);
+    let logEventsCache = []; // newest first, already filtered
+    let logSinceTs = 0;      // ts of first event currently shown (for "Leeren")
+
     function fmtTime(ts){
       const d = new Date(ts * 1000);
       return d.toLocaleTimeString() + '.' + String(d.getMilliseconds()).padStart(3,'0');
     }
-    function fmtEvent(e){
+    function fmtEventBody(e){
       const k = e.kind || '?';
       let body = '';
       let color = '#cbd5e1';
@@ -1478,7 +1483,22 @@ var qrcode=function(){var t=function(t,r){var e=t,n=g[r],o=null,i=0,a=null,u=[],
       } else if (k === 'pin'){
         color = e.value ? '#fbbf24' : '#94a3b8';
         const lvl = e.value ? 'LOW (aktiv)' : 'HIGH (idle)';
-        body = `Pin GPIO${e.bcm} → ${lvl} [${e.source || '?'}]`;
+        body = `OUT GPIO${e.bcm} → ${lvl} [${e.source || '?'}]`;
+      } else if (k === 'input'){
+        // GPIO-input (trigger button) events from gpio_watcher
+        color = e.ok === false ? '#f87171' : (e.action === 'ignored' ? '#64748b' : '#34d399');
+        const lbl = e.label || `GPIO${e.bcm}`;
+        const edge = e.edge ? ` ${e.edge}` : '';
+        let tail = '';
+        if (e.action === 'atem_aux')         tail = ` → ATEM Aux${e.aux} ← src ${e.source}`;
+        else if (e.action === 'companion_press' || e.action === 'companion_down' || e.action === 'companion_up')
+          tail = ` → Companion ${e.page}/${e.row}/${e.column} (${e.action.replace('companion_','')})`;
+        else if (e.action === 'companion_variable') tail = ` → var ${e.variable}=${e.value}`;
+        else if (e.action === 'ignored')     tail = ` (ignoriert – ${e.reason || ''})`;
+        else if (e.action === 'unknown')     tail = ` (unbekannt: ${e.kind || ''})`;
+        else if (e.action)                   tail = ` → ${e.action}`;
+        if (e.ok === false && e.error)       tail += ` ✗ ${e.error}`;
+        body = `IN  GPIO${e.bcm}${edge} ${lbl}${tail}`;
       } else if (k === 'latch'){
         color = '#a78bfa';
         if (e.action === 'latch'){ body = `Latch GPIO${e.bcm} ${e.value ? 'AN' : 'aus'}`; }
@@ -1490,10 +1510,21 @@ var qrcode=function(){var t=function(t,r){var e=t,n=g[r],o=null,i=0,a=null,u=[],
       } else if (k === 'tally-out'){
         color = '#60a5fa';
         body = `tally-out GPIO${e.bcm} ${e.action || ''}${e.ok === false ? ' ✗ '+(e.msg||'') : ''}`;
+      } else if (k === 'watcher'){
+        color = '#fbbf24';
+        body = `gpio-watcher ${e.action || ''}`;
       } else {
         body = JSON.stringify(e);
       }
+      return { body, color };
+    }
+    function fmtEvent(e){
+      const { body, color } = fmtEventBody(e);
       return `<div style="padding:1px 0;color:${color}"><span style="color:#475569">${fmtTime(e.ts)}</span> ${escHtml(body)}</div>`;
+    }
+    function fmtEventPlain(e){
+      const { body } = fmtEventBody(e);
+      return `${fmtTime(e.ts)}  ${body}`;
     }
     async function pollTallyLog(){
       const pauseEl = document.getElementById('tally-log-pause');
@@ -1502,20 +1533,49 @@ var qrcode=function(){var t=function(t,r){var e=t,n=g[r],o=null,i=0,a=null,u=[],
       const tsEl   = document.getElementById('tally-log-ts');
       if (!listEl) return;
       try {
-        const r = await fetch('/logs?limit=200', {cache:'no-store'});
+        const r = await fetch('/logs?limit=300', {cache:'no-store'});
         const d = await r.json();
-        const evs = (d.events || []).filter(e => LOG_KINDS.has(e.kind)).slice(-50);
+        let evs = (d.events || []).filter(e => LOG_KINDS.has(e.kind));
+        if (logSinceTs) evs = evs.filter(e => e.ts >= logSinceTs);
+        evs = evs.slice(-80).reverse();
+        logEventsCache = evs;
         tsEl.textContent = new Date().toLocaleTimeString();
         if (!evs.length){
           listEl.innerHTML = '<div style="color:var(--muted)">noch keine Events</div>';
           return;
         }
-        // Show newest first
-        listEl.innerHTML = evs.reverse().map(fmtEvent).join('');
+        listEl.innerHTML = evs.map(fmtEvent).join('');
       } catch (e) {
         // keep silent — diag card already shows errors
       }
     }
+    document.getElementById('tally-log-copy')?.addEventListener('click', async (ev) => {
+      const btn = ev.currentTarget;
+      const text = (logEventsCache.length
+        ? logEventsCache.slice().reverse().map(fmtEventPlain).join('\n')
+        : '');
+      try {
+        await navigator.clipboard.writeText(text);
+        const old = btn.textContent;
+        btn.textContent = '✓ kopiert';
+        setTimeout(() => { btn.textContent = old; }, 1200);
+      } catch (e) {
+        // fallback: select-then-copy via temp textarea
+        const ta = document.createElement('textarea');
+        ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+        document.body.appendChild(ta); ta.select();
+        try { document.execCommand('copy'); } catch (_) {}
+        document.body.removeChild(ta);
+        btn.textContent = '✓ kopiert';
+        setTimeout(() => { btn.textContent = '📋 Kopieren'; }, 1200);
+      }
+    });
+    document.getElementById('tally-log-clear')?.addEventListener('click', () => {
+      logSinceTs = Date.now() / 1000;
+      logEventsCache = [];
+      const listEl = document.getElementById('tally-log-list');
+      if (listEl) listEl.innerHTML = '<div style="color:var(--muted)">geleert — nur neue Events ab jetzt</div>';
+    });
     pollTallyLog();
     setInterval(pollTallyLog, 1000);
 

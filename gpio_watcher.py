@@ -22,6 +22,7 @@ from gpiod.line import Bias, Direction, Edge
 
 BINDINGS = Path("/opt/pi-guide/bindings.json")
 TALLY_CONFIG = Path("/opt/pi-guide/tally.json")
+EVENT_LOG_FILE = Path("/opt/pi-guide/events.log")
 ATEM_CMD_SOCKET = Path("/run/pi-guide/atem-cmd.sock")
 CHIP = "/dev/gpiochip0"
 COMPANION = "http://localhost:8000"
@@ -30,6 +31,20 @@ CONSUMER = "pi-gpio-watcher"
 
 def log(msg):
     print(msg, flush=True)
+
+
+def log_event(kind, **fields):
+    """Append a JSON line to the shared event log (same file as guide_server.py).
+    POSIX guarantees atomic append for small lines under PIPE_BUF on files
+    opened with O_APPEND, so a cross-process lock isn't needed."""
+    rec = {"ts": time.time(), "kind": kind, "src": "gpio-watcher"}
+    rec.update(fields)
+    try:
+        EVENT_LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
+        with open(EVENT_LOG_FILE, "a", encoding="utf-8") as f:
+            f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+    except Exception:
+        pass
 
 
 def _load_json(path):
@@ -148,39 +163,62 @@ def atem_cmd(cmd: dict) -> None:
 
 def run_action(binding, event_type):
     trig = binding.get("trigger_edge", "falling")
+    bcm = binding.get("bcm")
+    label = binding.get("_label") or f"GPIO{bcm}"
     if trig != "both" and trig != event_type:
+        # Edge fired but the binding doesn't act on it — log so the user
+        # can see the pin actually triggered.
+        log_event("input", bcm=bcm, edge=event_type, label=label,
+                  action="ignored", reason=f"trigger={trig}")
         return
     a = binding.get("action") or {}
     kind = a.get("kind")
-    label = binding.get("_label") or f"GPIO{binding['bcm']}"
     try:
         if kind == "press":
             url = f"{COMPANION}/api/location/{a['page']}/{a['row']}/{a['column']}/press"
             http_post(url)
             log(f"{label} {event_type} -> press {a['page']}/{a['row']}/{a['column']}")
+            log_event("input", bcm=bcm, edge=event_type, label=label,
+                      action="companion_press",
+                      page=a['page'], row=a['row'], column=a['column'], ok=True)
         elif kind == "down_up":
             sub = "down" if event_type == "falling" else "up"
             url = f"{COMPANION}/api/location/{a['page']}/{a['row']}/{a['column']}/{sub}"
             http_post(url)
             log(f"{label} {event_type} -> {sub} {a['page']}/{a['row']}/{a['column']}")
+            log_event("input", bcm=bcm, edge=event_type, label=label,
+                      action="companion_" + sub,
+                      page=a['page'], row=a['row'], column=a['column'], ok=True)
         elif kind == "variable":
             name = urllib.parse.quote(a["variable"])
             val = str(a.get("value", "1"))
             url = f"{COMPANION}/api/custom-variable/{name}/value"
             http_post(url, val.encode())
             log(f"{label} {event_type} -> variable {a['variable']}={val}")
+            log_event("input", bcm=bcm, edge=event_type, label=label,
+                      action="companion_variable",
+                      variable=a['variable'], value=val, ok=True)
         elif kind == "atem_aux":
             aux = int(a.get("aux") or 0)
             src = a.get("source")
             if not aux or not isinstance(src, int):
                 log(f"{label}: atem_aux missing aux/source ({a})")
+                log_event("input", bcm=bcm, edge=event_type, label=label,
+                          action="atem_aux", ok=False,
+                          error="missing aux/source")
                 return
             atem_cmd({"cmd": "set_aux", "aux": aux, "source": src})
             log(f"{label} {event_type} -> ATEM Aux{aux} <- src {src}")
+            log_event("input", bcm=bcm, edge=event_type, label=label,
+                      action="atem_aux", aux=aux, source=src, ok=True)
         else:
             log(f"{label}: unknown action kind {kind!r}")
+            log_event("input", bcm=bcm, edge=event_type, label=label,
+                      action="unknown", kind=str(kind), ok=False)
     except Exception as e:
         log(f"action error on {label}: {e}")
+        log_event("input", bcm=bcm, edge=event_type, label=label,
+                  action=str(kind), ok=False, error=str(e))
 
 
 def bias_of(s):
@@ -274,6 +312,7 @@ def watch_loop():
 
 def main():
     log(f"pi-gpio-watcher starting (chip={CHIP})")
+    log_event("watcher", action="start", chip=CHIP)
     while True:
         try:
             watch_loop()
