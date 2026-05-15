@@ -1490,10 +1490,19 @@ var qrcode=function(){var t=function(t,r){var e=t,n=g[r],o=null,i=0,a=null,u=[],
                   <label>ATEM Aux-Ausgang
                     <input data-f="in_atem_aux" type="number" min="1" max="24" value="${Number(d.in_atem_aux)||1}">
                   </label>
-                  <label>Source-Input <span style="color:var(--fg-faint)">(leer = ATEM-Input dieses Geräts)</span>
+                  <label>Source bei DRUCK <span style="color:var(--fg-faint)">(leer = ATEM-Input dieses Geräts)</span>
                     <input data-f="in_atem_source" type="number" min="0" value="${inSrc}" placeholder="${inputNum}">
                   </label>
                 </div>
+                <label style="margin-top:var(--space-3);display:block">
+                  Source bei LOSLASSEN <span style="color:var(--fg-faint)">(leer = unverändert / one-shot wie bisher)</span>
+                  <input data-f="in_atem_source_release" type="number" min="0"
+                    value="${(d.in_atem_source_release == null) ? '' : d.in_atem_source_release}"
+                    placeholder="(nur reagieren beim Drücken)">
+                </label>
+                <p class="hint" style="margin:6px 0 0 0;font-size:var(--fs-xs)">
+                  Wenn beide Source-Felder gesetzt sind: gedrückt-halten schaltet die Aux-Source um, loslassen schaltet zurück. Sonst Tap (one-shot).
+                </p>
               </div>
               <!-- conditional Companion row -->
               <div data-show="companion" style="display:none;margin-top:var(--space-3);padding:var(--space-3);background:var(--bg-2);border:1px solid var(--border);border-radius:var(--r-sm)">
@@ -1564,8 +1573,8 @@ var qrcode=function(){var t=function(t,r){var e=t,n=g[r],o=null,i=0,a=null,u=[],
               if (f === 'out_gpio') updateOutTestBtn();
             } else if (f === 'out_active_high') {
               devices[i].out_active_high = (v === 'high');
-            } else if (f === 'in_atem_source') {
-              devices[i].in_atem_source = (v === '') ? null : parseInt(v,10);
+            } else if (f === 'in_atem_source' || f === 'in_atem_source_release') {
+              devices[i][f] = (v === '') ? null : parseInt(v,10);
             } else if (f === 'in_action_type') {
               devices[i].in_action_type = v;
               showActionDetails();
@@ -1711,6 +1720,7 @@ var qrcode=function(){var t=function(t,r){var e=t,n=g[r],o=null,i=0,a=null,u=[],
         in_action_type: 'none',
         in_atem_aux: 1,
         in_atem_source: null,
+        in_atem_source_release: null,
         in_companion_page: 1,
         in_companion_row: 0,
         in_companion_col: 0,
@@ -1777,6 +1787,7 @@ var qrcode=function(){var t=function(t,r){var e=t,n=g[r],o=null,i=0,a=null,u=[],
           in_action_type: d.in_action_type || 'none',
           in_atem_aux: Number(d.in_atem_aux) || 1,
           in_atem_source: (typeof d.in_atem_source === 'number') ? d.in_atem_source : null,
+          in_atem_source_release: (typeof d.in_atem_source_release === 'number') ? d.in_atem_source_release : null,
           in_companion_page: Number(d.in_companion_page) || 1,
           in_companion_row: Number(d.in_companion_row) || 0,
           in_companion_col: Number(d.in_companion_col) || 0,

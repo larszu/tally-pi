@@ -69,9 +69,12 @@ def _device_to_binding(d):
         src = d.get("in_atem_source")
         if not isinstance(src, int):
             src = d.get("input")  # fall back to device's own ATEM input
+        rel = d.get("in_atem_source_release")
+        rel = rel if isinstance(rel, int) else None
         action = {"kind": "atem_aux",
                   "aux": d.get("in_atem_aux"),
-                  "source": src}
+                  "source": src,
+                  "source_release": rel}
     elif action_type == "companion":
         mode = d.get("in_companion_mode", "tap")
         kind = "down_up" if mode == "hold" else "press"
@@ -81,9 +84,14 @@ def _device_to_binding(d):
                   "column": d.get("in_companion_col", 0)}
     else:
         return None
-    # down_up needs both edges; otherwise honor the user's choice.
+    # Modes that need both edges (so we can fire press AND release):
+    #   - companion down_up
+    #   - atem_aux with a release-source defined
     edge = d.get("in_edge", "falling")
-    if action.get("kind") == "down_up":
+    needs_both = (action.get("kind") == "down_up"
+                  or (action.get("kind") == "atem_aux"
+                      and action.get("source_release") is not None))
+    if needs_both:
         edge = "both"
     return {
         "bcm": bcm,
@@ -206,17 +214,34 @@ def run_action(binding, event_type):
                       variable=a['variable'], value=val, ok=True)
         elif kind == "atem_aux":
             aux = int(a.get("aux") or 0)
-            src = a.get("source")
-            if not aux or not isinstance(src, int):
+            src_press   = a.get("source")
+            src_release = a.get("source_release")
+            # Decide which logical event this edge represents.
+            # in_edge=falling means "press is on falling, release on rising".
+            # in_edge=rising  inverts that. in_edge=both is treated like falling.
+            configured = binding.get("trigger_edge", "falling")
+            if configured == "rising":
+                is_press = (event_type == "rising")
+            else:
+                is_press = (event_type == "falling")
+            target = src_press if is_press else src_release
+            phase = "press" if is_press else "release"
+            if target is None:
+                # No release source configured → only press fires.
+                if not is_press:
+                    return
+                target = src_press
+            if not aux or not isinstance(target, int):
                 log(f"{label}: atem_aux missing aux/source ({a})")
                 log_event("input", bcm=bcm, edge=event_type, label=label,
-                          action="atem_aux", ok=False,
+                          action="atem_aux", phase=phase, ok=False,
                           error="missing aux/source")
                 return
-            atem_cmd({"cmd": "set_aux", "aux": aux, "source": src})
-            log(f"{label} {event_type} -> ATEM Aux{aux} <- src {src}")
+            atem_cmd({"cmd": "set_aux", "aux": aux, "source": target})
+            log(f"{label} {event_type}({phase}) -> ATEM Aux{aux} <- src {target}")
             log_event("input", bcm=bcm, edge=event_type, label=label,
-                      action="atem_aux", aux=aux, source=src, ok=True)
+                      action="atem_aux", phase=phase,
+                      aux=aux, source=target, ok=True)
         else:
             log(f"{label}: unknown action kind {kind!r}")
             log_event("input", bcm=bcm, edge=event_type, label=label,

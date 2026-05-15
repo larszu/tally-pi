@@ -344,6 +344,9 @@ def validate_tally_config(cfg):
             src = d.get("in_atem_source")
             if src is not None and (not isinstance(src, int) or src < 0 or src > 99999):
                 raise ValueError("in_atem_source must be int 0..99999 or null")
+            rel = d.get("in_atem_source_release")
+            if rel is not None and (not isinstance(rel, int) or rel < 0 or rel > 99999):
+                raise ValueError("in_atem_source_release must be int 0..99999 or null")
         if in_pin is not None and act == "companion":
             for f in ("in_companion_page", "in_companion_row", "in_companion_col"):
                 v = d.get(f, 0)
@@ -1265,10 +1268,23 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 "dry_run": dry}
         if act == "atem_aux":
             aux = int(dev.get("in_atem_aux") or 0)
-            src = dev.get("in_atem_source")
-            if not isinstance(src, int):
-                src = dev.get("input")
-            plan.update(action="atem_aux", aux=aux, source=src)
+            src_press = dev.get("in_atem_source")
+            if not isinstance(src_press, int):
+                src_press = dev.get("input")
+            src_release = dev.get("in_atem_source_release")
+            if not isinstance(src_release, int):
+                src_release = None
+            # Same press/release decision as the watcher.
+            configured = dev.get("in_edge", "falling")
+            if configured == "rising":
+                is_press = (edge == "rising")
+            else:
+                is_press = (edge == "falling")
+            target = src_press if is_press else src_release
+            if target is None:
+                target = src_press  # fall back when no release source set
+            plan.update(action="atem_aux", aux=aux, source=target,
+                        phase="press" if is_press else "release")
         elif act == "companion":
             mode = dev.get("in_companion_mode", "tap")
             sub = "press"
