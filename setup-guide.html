@@ -330,6 +330,22 @@
     <div id="tally-diag-err" style="color:#f87171;font-size:12px;margin-top:6px"></div>
   </div>
 
+  <div class="card" id="tally-log-card">
+    <h3>Live-Tally-Log
+      <span id="tally-log-ts" style="font-size:12px;color:var(--muted);font-weight:normal;margin-left:8px"></span>
+      <label style="font-size:12px;color:var(--muted);font-weight:normal;margin-left:12px">
+        <input type="checkbox" id="tally-log-pause" style="vertical-align:middle"> Pause
+      </label>
+    </h3>
+    <p class="hint">
+      Letzte ATEM-Bus-Wechsel, Pin-Übergänge, Latch-Aktionen und Tally-State-Änderungen.
+      Spart den SSH-Blick auf <code>/sys/kernel/debug/gpio</code>.
+    </p>
+    <div id="tally-log-list" style="font-family:ui-monospace,monospace;font-size:12px;max-height:280px;overflow-y:auto;background:#0b1220;border:1px solid #1f2937;border-radius:6px;padding:6px 8px">
+      <div style="color:var(--muted)">lade…</div>
+    </div>
+  </div>
+
   <div class="card" id="watcher-card">
     <h3>GPIO-Input-Watcher</h3>
     <p class="hint">
@@ -1432,6 +1448,64 @@ var qrcode=function(){var t=function(t,r){var e=t,n=g[r],o=null,i=0,a=null,u=[],
     }
     pollTallyDiag();
     setInterval(pollTallyDiag, 700);
+
+    // ───── Live-Tally-Log ──────────────────────────────────────────────
+    const LOG_KINDS = new Set(['atem','pin','latch','tally','tally-out']);
+    function fmtTime(ts){
+      const d = new Date(ts * 1000);
+      return d.toLocaleTimeString() + '.' + String(d.getMilliseconds()).padStart(3,'0');
+    }
+    function fmtEvent(e){
+      const k = e.kind || '?';
+      let body = '';
+      let color = '#cbd5e1';
+      if (k === 'atem'){
+        if (e.bus === 'pgm'){ color = '#ef4444'; body = `ATEM PGM ME${e.me ?? 1} → Input ${e.input ?? '—'}`; }
+        else if (e.bus === 'pvw'){ color = '#16a34a'; body = `ATEM PVW ME${e.me ?? 1} → Input ${e.input ?? '—'}`; }
+        else { color = '#fbbf24'; body = `ATEM ${e.connected ? 'verbunden' : 'getrennt'}${e.error ? ' – '+e.error : ''}`; }
+      } else if (k === 'pin'){
+        color = e.value ? '#fbbf24' : '#94a3b8';
+        const lvl = e.value ? 'LOW (aktiv)' : 'HIGH (idle)';
+        body = `Pin GPIO${e.bcm} → ${lvl} [${e.source || '?'}]`;
+      } else if (k === 'latch'){
+        color = '#a78bfa';
+        if (e.action === 'latch'){ body = `Latch GPIO${e.bcm} ${e.value ? 'AN' : 'aus'}`; }
+        else { body = `Latch GPIO${e.bcm} freigegeben`; }
+      } else if (k === 'tally'){
+        const s = e.state || '?';
+        color = s === 'pgm' ? '#ef4444' : s === 'pvw' ? '#16a34a' : '#94a3b8';
+        body = `Tally ${e.id} (Input ${e.input ?? '?'}) → ${s}`;
+      } else if (k === 'tally-out'){
+        color = '#60a5fa';
+        body = `tally-out GPIO${e.bcm} ${e.action || ''}${e.ok === false ? ' ✗ '+(e.msg||'') : ''}`;
+      } else {
+        body = JSON.stringify(e);
+      }
+      return `<div style="padding:1px 0;color:${color}"><span style="color:#475569">${fmtTime(e.ts)}</span> ${escHtml(body)}</div>`;
+    }
+    async function pollTallyLog(){
+      const pauseEl = document.getElementById('tally-log-pause');
+      if (pauseEl && pauseEl.checked) return;
+      const listEl = document.getElementById('tally-log-list');
+      const tsEl   = document.getElementById('tally-log-ts');
+      if (!listEl) return;
+      try {
+        const r = await fetch('/logs?limit=200', {cache:'no-store'});
+        const d = await r.json();
+        const evs = (d.events || []).filter(e => LOG_KINDS.has(e.kind)).slice(-50);
+        tsEl.textContent = new Date().toLocaleTimeString();
+        if (!evs.length){
+          listEl.innerHTML = '<div style="color:var(--muted)">noch keine Events</div>';
+          return;
+        }
+        // Show newest first
+        listEl.innerHTML = evs.reverse().map(fmtEvent).join('');
+      } catch (e) {
+        // keep silent — diag card already shows errors
+      }
+    }
+    pollTallyLog();
+    setInterval(pollTallyLog, 1000);
 
     if (atemApplyBtn) {
       atemApplyBtn.addEventListener('click', async () => {

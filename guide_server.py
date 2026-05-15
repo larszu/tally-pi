@@ -452,7 +452,7 @@ class TallyOutputs:
         self._bcms = []
         self._values = {}
 
-    def _write(self, bcm, on):
+    def _write(self, bcm, on, source="auto"):
         # Update internal state, then push ALL claimed lines one-by-one
         # using per-offset set_value(). set_values(dict) was silently
         # dropping updates for some offsets on this Pi 5 / libgpiod 2.2.0
@@ -460,22 +460,32 @@ class TallyOutputs:
         # set_values(list) is not supported by the binding ("list indices
         # must be integers or slices, not Value"). Per-line set_value()
         # works reliably because each call is a separate kernel transaction.
+        prev = self._values.get(bcm)
         self._values[bcm] = bool(on)
         for b in self._bcms:
             v = self._value_on if self._values[b] else self._value_off
             self._req.set_value(b, v)
+        # Log only real transitions so the event log stays useful.
+        if prev is not None and prev != bool(on):
+            try:
+                log_event("pin", bcm=bcm, value=bool(on), source=source)
+            except Exception:
+                pass
 
-    def set(self, bcm, on, respect_pulse=False):
+    def set(self, bcm, on, respect_pulse=False, source=None):
         """on=True drives pin LOW (relay-module IN low → relay engaged).
         on=False drives pin HIGH (idle, relay disengaged).
 
         respect_pulse=True is used by the auto-driver — it skips pins
         with an active pulse timer or a manual latch.
+        source: "auto" | "manual" | "latch" | "release-auto" — purely
+        informational, propagated into the event log.
         """
         try:
             import gpiod  # noqa: F401
         except Exception as e:
             return False, f"gpiod not available: {e}"
+        eff_source = source or ("auto" if respect_pulse else "manual")
         with self._lock:
             if self._req is None or bcm not in self._values:
                 return False, f"GPIO{bcm} not configured as tally output"
@@ -490,7 +500,7 @@ class TallyOutputs:
                     except Exception: pass
                 return True, "ok"
             try:
-                self._write(bcm, on)
+                self._write(bcm, on, source=eff_source)
                 if not respect_pulse:
                     t = self._pulse_timers.pop(bcm, None)
                     if t:
@@ -528,18 +538,28 @@ class TallyOutputs:
         """Drive pin to `on` (True=LOW, False=HIGH) and pause the auto-driver
         for this pin until release() is called. Used by the UI test buttons
         as a hold/toggle."""
-        ok, msg = self.set(bcm, on)
+        ok, msg = self.set(bcm, on, source="latch")
         if not ok:
             return ok, msg
         with self._lock:
             self._latched.add(bcm)
+        try:
+            log_event("latch", bcm=bcm, value=bool(on), action="latch")
+        except Exception:
+            pass
         return True, "latched"
 
     def release(self, bcm):
         """Remove the manual latch — the auto-driver will reclaim the pin
         on its next tick."""
         with self._lock:
+            was = bcm in self._latched
             self._latched.discard(bcm)
+        if was:
+            try:
+                log_event("latch", bcm=bcm, action="release")
+            except Exception:
+                pass
         return True, "released"
 
     def state(self):
@@ -1135,6 +1155,26 @@ def start_transition_logger():
     """
     last_states = {}
     last_atem_connected = None
+    last_pgm = {}   # me-index (0-based, as atem_watcher emits) -> input num
+    last_pvw = {}
+
+    def _bus_dict(bus):
+        """Normalize pgm/pvw payload to {me_index_int: input_num}."""
+        out = {}
+        if isinstance(bus, dict):
+            for k, v in bus.items():
+                try:
+                    out[int(k)] = v if isinstance(v, int) else None
+                except Exception:
+                    pass
+        elif isinstance(bus, list):
+            for e in bus:
+                if isinstance(e, dict):
+                    try:
+                        out[int(e.get("me")) - 1] = e.get("input")
+                    except Exception:
+                        pass
+        return out
 
     def loop():
         nonlocal last_atem_connected
@@ -1147,6 +1187,16 @@ def start_transition_logger():
                     log_event("atem", connected=connected,
                               error=atem.get("error") or "")
                     last_atem_connected = connected
+                pgm_now = _bus_dict(atem.get("pgm"))
+                pvw_now = _bus_dict(atem.get("pvw"))
+                for me_idx, inp in pgm_now.items():
+                    if last_pgm.get(me_idx) != inp:
+                        log_event("atem", bus="pgm", me=me_idx + 1, input=inp)
+                        last_pgm[me_idx] = inp
+                for me_idx, inp in pvw_now.items():
+                    if last_pvw.get(me_idx) != inp:
+                        log_event("atem", bus="pvw", me=me_idx + 1, input=inp)
+                        last_pvw[me_idx] = inp
                 current_ids = set()
                 for d in cfg.get("devices") or []:
                     did = d.get("id")
