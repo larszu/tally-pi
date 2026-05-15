@@ -4,138 +4,471 @@
 <meta charset="UTF-8">
 <title>Companion Pi – GPIO Setup Guide</title>
 <style>
+  /* ========================================================================
+     Design tokens — Dark Modern (slate-based palette, Linear/Vercel feel)
+     ======================================================================== */
   :root {
-    --bg:#0f1115; --bg2:#0b0e13; --panel:#1a1f2b; --panel2:#222937;
-    --fg:#e6ebf2; --muted:#8a94a6;
-    --accent:#4da3ff; --ok:#4ade80; --warn:#fbbf24; --err:#f87171;
-    --border:#2a3548; --border2:#1f2937;
-    --radius:8px; --radius-lg:12px;
-    --space-1:4px; --space-2:8px; --space-3:12px; --space-4:16px; --space-6:24px;
-    --pin-power:#ef4444; --pin-gnd:#374151; --pin-gpio:#4ade80;
-    --pin-i2c:#fbbf24; --pin-spi:#a78bfa; --pin-uart:#60a5fa; --pin-pwm:#ec4899;
-  }
-  * { box-sizing:border-box; }
-  body { margin:0; font-family:system-ui,-apple-system,Segoe UI,sans-serif; background:var(--bg); color:var(--fg); line-height:1.5; }
-  header { padding:var(--space-4) var(--space-6); background:linear-gradient(90deg,#1a2540,#0f1115); border-bottom:1px solid var(--border); }
-  header h1 { margin:0; font-size:20px; }
-  header .sub { color:var(--muted); font-size:13px; margin-top:var(--space-1); }
-  main { padding:var(--space-6); max-width:1400px; margin:0 auto; }
-  section { margin-bottom:40px; background:var(--panel); border-radius:var(--radius-lg); padding:var(--space-6); border:1px solid var(--border); }
-  h2 { margin-top:0; color:var(--accent); border-bottom:1px solid var(--border); padding-bottom:var(--space-2); }
-  h3 { color:#cbd5e1; margin-top:var(--space-6); }
-  code, pre { background:var(--bg2); color:#a5f3d8; border-radius:4px; padding:2px 6px; font-family:Consolas,ui-monospace,monospace; font-size:13px; }
-  pre { padding:12px; overflow:auto; white-space:pre-wrap; }
-  .legend { display:flex; flex-wrap:wrap; gap:10px; margin:12px 0; font-size:13px; }
-  .legend span { display:inline-flex; align-items:center; gap:6px; }
-  .dot { width:14px; height:14px; border-radius:4px; display:inline-block; }
-  .pinheader { display:grid; grid-template-columns:auto auto auto auto; gap:4px; background:#0b0e13; padding:16px; border-radius:8px; max-width:700px; }
-  .pin { padding:8px 10px; border-radius:4px; font-size:12px; font-family:Consolas,monospace; }
-  .pin .pn { font-weight:bold; opacity:.7; font-size:10px; }
-  .pin .nm { font-weight:bold; }
-  .pin.power { background:#3a1414; color:#fca5a5; }
-  .pin.gnd { background:#1f2937; color:#9ca3af; }
-  .pin.gpio { background:#14321d; color:#86efac; }
-  .pin.i2c { background:#3a2a08; color:#fcd34d; }
-  .pin.spi { background:#271c3a; color:#c4b5fd; }
-  .pin.uart { background:#0f2747; color:#93c5fd; }
-  .pin.pwm { background:#3a1528; color:#f9a8d4; }
-  .cols { display:grid; grid-template-columns:1fr 1fr; gap:24px; }
-  @media (max-width:900px) { .cols { grid-template-columns:1fr; } }
-  .card { background:var(--panel2); padding:16px; border-radius:8px; border-left:4px solid var(--accent); }
-  .card.warn { border-left-color:var(--warn); }
-  .card.err  { border-left-color:var(--err); }
-  .card.ok   { border-left-color:var(--ok); }
-  table { width:100%; border-collapse:collapse; margin:12px 0; }
-  th, td { padding:8px 12px; text-align:left; border-bottom:1px solid #2a3548; font-size:14px; }
-  th { background:#131721; color:var(--muted); font-weight:normal; }
-  ol.steps li { margin-bottom:12px; }
-  kbd { background:#2f3a4e; padding:2px 6px; border-radius:4px; font-family:Consolas,monospace; font-size:12px; border:1px solid #475569; }
-  ol.steps code { display:inline-block; padding:6px 8px; margin:2px 4px 2px 0; border-radius:6px; }
-  .copy-wrap { display:inline-flex; align-items:center; gap:6px; flex-wrap:wrap; margin:2px 6px 2px 0; }
-  .copy-btn {
-    appearance:none; border:1px solid #475569; background:#2f3a4e; color:var(--fg);
-    border-radius:8px; padding:8px 10px; font-size:12px; cursor:pointer; min-height:38px;
-  }
-  .copy-btn:hover { background:#3b4961; }
-  .copy-btn.copied { background:#14532d; border-color:#22c55e; color:#dcfce7; }
-  .svg-wire { max-width:100%; height:auto; }
-  .btn { display:inline-block; padding:8px 16px; background:var(--accent); color:#0b0e13; border-radius:6px; text-decoration:none; font-weight:bold; margin:4px 4px 4px 0; }
-  .btn:hover { background:#78c0ff; }
-  .btn.sec { background:#2f3a4e; color:var(--fg); }
+    /* Surfaces */
+    --bg:        #0a0f1a;
+    --bg-2:      #060912;
+    --surface-1: #111827;
+    --surface-2: #1a2032;
+    --surface-3: #232b3d;
+    --overlay:   rgba(15, 23, 42, .72);
 
-  /* Live GPIO status tiles */
-  .gpio-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(180px,1fr)); gap:10px; margin-top:12px; }
-  .gtile { background:#0b0e13; border:1px solid #2a3548; border-radius:8px; padding:10px 12px; font-family:Consolas,monospace; font-size:13px; position:relative; transition:background .15s, border-color .15s, box-shadow .15s; }
-  .gtile .head { display:flex; justify-content:space-between; align-items:baseline; }
-  .gtile .gname { font-weight:bold; font-size:15px; }
-  .gtile .gpin { color:var(--muted); font-size:11px; }
-  .gtile .gdir { font-size:11px; color:var(--muted); margin-top:4px; }
-  .gtile .gval { font-weight:bold; font-size:18px; letter-spacing:1px; }
-  .gtile .gcons { font-size:11px; color:#fbbf24; margin-top:4px; word-break:break-all; }
-  .gtile.free    { border-color:#374151; }
-  .gtile.in-hi   { border-color:#4ade80; background:#0d1f14; }
-  .gtile.in-hi .gval { color:#4ade80; }
-  .gtile.in-lo   { border-color:#fbbf24; background:#2a1f08; box-shadow:0 0 12px rgba(251,191,36,.4); }
-  .gtile.in-lo .gval { color:#fbbf24; }
-  .gtile.out     { border-color:#60a5fa; background:#0a1628; }
-  .gtile.out .gval { color:#60a5fa; }
-  .gtile.sys     { border-color:#a78bfa; background:#1a102a; }
-  .gtile.sys .gval { color:#a78bfa; }
-  .gtile .pressed { position:absolute; top:6px; right:8px; background:#fbbf24; color:#111; padding:1px 6px; border-radius:3px; font-size:10px; font-weight:bold; animation:pulse 1s infinite; }
-  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.5} }
-  /* Sticky topbar: tabs are always visible, mini bar + collapsible info sit below */
-  #topbar {
-    position:sticky; top:0; z-index:20;
-    background:var(--bg2); border-bottom:1px solid var(--border);
+    /* Text */
+    --fg:        #e2e8f0;
+    --fg-muted:  #94a3b8;
+    --fg-faint:  #64748b;
+    --fg-strong: #f1f5f9;
+
+    /* Borders */
+    --border:        rgba(148, 163, 184, .14);
+    --border-strong: rgba(148, 163, 184, .22);
+    --border-focus:  rgba(59, 130, 246, .55);
+
+    /* Brand + semantic */
+    --accent:        #3b82f6;
+    --accent-hover:  #60a5fa;
+    --accent-glow:   rgba(59, 130, 246, .18);
+    --ok:            #22c55e;
+    --warn:          #f59e0b;
+    --err:           #ef4444;
+    --info:          #06b6d4;
+    --pgm:           #ef4444;
+    --pvw:           #22c55e;
+    --muted:         var(--fg-muted);
+
+    /* Pin colors (used in pinout legend) */
+    --pin-power:#ef4444; --pin-gnd:#475569; --pin-gpio:#22c55e;
+    --pin-i2c:#f59e0b;   --pin-spi:#a78bfa; --pin-uart:#60a5fa; --pin-pwm:#ec4899;
+
+    /* Radii */
+    --r-sm:  6px;
+    --r-md:  10px;
+    --r-lg:  14px;
+    --r-xl:  20px;
+    --r-pill:999px;
+    --radius: var(--r-md);     /* legacy alias */
+    --radius-lg: var(--r-lg);  /* legacy alias */
+
+    /* Spacing scale (legacy aliases kept) */
+    --space-1:4px; --space-2:8px; --space-3:12px; --space-4:16px;
+    --space-5:20px; --space-6:24px; --space-8:32px; --space-10:40px;
+
+    /* Shadows */
+    --shadow-sm: 0 1px 2px rgba(0,0,0,.4);
+    --shadow-md: 0 4px 12px rgba(0,0,0,.35), 0 1px 2px rgba(0,0,0,.4);
+    --shadow-lg: 0 12px 32px rgba(0,0,0,.45), 0 2px 4px rgba(0,0,0,.4);
+    --shadow-glow: 0 0 0 3px var(--accent-glow);
+
+    /* Type */
+    --font-sans: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    --font-mono: "JetBrains Mono", "Fira Code", ui-monospace, Consolas, monospace;
+    --fs-xs:11px; --fs-sm:12px; --fs-base:14px; --fs-md:15px; --fs-lg:17px;
+    --fs-xl:20px; --fs-2xl:24px;
+
+    --tx: 160ms cubic-bezier(.4,0,.2,1);
   }
+
+  * { box-sizing:border-box; }
+  html, body { height:100%; }
+  body {
+    margin:0;
+    font-family:var(--font-sans);
+    font-size:var(--fs-base);
+    background:
+      radial-gradient(1200px 600px at 20% -10%, rgba(59,130,246,.06), transparent 60%),
+      radial-gradient(900px 500px at 100% 0%, rgba(168,85,247,.04), transparent 55%),
+      var(--bg);
+    color:var(--fg);
+    line-height:1.55;
+    -webkit-font-smoothing:antialiased;
+    text-rendering:optimizeLegibility;
+  }
+  ::selection { background:var(--accent-glow); color:var(--fg-strong); }
+  *:focus-visible { outline:2px solid var(--border-focus); outline-offset:2px; border-radius:var(--r-sm); }
+
+  /* ========================================================================
+     Typography
+     ======================================================================== */
+  h1, h2, h3, h4 { color:var(--fg-strong); letter-spacing:-0.01em; font-weight:600; }
+  h1 { margin:0; font-size:var(--fs-xl); }
+  h2 {
+    margin:0 0 var(--space-5) 0; font-size:var(--fs-lg);
+    color:var(--fg-strong); padding-bottom:var(--space-3);
+    border-bottom:1px solid var(--border);
+    display:flex; align-items:center; gap:var(--space-2);
+  }
+  h3 {
+    margin:var(--space-5) 0 var(--space-3) 0; font-size:var(--fs-md);
+    color:var(--fg-strong); font-weight:600;
+  }
+  p { margin:0 0 var(--space-3) 0; color:var(--fg); }
+  .hint, p.hint, .sub { color:var(--fg-muted); font-size:var(--fs-sm); }
+
+  code, pre, kbd {
+    font-family:var(--font-mono); font-size:var(--fs-sm);
+    background:var(--bg-2); color:#a5f3d8;
+    border:1px solid var(--border); border-radius:var(--r-sm);
+    padding:2px 6px;
+  }
+  pre { padding:var(--space-3); overflow:auto; white-space:pre-wrap; line-height:1.55; }
+  kbd { color:var(--fg); background:var(--surface-2); }
+
+  /* ========================================================================
+     Top bar — sticky tab nav + collapsible info
+     ======================================================================== */
+  #topbar {
+    position:sticky; top:0; z-index:30;
+    background:rgba(10, 15, 26, .85);
+    backdrop-filter:blur(12px) saturate(160%);
+    -webkit-backdrop-filter:blur(12px) saturate(160%);
+    border-bottom:1px solid var(--border);
+  }
+  #topbar header {
+    position:static; padding:var(--space-3) var(--space-5);
+    background:transparent; border:0;
+  }
+  #topbar header h1 { font-size:var(--fs-lg); }
+  #topbar header .sub { font-size:var(--fs-xs); margin-top:2px; }
+
   #topbar-mini {
     display:flex; align-items:center; gap:var(--space-2);
-    padding:var(--space-1) 10px; font-size:12px;
+    padding:6px var(--space-3); font-size:var(--fs-sm);
     border-top:1px solid var(--border);
+    color:var(--fg-muted);
   }
-  #topbar-mini #mini-ip { flex:1; color:var(--fg); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; font-family:Consolas,monospace; }
+  #topbar-mini #mini-ip {
+    flex:1; color:var(--fg); white-space:nowrap; overflow:hidden;
+    text-overflow:ellipsis; font-family:var(--font-mono); font-size:var(--fs-xs);
+  }
   #topbar-mini button {
-    background:var(--panel2); color:var(--fg); border:1px solid var(--border);
-    border-radius:4px; padding:2px var(--space-2); font-size:12px; cursor:pointer;
+    background:var(--surface-2); color:var(--fg-muted);
+    border:1px solid var(--border); border-radius:var(--r-sm);
+    padding:3px 10px; font-size:var(--fs-xs); cursor:pointer;
+    transition:background var(--tx), color var(--tx), border-color var(--tx);
   }
-  #topbar-mini button:hover { background:#2f3a4e; }
-  #topbar-full { display:none; border-top:1px solid var(--border); }
+  #topbar-mini button:hover { background:var(--surface-3); color:var(--fg); border-color:var(--border-strong); }
+  #topbar-full { display:none; border-top:1px solid var(--border); background:var(--surface-1); }
   #topbar.open #topbar-full { display:block; }
   #topbar.open #mini-toggle::after { content:" \25B2"; }
-  #mini-toggle::after { content:" \25BC"; font-size:10px; }
-  #topbar header { position:static; border-bottom:0; }
+  #mini-toggle::after { content:" \25BC"; font-size:9px; opacity:.7; }
 
-  /* GPIO filter toolbar */
-  .gpio-toolbar { display:flex; align-items:center; gap:12px; margin:8px 0; font-size:13px; flex-wrap:wrap; }
-  .gpio-toolbar label { display:inline-flex; align-items:center; gap:6px; cursor:pointer; user-select:none; }
-  .gpio-toolbar input[type=checkbox] { width:16px; height:16px; cursor:pointer; }
+  /* ========================================================================
+     View tabs (Status / Tally / Hilfe / Companion)
+     ======================================================================== */
+  .view-tabs {
+    display:flex; gap:6px;
+    padding:8px var(--space-3);
+  }
+  .view-tabs button, .view-tabs .companion-btn {
+    color:var(--fg-muted);
+    border:1px solid var(--border); border-radius:var(--r-md);
+    background:transparent;
+    font:600 var(--fs-base) var(--font-sans);
+    cursor:pointer; white-space:nowrap; line-height:1.1;
+    text-decoration:none;
+    display:flex; align-items:center; justify-content:center; gap:6px;
+    transition:background var(--tx), color var(--tx), border-color var(--tx), box-shadow var(--tx), transform var(--tx);
+  }
+  .view-tabs button { flex:1; padding:10px 8px; }
+  .view-tabs button:hover { background:var(--surface-2); color:var(--fg); border-color:var(--border-strong); }
+  .view-tabs button.active {
+    background:linear-gradient(180deg, rgba(59,130,246,.18), rgba(59,130,246,.08));
+    color:#dbeafe; border-color:rgba(59,130,246,.5);
+    box-shadow:inset 0 0 0 1px rgba(59,130,246,.18), 0 0 18px rgba(59,130,246,.12);
+  }
+  .view-tabs .companion-btn {
+    flex:0 0 auto; padding:10px 14px;
+    color:#bbf7d0; background:rgba(34,197,94,.10);
+    border-color:rgba(34,197,94,.35);
+  }
+  .view-tabs .companion-btn:hover {
+    background:rgba(34,197,94,.18); color:#dcfce7;
+    border-color:rgba(34,197,94,.55);
+  }
+  .view { display:none; animation:viewIn .25s ease both; }
+  .view.active { display:block; }
+  @keyframes viewIn { from { opacity:0; transform:translateY(4px); } to { opacity:1; transform:none; } }
+
+  /* ========================================================================
+     Layout: main + sections
+     ======================================================================== */
+  main { padding:var(--space-6) var(--space-5); max-width:1400px; margin:0 auto; }
+  section {
+    margin-bottom:var(--space-6);
+    background:var(--surface-1);
+    border:1px solid var(--border);
+    border-radius:var(--r-lg);
+    padding:var(--space-6);
+    box-shadow:var(--shadow-sm);
+  }
+  /* Two-column on wide screens */
+  .cols { display:grid; grid-template-columns:1fr 1fr; gap:var(--space-5); }
+  @media (max-width:900px) { .cols { grid-template-columns:1fr; } }
+
+  /* Card — nested panel inside a section */
+  .card {
+    background:var(--surface-2);
+    border:1px solid var(--border);
+    border-radius:var(--r-md);
+    padding:var(--space-5);
+    transition:border-color var(--tx), box-shadow var(--tx);
+  }
+  .card + .card { margin-top:var(--space-4); }
+  .card.warn { border-color:rgba(245,158,11,.35); background:linear-gradient(180deg, rgba(245,158,11,.06), transparent 60%), var(--surface-2); }
+  .card.err  { border-color:rgba(239,68,68,.35);  background:linear-gradient(180deg, rgba(239,68,68,.06),  transparent 60%), var(--surface-2); }
+  .card.ok   { border-color:rgba(34,197,94,.35);  background:linear-gradient(180deg, rgba(34,197,94,.06),  transparent 60%), var(--surface-2); }
+  .card h3:first-child { margin-top:0; }
+
+  /* ========================================================================
+     Forms — inputs, selects, textareas, buttons
+     ======================================================================== */
+  input, select, textarea {
+    width:100%;
+    background:var(--bg-2); color:var(--fg);
+    border:1px solid var(--border); border-radius:var(--r-sm);
+    padding:8px 10px; font:var(--fs-base)/1.4 var(--font-sans);
+    min-height:36px;
+    transition:border-color var(--tx), box-shadow var(--tx), background var(--tx);
+  }
+  input:hover, select:hover, textarea:hover { border-color:var(--border-strong); }
+  input:focus, select:focus, textarea:focus { outline:none; border-color:var(--accent); box-shadow:var(--shadow-glow); }
+  input[type=number] { font-variant-numeric:tabular-nums; }
+  select {
+    appearance:none; -webkit-appearance:none;
+    background-image:
+      linear-gradient(45deg, transparent 50%, var(--fg-muted) 50%),
+      linear-gradient(135deg, var(--fg-muted) 50%, transparent 50%);
+    background-position:right 14px top 50%, right 9px top 50%;
+    background-size:5px 5px, 5px 5px;
+    background-repeat:no-repeat;
+    padding-right:28px;
+  }
+  input[type=checkbox] { width:16px; height:16px; min-height:0; vertical-align:middle; accent-color:var(--accent); }
+  label { display:block; font-size:var(--fs-sm); color:var(--fg-muted); }
+  label > input, label > select, label > textarea { margin-top:4px; }
+
+  /* Buttons */
+  .btn {
+    display:inline-flex; align-items:center; justify-content:center; gap:6px;
+    padding:8px 14px; min-height:36px;
+    background:var(--surface-3); color:var(--fg);
+    border:1px solid var(--border-strong); border-radius:var(--r-sm);
+    font:600 var(--fs-sm) var(--font-sans);
+    text-decoration:none; cursor:pointer;
+    transition:background var(--tx), border-color var(--tx), color var(--tx), transform var(--tx), box-shadow var(--tx);
+    user-select:none;
+  }
+  .btn:hover:not(:disabled) { background:#2a3346; border-color:rgba(148,163,184,.32); }
+  .btn:active:not(:disabled) { transform:translateY(1px); }
+  .btn:disabled, .btn[disabled] { opacity:.45; cursor:not-allowed; }
+  .btn.primary {
+    background:linear-gradient(180deg, #3b82f6, #2563eb);
+    border-color:rgba(59,130,246,.6); color:#fff;
+    box-shadow:0 1px 0 rgba(255,255,255,.08) inset, 0 6px 18px rgba(37,99,235,.25);
+  }
+  .btn.primary:hover:not(:disabled) {
+    background:linear-gradient(180deg, #4f8ef7, #2f6ee8);
+    box-shadow:0 1px 0 rgba(255,255,255,.10) inset, 0 8px 22px rgba(37,99,235,.32);
+  }
+  .btn.sec   { background:var(--surface-2); color:var(--fg-muted); }
+  .btn.sec:hover:not(:disabled) { background:var(--surface-3); color:var(--fg); }
+  .btn.ok    { background:rgba(34,197,94,.15); color:#bbf7d0; border-color:rgba(34,197,94,.4); }
+  .btn.ok:hover:not(:disabled){ background:rgba(34,197,94,.22); }
+  .btn.warn  { background:rgba(245,158,11,.15); color:#fde68a; border-color:rgba(245,158,11,.4); }
+  .btn.warn:hover:not(:disabled){ background:rgba(245,158,11,.22); }
+  .btn.danger{ background:rgba(239,68,68,.15); color:#fecaca; border-color:rgba(239,68,68,.4); }
+  .btn.danger:hover:not(:disabled){ background:rgba(239,68,68,.22); }
+
+  /* Copy buttons (instruction blocks) */
+  .copy-wrap { display:inline-flex; align-items:center; gap:6px; flex-wrap:wrap; margin:2px 6px 2px 0; }
+  .copy-btn {
+    appearance:none; cursor:pointer; min-height:34px;
+    padding:6px 10px; font:600 var(--fs-xs) var(--font-sans);
+    background:var(--surface-3); color:var(--fg);
+    border:1px solid var(--border-strong); border-radius:var(--r-sm);
+    transition:background var(--tx), border-color var(--tx);
+  }
+  .copy-btn:hover { background:#2a3346; }
+  .copy-btn.copied { background:rgba(34,197,94,.18); border-color:rgba(34,197,94,.45); color:#dcfce7; }
+
+  /* ========================================================================
+     Tables
+     ======================================================================== */
+  table { width:100%; border-collapse:collapse; margin:var(--space-3) 0; }
+  th, td { padding:10px 12px; text-align:left; font-size:var(--fs-sm); border-bottom:1px solid var(--border); }
+  th { color:var(--fg-muted); font-weight:500; background:rgba(255,255,255,.02); text-transform:uppercase; letter-spacing:.04em; font-size:11px; }
+  tr:last-child td { border-bottom:0; }
+  tr:hover td { background:rgba(255,255,255,.02); }
+
+  /* ========================================================================
+     Pinout legend + 40-pin header
+     ======================================================================== */
+  .legend { display:flex; flex-wrap:wrap; gap:var(--space-3); margin:var(--space-3) 0; font-size:var(--fs-sm); color:var(--fg-muted); }
+  .legend span { display:inline-flex; align-items:center; gap:6px; }
+  .dot { width:12px; height:12px; border-radius:3px; display:inline-block; }
+  .pinheader {
+    display:grid; grid-template-columns:auto auto auto auto; gap:4px;
+    background:var(--bg-2); padding:var(--space-4);
+    border:1px solid var(--border); border-radius:var(--r-md);
+    max-width:720px;
+  }
+  .pin { padding:8px 10px; border-radius:var(--r-sm); font:600 var(--fs-sm)/1.2 var(--font-mono); }
+  .pin .pn { font-weight:500; opacity:.6; font-size:10px; }
+  .pin .nm { font-weight:600; }
+  .pin.power { background:rgba(239,68,68,.13);  color:#fca5a5; }
+  .pin.gnd   { background:rgba(71,85,105,.22);  color:#cbd5e1; }
+  .pin.gpio  { background:rgba(34,197,94,.13);  color:#86efac; }
+  .pin.i2c   { background:rgba(245,158,11,.13); color:#fcd34d; }
+  .pin.spi   { background:rgba(167,139,250,.13);color:#c4b5fd; }
+  .pin.uart  { background:rgba(96,165,250,.13); color:#93c5fd; }
+  .pin.pwm   { background:rgba(236,72,153,.13); color:#f9a8d4; }
+
+  /* ========================================================================
+     Live GPIO tiles (Status tab)
+     ======================================================================== */
+  .gpio-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(180px,1fr)); gap:10px; margin-top:var(--space-3); }
+  .gtile {
+    background:var(--bg-2); border:1px solid var(--border);
+    border-radius:var(--r-md); padding:10px 12px;
+    font:var(--fs-sm)/1.4 var(--font-mono);
+    position:relative;
+    transition:background var(--tx), border-color var(--tx), box-shadow var(--tx), transform var(--tx);
+  }
+  .gtile:hover { transform:translateY(-1px); border-color:var(--border-strong); }
+  .gtile .head { display:flex; justify-content:space-between; align-items:baseline; }
+  .gtile .gname { font-weight:700; font-size:var(--fs-md); color:var(--fg-strong); }
+  .gtile .gpin  { color:var(--fg-faint); font-size:var(--fs-xs); }
+  .gtile .gdir  { font-size:var(--fs-xs); color:var(--fg-muted); margin-top:4px; }
+  .gtile .gval  { font-weight:700; font-size:var(--fs-lg); letter-spacing:.5px; }
+  .gtile .gcons { font-size:var(--fs-xs); color:var(--warn); margin-top:4px; word-break:break-all; }
+  .gtile.free   { border-color:var(--border); }
+  .gtile.in-hi  { border-color:rgba(34,197,94,.4);  background:rgba(34,197,94,.06); }
+  .gtile.in-hi  .gval { color:#86efac; }
+  .gtile.in-lo  { border-color:rgba(245,158,11,.5); background:rgba(245,158,11,.07); box-shadow:0 0 0 1px rgba(245,158,11,.18), 0 0 16px rgba(245,158,11,.18); }
+  .gtile.in-lo  .gval { color:#fcd34d; }
+  .gtile.out    { border-color:rgba(96,165,250,.45); background:rgba(96,165,250,.07); }
+  .gtile.out    .gval { color:#93c5fd; }
+  .gtile.sys    { border-color:rgba(167,139,250,.4); background:rgba(167,139,250,.06); }
+  .gtile.sys    .gval { color:#c4b5fd; }
+  .gtile .pressed {
+    position:absolute; top:6px; right:8px;
+    background:var(--warn); color:#1a1300;
+    padding:1px 6px; border-radius:var(--r-pill);
+    font:700 10px var(--font-sans); animation:pulse 1s infinite;
+  }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.55} }
+  .gpio-toolbar { display:flex; align-items:center; gap:var(--space-3); margin:var(--space-2) 0 var(--space-3); font-size:var(--fs-sm); flex-wrap:wrap; color:var(--fg-muted); }
+  .gpio-toolbar label { display:inline-flex; align-items:center; gap:6px; cursor:pointer; user-select:none; margin:0; }
   .gtile.hidden-pin { display:none !important; }
 
-  /* Accordion */
+  /* ========================================================================
+     Status pills / badges
+     ======================================================================== */
+  .pill {
+    display:inline-flex; align-items:center; gap:6px;
+    padding:2px 10px; border-radius:var(--r-pill);
+    font:600 var(--fs-xs) var(--font-sans); letter-spacing:.02em;
+    border:1px solid var(--border); background:var(--surface-2); color:var(--fg-muted);
+  }
+  .pill::before { content:""; width:7px; height:7px; border-radius:50%; background:currentColor; }
+  .pill.pgm  { color:#fca5a5; border-color:rgba(239,68,68,.4);  background:rgba(239,68,68,.10); }
+  .pill.pvw  { color:#86efac; border-color:rgba(34,197,94,.4);  background:rgba(34,197,94,.10); }
+  .pill.safe { color:#cbd5e1; border-color:var(--border);       background:var(--surface-2); }
+  .pill.ok   { color:#86efac; border-color:rgba(34,197,94,.4);  background:rgba(34,197,94,.10); }
+  .pill.warn { color:#fcd34d; border-color:rgba(245,158,11,.4); background:rgba(245,158,11,.10); }
+  .pill.err  { color:#fca5a5; border-color:rgba(239,68,68,.4);  background:rgba(239,68,68,.10); }
+
+  /* ========================================================================
+     Accordions (in Help view)
+     ======================================================================== */
   section.acc { padding:0; overflow:hidden; }
   section.acc > h2.acc-head {
-    margin:0; padding:16px 20px; cursor:pointer; user-select:none;
-    display:flex; align-items:center; gap:10px; border-bottom:1px solid transparent;
+    margin:0; padding:var(--space-4) var(--space-5); cursor:pointer; user-select:none;
+    display:flex; align-items:center; gap:var(--space-2);
+    border-bottom:1px solid transparent;
+    transition:background var(--tx);
   }
-  section.acc > h2.acc-head:hover { background:#1f2838; }
+  section.acc > h2.acc-head:hover { background:var(--surface-2); }
   section.acc > h2.acc-head::before {
-    content:"▸"; display:inline-block; font-size:14px; color:var(--muted);
-    transition:transform .15s; width:14px; text-align:center;
+    content:"▸"; display:inline-block; font-size:12px; color:var(--fg-muted);
+    transition:transform var(--tx); width:14px; text-align:center;
   }
   section.acc.open > h2.acc-head::before { transform:rotate(90deg); }
-  section.acc.open > h2.acc-head { border-bottom-color:#2a3548; }
-  section.acc > .acc-body { padding:16px 20px 20px; display:none; }
+  section.acc.open > h2.acc-head { border-bottom-color:var(--border); }
+  section.acc > .acc-body { padding:var(--space-5); display:none; }
   section.acc.open > .acc-body { display:block; }
 
-  /* Responsive — portrait / narrow screens (Waveshare 11.9" = 320×1480) */
-  @media (max-width: 640px) {
-    body { font-size:14px; }
-    header { padding:10px 12px; }
-    header h1 { font-size:16px; }
-    header .sub { font-size:11px; }
-    main { padding:10px; }
-    section.acc > h2.acc-head { padding:10px 12px; font-size:15px; }
-    section.acc > .acc-body { padding:10px 12px 14px; }
+  /* ========================================================================
+     Inline collapsibles (<details>) — used inside tally device cards
+     ======================================================================== */
+  details.panel {
+    border:1px solid var(--border); border-radius:var(--r-md);
+    background:rgba(255,255,255,.015);
+    transition:border-color var(--tx);
+  }
+  details.panel + details.panel { margin-top:var(--space-2); }
+  details.panel[open] { border-color:var(--border-strong); }
+  details.panel > summary {
+    cursor:pointer; padding:10px 12px;
+    font:600 var(--fs-base) var(--font-sans); color:var(--fg);
+    display:flex; align-items:center; gap:8px;
+    list-style:none;
+  }
+  details.panel > summary::-webkit-details-marker { display:none; }
+  details.panel > summary::before {
+    content:"▸"; font-size:11px; color:var(--fg-faint);
+    transition:transform var(--tx); display:inline-block; width:10px;
+  }
+  details.panel[open] > summary::before { transform:rotate(90deg); }
+  details.panel > .panel-body { padding:4px 12px 12px 28px; }
+
+  /* ========================================================================
+     Tally device cards
+     ======================================================================== */
+  .tally-card {
+    background:var(--surface-2);
+    border:1px solid var(--border);
+    border-radius:var(--r-lg);
+    padding:var(--space-4) var(--space-5);
+    transition:border-color var(--tx), box-shadow var(--tx);
+  }
+  .tally-card + .tally-card { margin-top:var(--space-4); }
+  .tally-card:hover { border-color:var(--border-strong); box-shadow:var(--shadow-sm); }
+  .tally-card-head {
+    display:flex; align-items:center; gap:var(--space-3); flex-wrap:wrap;
+    padding-bottom:var(--space-3); border-bottom:1px solid var(--border);
+    margin-bottom:var(--space-4);
+  }
+  .tally-card-head .name { font:600 var(--fs-md) var(--font-sans); color:var(--fg-strong); }
+  .tally-card-head .meta { color:var(--fg-faint); font-size:var(--fs-xs); font-family:var(--font-mono); }
+  .tally-card-head .spacer { flex:1; }
+
+  /* ========================================================================
+     SVG wires + misc
+     ======================================================================== */
+  .svg-wire { max-width:100%; height:auto; }
+  ol.steps li { margin-bottom:var(--space-3); }
+  ol.steps code { display:inline-block; padding:6px 8px; margin:2px 4px 2px 0; border-radius:var(--r-sm); }
+
+  /* ========================================================================
+     Responsive
+     ======================================================================== */
+  @media (max-width:900px) {
+    main { padding:var(--space-4) var(--space-3); }
+    section { padding:var(--space-4); }
+  }
+  @media (max-width:640px) {
+    body { font-size:13px; }
+    #topbar header { padding:8px 12px; }
+    #topbar header h1 { font-size:var(--fs-md); }
+    #topbar header .sub { font-size:10px; }
+    main { padding:var(--space-3) var(--space-2); }
+    section { padding:var(--space-3); margin-bottom:var(--space-4); }
+    section.acc > h2.acc-head { padding:10px 12px; font-size:var(--fs-base); }
+    section.acc > .acc-body { padding:var(--space-3); }
     .gpio-grid { grid-template-columns:repeat(auto-fill,minmax(140px,1fr)); gap:6px; }
     .gtile { padding:6px 8px; font-size:11px; }
     .gtile .gname { font-size:13px; }
@@ -143,69 +476,22 @@
     .gtile .gpin, .gtile .gdir, .gtile .gcons { font-size:10px; }
     .pinheader { grid-template-columns:auto auto; padding:8px; }
     .pin { padding:6px 8px; font-size:11px; }
-    .cols { grid-template-columns:1fr !important; gap:12px; }
+    .cols { grid-template-columns:1fr !important; gap:var(--space-3); }
     pre, code { font-size:11px; }
   }
-  /* Very narrow (Waveshare bar) */
-  @media (max-width: 360px) {
-    .gpio-grid { grid-template-columns:repeat(2,1fr); gap:5px; }
-    .gtile { padding:5px 6px; }
-    .gtile .gname { font-size:12px; }
-    .gtile .gval  { font-size:13px; }
-    header h1 { font-size:14px; }
-  }
-
-  /* ========== View-Tabs (Status / Tally / Hilfe / Companion) ========== */
-  /* Live inside #topbar so they're always stuck at the very top. */
-  .view-tabs {
-    display:flex; gap:var(--space-1);
-    padding:6px var(--space-2);
-  }
-  .view-tabs button, .view-tabs .companion-btn {
-    color:var(--fg);
-    border:1px solid var(--border); border-radius:var(--radius);
-    font-size:13px; font-weight:600; cursor:pointer;
-    white-space:nowrap; line-height:1.1;
-    text-decoration:none;
-    display:flex; flex-direction:column; align-items:center; gap:2px;
-  }
-  .view-tabs button {
-    flex:1; background:var(--panel); padding:10px var(--space-1);
-  }
-  .view-tabs button .ic { font-size:18px; }
-  .view-tabs button.active { background:var(--accent); color:var(--bg2); border-color:var(--accent); }
-  .view-tabs button:not(.active):hover { background:#2f3a4e; }
-  .view-tabs .companion-btn {
-    flex:0 0 auto; background:var(--ok); color:var(--bg2); border-color:var(--ok);
-    font-size:12px; padding:10px;
-    justify-content:center;
-  }
-  .view-tabs .companion-btn:hover { filter:brightness(1.1); }
-  .view { display:none; }
-  .view.active { display:block; }
-
-  /* ========== Stronger narrow-screen rules (Waveshare 320px) ========== */
   @media (max-width:420px) {
-    .view-tabs { padding:4px; gap:3px; }
-    .view-tabs button { padding:8px 2px; font-size:11px; }
-    .view-tabs button .ic { font-size:16px; }
-    .view-tabs .companion-btn { font-size:10px; padding:8px 6px; }
-
+    .view-tabs { padding:6px; gap:4px; }
+    .view-tabs button { padding:9px 4px; font-size:12px; }
+    .view-tabs .companion-btn { font-size:11px; padding:9px 8px; }
     main { padding:8px 6px !important; }
-    section { margin-bottom:16px; }
-    section.acc { padding:0; }
-    section.acc > h2.acc-head { padding:10px 10px; font-size:15px; }
-    section.acc > .acc-body { padding:8px 10px 14px; }
+    section { margin-bottom:12px; }
     h3 { font-size:14px; margin-top:14px; }
-
-    .btn { padding:9px 10px; font-size:13px; }
+    .btn { padding:9px 12px; font-size:13px; }
     input, select, textarea { min-height:42px; font-size:15px; }
-
     .gpio-grid { grid-template-columns:repeat(2,1fr) !important; gap:6px; }
     .pinheader { padding:6px; }
     .pin { padding:5px 6px; font-size:10px; }
     .pin .pn { font-size:9px; }
-
     table th, table td { padding:5px 6px; font-size:11px; }
     kbd { font-size:10px; padding:1px 4px; }
   }
@@ -308,7 +594,7 @@
   <div class="card">
     <h3>Geräte</h3>
     <div id="tally-devices"></div>
-    <button type="button" id="tally-add" class="btn" style="margin-top:8px">+ Gerät</button>
+    <button type="button" id="tally-add" class="btn sec" style="margin-top:var(--space-3)">+ Gerät</button>
   </div>
 
   <div class="card">
@@ -316,47 +602,53 @@
     <span id="tally-save-status" class="hint" style="margin-left:8px"></span>
   </div>
 
-  <div class="card" id="tally-diag-card">
-    <h3>Tally-Diagnose <span id="tally-diag-ts" style="font-size:12px;color:var(--muted);font-weight:normal;margin-left:8px"></span></h3>
-    <p class="hint">
-      Live-Vergleich: was die Software treiben will vs. was der Pi-Kernel tatsächlich am Pin macht.
-      Wenn <em>SW</em> und <em>HW</em> auseinander laufen → Software-Bug.
-      Wenn beide „AN" sagen aber die Lampe aus bleibt → Hardware (Diode/Kabel/Modul).
-    </p>
-    <div style="overflow-x:auto">
-      <table id="tally-diag-table" style="width:100%;border-collapse:collapse;font-size:13px">
-        <thead><tr style="text-align:left;border-bottom:1px solid #334155;color:var(--muted)">
-          <th style="padding:4px 6px">Gerät</th>
-          <th style="padding:4px 6px">Input</th>
-          <th style="padding:4px 6px">State</th>
-          <th style="padding:4px 6px">GPIO</th>
-          <th style="padding:4px 6px">Polarität</th>
-          <th style="padding:4px 6px">SW will</th>
-          <th style="padding:4px 6px">Kernel-Pin</th>
-          <th style="padding:4px 6px">Lampe?</th>
-          <th style="padding:4px 6px">Test</th>
-        </tr></thead>
-        <tbody id="tally-diag-rows"><tr><td colspan="9" style="padding:8px;color:var(--muted)">lade…</td></tr></tbody>
-      </table>
+  <div class="cols" style="gap:var(--space-4)">
+    <div class="card" id="tally-diag-card">
+      <h3 style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+        <span>Tally-Diagnose</span>
+        <span class="pill ok" id="tally-diag-ts" style="font-weight:500">—</span>
+      </h3>
+      <p class="hint">
+        Live-Vergleich: was die Software treiben will vs. was der Pi-Kernel tatsächlich am Pin macht.
+        Wenn <em>SW</em> und <em>HW</em> auseinander laufen → Software-Bug.
+        Wenn beide „AN" sagen aber die Lampe aus bleibt → Hardware.
+      </p>
+      <div style="overflow-x:auto">
+        <table id="tally-diag-table" style="font-size:var(--fs-sm)">
+          <thead><tr>
+            <th>Gerät</th>
+            <th>Inp</th>
+            <th>State</th>
+            <th>GPIO</th>
+            <th>Pol</th>
+            <th>SW</th>
+            <th>HW</th>
+            <th>OK?</th>
+            <th>Test</th>
+          </tr></thead>
+          <tbody id="tally-diag-rows"><tr><td colspan="9" style="color:var(--fg-muted)">lade…</td></tr></tbody>
+        </table>
+      </div>
+      <div id="tally-diag-err" style="color:var(--err);font-size:var(--fs-xs);margin-top:6px"></div>
     </div>
-    <div id="tally-diag-err" style="color:#f87171;font-size:12px;margin-top:6px"></div>
-  </div>
 
-  <div class="card" id="tally-log-card">
-    <h3>Live-Tally-Log
-      <span id="tally-log-ts" style="font-size:12px;color:var(--muted);font-weight:normal;margin-left:8px"></span>
-      <label style="font-size:12px;color:var(--muted);font-weight:normal;margin-left:12px">
-        <input type="checkbox" id="tally-log-pause" style="vertical-align:middle"> Pause
-      </label>
-      <button type="button" id="tally-log-copy" class="btn sec" style="font-size:11px;padding:2px 8px;margin-left:8px;font-weight:normal">📋 Kopieren</button>
-      <button type="button" id="tally-log-clear" class="btn sec" style="font-size:11px;padding:2px 8px;margin-left:4px;font-weight:normal">Leeren</button>
-    </h3>
-    <p class="hint">
-      ATEM-Bus-Wechsel, Pin-Übergänge (Output), Trigger-Taster (Input), Latch-Aktionen und Tally-State-Änderungen.
-      Spart den SSH-Blick auf <code>/sys/kernel/debug/gpio</code>.
-    </p>
-    <div id="tally-log-list" style="font-family:ui-monospace,monospace;font-size:12px;max-height:280px;overflow-y:auto;background:#0b1220;border:1px solid #1f2937;border-radius:6px;padding:6px 8px">
-      <div style="color:var(--muted)">lade…</div>
+    <div class="card" id="tally-log-card">
+      <h3 style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+        <span>Live-Log</span>
+        <span class="pill" id="tally-log-ts" style="font-weight:500">—</span>
+        <span class="spacer" style="flex:1"></span>
+        <label style="display:inline-flex;align-items:center;gap:4px;font-size:var(--fs-xs);color:var(--fg-muted);margin:0">
+          <input type="checkbox" id="tally-log-pause"> Pause
+        </label>
+        <button type="button" id="tally-log-copy" class="btn sec" style="padding:4px 10px;min-height:0;font-size:var(--fs-xs)">📋 Kopieren</button>
+        <button type="button" id="tally-log-clear" class="btn sec" style="padding:4px 10px;min-height:0;font-size:var(--fs-xs)">Leeren</button>
+      </h3>
+      <p class="hint">
+        ATEM-Bus-Wechsel, Pin-Übergänge, Trigger-Taster, Latch-Aktionen und Tally-State-Änderungen.
+      </p>
+      <div id="tally-log-list" style="font-family:var(--font-mono);font-size:var(--fs-xs);max-height:320px;overflow-y:auto;background:var(--bg-2);border:1px solid var(--border);border-radius:var(--r-sm);padding:8px 10px">
+        <div style="color:var(--fg-muted)">lade…</div>
+      </div>
     </div>
   </div>
 
@@ -1071,16 +1363,14 @@ var qrcode=function(){var t=function(t,r){var e=t,n=g[r],o=null,i=0,a=null,u=[],
       if (!btn) return;
       btn.dataset.latched = latched ? '1' : '0';
       if (latched) {
-        btn.textContent = '● AN — klick zum lösen';
-        btn.style.background = '#dc2626';
-        btn.style.color = '#fff';
-        btn.style.borderColor = '#b91c1c';
-        btn.style.boxShadow = '0 0 8px rgba(220,38,38,0.6)';
+        btn.textContent = '● AN';
+        btn.classList.remove('sec','warn');
+        btn.classList.add('danger');
+        btn.style.boxShadow = '0 0 0 1px rgba(239,68,68,.45), 0 0 18px rgba(239,68,68,.35)';
       } else {
         btn.textContent = 'Test ⚡';
-        btn.style.background = '';
-        btn.style.color = '';
-        btn.style.borderColor = '';
+        btn.classList.remove('danger','sec');
+        btn.classList.add('warn');
         btn.style.boxShadow = '';
       }
     }
@@ -1092,116 +1382,124 @@ var qrcode=function(){var t=function(t,r){var e=t,n=g[r],o=null,i=0,a=null,u=[],
         const url = baseUrl() + '/tally/' + encodeURIComponent(String(inputNum));
         const card = document.createElement('div');
         card.setAttribute('data-tally-card', '1');
-        card.style.cssText = 'border:1px solid #334155;border-radius:10px;padding:12px;margin:10px 0;display:flex;flex-direction:column;gap:10px';
+        card.className = 'tally-card';
         const outGpio = (d.out_gpio == null) ? '' : d.out_gpio;
         const inGpio  = (d.in_gpio  == null) ? '' : d.in_gpio;
         const inSrc   = (d.in_atem_source == null) ? '' : d.in_atem_source;
         card.innerHTML = `
           <!-- header row -->
-          <div style="display:grid;grid-template-columns:2fr 1fr 1fr auto;gap:8px;align-items:end">
-            <label style="font-size:12px">Name<br>
-              <input data-f="name" value="${escHtml(d.name||'')}" placeholder="Kamera 1" style="width:100%">
+          <div class="tally-card-head">
+            <span class="name">${escHtml(d.name || 'Neues Gerät')}</span>
+            <span class="pill safe" data-role="state-pill">safe</span>
+            <span class="meta">Input ${inputNum} · ME ${Number(d.me)||1}${outGpio!==''?' · OUT GPIO '+outGpio:''}${inGpio!==''?' · IN GPIO '+inGpio:''}</span>
+            <span class="spacer"></span>
+            <button type="button" class="btn danger" data-act="del" title="Gerät entfernen" style="padding:4px 10px;min-height:0">✕</button>
+          </div>
+
+          <!-- core fields -->
+          <div style="display:grid;grid-template-columns:2fr 1fr 1fr;gap:var(--space-3);margin-bottom:var(--space-3)">
+            <label>Name
+              <input data-f="name" value="${escHtml(d.name||'')}" placeholder="Kamera 1">
             </label>
-            <label style="font-size:12px">ATEM-Input<br>
-              <input data-f="input" type="number" min="0" value="${inputNum}" style="width:100%">
+            <label>ATEM-Input
+              <input data-f="input" type="number" min="0" value="${inputNum}">
             </label>
-            <label style="font-size:12px">ME<br>
-              <input data-f="me" type="number" min="1" max="4" value="${Number(d.me)||1}" style="width:100%">
+            <label>ME
+              <input data-f="me" type="number" min="1" max="4" value="${Number(d.me)||1}">
             </label>
-            <button type="button" class="btn" data-act="del" title="Gerät entfernen">✕</button>
           </div>
 
           <!-- block 1: Browser-Tally -->
-          <details open style="border:1px solid #1f2937;border-radius:6px;padding:8px">
-            <summary style="cursor:pointer;font-weight:600">📱 Browser-Tally <span style="font-weight:normal;color:var(--muted);font-size:12px">– QR-Code für Smartphone/Tablet</span></summary>
-            <div style="display:flex;gap:12px;margin-top:8px;flex-wrap:wrap">
-              <div class="tally-qr" style="flex:0 0 auto;display:flex;flex-direction:column;align-items:center;gap:4px">
-                <div class="tally-qr-box" style="background:#fff;padding:4px;border-radius:4px;line-height:0"></div>
-                <a href="${escHtml(url)}" target="_blank" style="font-size:11px;word-break:break-all;max-width:140px;text-align:center">${escHtml(url)}</a>
-                <div class="tally-atem-ref" style="font-size:11px;color:var(--muted);max-width:160px;text-align:center">ATEM: Input ${inputNum} = —</div>
-                <button type="button" class="btn" data-act="refresh-qr" style="font-size:11px;padding:2px 6px">QR neu</button>
+          <details class="panel" open>
+            <summary>📱 Browser-Tally <span style="color:var(--fg-muted);font-weight:400;font-size:var(--fs-xs)">QR-Code für Smartphone/Tablet</span></summary>
+            <div class="panel-body" style="display:flex;gap:var(--space-4);flex-wrap:wrap">
+              <div class="tally-qr" style="flex:0 0 auto;display:flex;flex-direction:column;align-items:center;gap:6px">
+                <div class="tally-qr-box" style="background:#fff;padding:6px;border-radius:var(--r-sm);line-height:0"></div>
+                <a href="${escHtml(url)}" target="_blank" style="font-size:var(--fs-xs);word-break:break-all;max-width:140px;text-align:center;color:var(--accent-hover)">${escHtml(url)}</a>
+                <div class="tally-atem-ref" style="font-size:var(--fs-xs);color:var(--fg-muted);max-width:160px;text-align:center">ATEM: Input ${inputNum} = —</div>
+                <button type="button" class="btn sec" data-act="refresh-qr" style="padding:4px 10px;min-height:0;font-size:var(--fs-xs)">QR neu</button>
               </div>
-              <label style="font-size:12px;flex:1 1 160px">Aux-Ausgänge, die als PGM zählen (Liste z.B. 1,2)<br>
-                <input data-f="aux" value="${escHtml((d.aux||[]).join(','))}" placeholder="" style="width:100%">
+              <label style="flex:1 1 200px">Aux-Ausgänge, die als PGM zählen <span style="color:var(--fg-faint)">(z.B. 1,2)</span>
+                <input data-f="aux" value="${escHtml((d.aux||[]).join(','))}" placeholder="">
               </label>
             </div>
           </details>
 
           <!-- block 2: Hardware-Tally (Output) -->
-          <details ${outGpio===''?'':'open'} style="border:1px solid #1f2937;border-radius:6px;padding:8px">
-            <summary style="cursor:pointer;font-weight:600">💡 Tally-Lampe (GPIO-Output) <span style="font-weight:normal;color:var(--muted);font-size:12px">– Pegel-Mode unten wählbar</span></summary>
-            <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:8px;margin-top:8px;align-items:end">
-              <label style="font-size:12px">GPIO-Pin<br>
-                <select data-f="out_gpio" style="width:100%">${gpioOptions(outGpio,'aus')}</select>
+          <details class="panel" ${outGpio===''?'':'open'}>
+            <summary>💡 Tally-Lampe <span style="color:var(--fg-muted);font-weight:400;font-size:var(--fs-xs)">GPIO-Output</span></summary>
+            <div class="panel-body" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:var(--space-3);align-items:end">
+              <label>GPIO-Pin
+                <select data-f="out_gpio">${gpioOptions(outGpio,'aus')}</select>
               </label>
-              <label style="font-size:12px">Auslöser<br>
-                <select data-f="out_trigger" style="width:100%">${optionsFrom(OUT_TRIGGERS, d.out_trigger||'pgm')}</select>
+              <label>Auslöser
+                <select data-f="out_trigger">${optionsFrom(OUT_TRIGGERS, d.out_trigger||'pgm')}</select>
               </label>
-              <label style="font-size:12px">Pegel bei on-air<br>
-                <select data-f="out_active_high" style="width:100%">${optionsFrom(OUT_POLARITY, d.out_active_high ? 'high' : 'low')}</select>
+              <label>Pegel bei on-air
+                <select data-f="out_active_high">${optionsFrom(OUT_POLARITY, d.out_active_high ? 'high' : 'low')}</select>
               </label>
               <div style="display:flex;flex-direction:column;gap:4px">
-                <button type="button" class="btn" data-act="test-out" ${outGpio===''?'disabled':''} title="GPIO 500 ms aktiv">Test ⚡</button>
-                <span data-role="test-out-status" class="hint" style="font-size:11px;min-height:14px"></span>
+                <button type="button" class="btn warn" data-act="test-out" ${outGpio===''?'disabled':''} title="GPIO latchen — Klick erneut zum Lösen">Test ⚡</button>
+                <span data-role="test-out-status" class="hint" style="font-size:var(--fs-xs);min-height:14px"></span>
               </div>
             </div>
           </details>
 
           <!-- block 3: Hardware-Trigger (Input) -->
-          <details ${inGpio===''?'':'open'} style="border:1px solid #1f2937;border-radius:6px;padding:8px">
-            <summary style="cursor:pointer;font-weight:600">🔘 Trigger-Taster (GPIO-Input) <span style="font-weight:normal;color:var(--muted);font-size:12px">– externer Kurzschluss gegen GND löst Aktion aus</span></summary>
-            <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:8px;margin-top:8px;align-items:end">
-              <label style="font-size:12px">GPIO-Pin<br>
-                <select data-f="in_gpio" style="width:100%">${gpioOptions(inGpio,'aus')}</select>
-              </label>
-              <label style="font-size:12px">Flanke<br>
-                <select data-f="in_edge" style="width:100%">${optionsFrom(IN_EDGES, d.in_edge||'falling')}</select>
-              </label>
-              <label style="font-size:12px">Aktion<br>
-                <select data-f="in_action_type" style="width:100%">${optionsFrom(IN_ACTIONS, d.in_action_type||'none')}</select>
-              </label>
-              <label style="font-size:12px" title="Mindestzeit zwischen zwei Flanken — Prelltaster ggf. höher setzen">
-                Debounce (ms)<br>
-                <input data-f="in_debounce_ms" type="number" min="0" max="2000" step="5" value="${Number(d.in_debounce_ms)||20}" style="width:100%">
-              </label>
-            </div>
-            <!-- conditional ATEM-Aux row -->
-            <div data-show="atem_aux" style="display:none;margin-top:8px;padding:8px;background:#0f172a;border-radius:4px">
-              <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
-                <label style="font-size:12px">ATEM Aux-Ausgang<br>
-                  <input data-f="in_atem_aux" type="number" min="1" max="24" value="${Number(d.in_atem_aux)||1}" style="width:100%">
+          <details class="panel" ${inGpio===''?'':'open'}>
+            <summary>🔘 Trigger-Taster <span style="color:var(--fg-muted);font-weight:400;font-size:var(--fs-xs)">GPIO-Input → ATEM/Companion</span></summary>
+            <div class="panel-body">
+              <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:var(--space-3);align-items:end">
+                <label>GPIO-Pin
+                  <select data-f="in_gpio">${gpioOptions(inGpio,'aus')}</select>
                 </label>
-                <label style="font-size:12px">Source-Input <span style="color:var(--muted)">(leer = ATEM-Input dieses Geräts)</span><br>
-                  <input data-f="in_atem_source" type="number" min="0" value="${inSrc}" placeholder="${inputNum}" style="width:100%">
+                <label>Flanke
+                  <select data-f="in_edge">${optionsFrom(IN_EDGES, d.in_edge||'falling')}</select>
+                </label>
+                <label>Aktion
+                  <select data-f="in_action_type">${optionsFrom(IN_ACTIONS, d.in_action_type||'none')}</select>
+                </label>
+                <label title="Mindestzeit zwischen zwei Flanken — Prelltaster ggf. höher setzen">
+                  Debounce (ms)
+                  <input data-f="in_debounce_ms" type="number" min="0" max="2000" step="5" value="${Number(d.in_debounce_ms)||20}">
                 </label>
               </div>
-            </div>
-            <!-- conditional Companion row -->
-            <div data-show="companion" style="display:none;margin-top:8px;padding:8px;background:#0f172a;border-radius:4px">
-              <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px">
-                <label style="font-size:12px">Page<br>
-                  <input data-f="in_companion_page" type="number" min="1" max="99" value="${Number(d.in_companion_page)||1}" style="width:100%">
-                </label>
-                <label style="font-size:12px">Row<br>
-                  <input data-f="in_companion_row" type="number" min="0" max="99" value="${Number(d.in_companion_row)||0}" style="width:100%">
-                </label>
-                <label style="font-size:12px">Column<br>
-                  <input data-f="in_companion_col" type="number" min="0" max="99" value="${Number(d.in_companion_col)||0}" style="width:100%">
+              <!-- conditional ATEM-Aux row -->
+              <div data-show="atem_aux" style="display:none;margin-top:var(--space-3);padding:var(--space-3);background:var(--bg-2);border:1px solid var(--border);border-radius:var(--r-sm)">
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:var(--space-3)">
+                  <label>ATEM Aux-Ausgang
+                    <input data-f="in_atem_aux" type="number" min="1" max="24" value="${Number(d.in_atem_aux)||1}">
+                  </label>
+                  <label>Source-Input <span style="color:var(--fg-faint)">(leer = ATEM-Input dieses Geräts)</span>
+                    <input data-f="in_atem_source" type="number" min="0" value="${inSrc}" placeholder="${inputNum}">
+                  </label>
+                </div>
+              </div>
+              <!-- conditional Companion row -->
+              <div data-show="companion" style="display:none;margin-top:var(--space-3);padding:var(--space-3);background:var(--bg-2);border:1px solid var(--border);border-radius:var(--r-sm)">
+                <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:var(--space-3)">
+                  <label>Page
+                    <input data-f="in_companion_page" type="number" min="1" max="99" value="${Number(d.in_companion_page)||1}">
+                  </label>
+                  <label>Row
+                    <input data-f="in_companion_row" type="number" min="0" max="99" value="${Number(d.in_companion_row)||0}">
+                  </label>
+                  <label>Column
+                    <input data-f="in_companion_col" type="number" min="0" max="99" value="${Number(d.in_companion_col)||0}">
+                  </label>
+                </div>
+                <label style="margin-top:var(--space-2);display:block">Verhalten
+                  <select data-f="in_companion_mode">${optionsFrom(IN_COMPANION_MODES, d.in_companion_mode||'tap')}</select>
                 </label>
               </div>
-              <div style="margin-top:6px">
-                <label style="font-size:12px">Verhalten<br>
-                  <select data-f="in_companion_mode" style="width:100%">${optionsFrom(IN_COMPANION_MODES, d.in_companion_mode||'tap')}</select>
-                </label>
+              <!-- Trigger-Test buttons -->
+              <div data-show-when-action style="display:none;margin-top:var(--space-3);gap:var(--space-2);flex-wrap:wrap;align-items:center">
+                <button type="button" class="btn sec" data-act="test-in-dry" ${inGpio===''?'disabled':''}
+                  title="Loggt das Event nur — schickt KEIN Kommando">🔍 Dry-Run</button>
+                <button type="button" class="btn warn" data-act="test-in-fire" ${inGpio===''?'disabled':''}
+                  title="Schickt das echte Kommando an ATEM/Companion">⚡ Trigger feuern</button>
+                <span data-role="test-in-status" class="hint" style="font-size:var(--fs-xs);min-height:14px"></span>
               </div>
-            </div>
-            <!-- Trigger-Test buttons (work for both action types) -->
-            <div data-show-when-action style="display:none;margin-top:8px;gap:6px;flex-wrap:wrap;align-items:center">
-              <button type="button" class="btn" data-act="test-in-dry" ${inGpio===''?'disabled':''}
-                title="Loggt das Event nur — schickt KEIN Kommando an ATEM/Companion">🔍 Dry-Run</button>
-              <button type="button" class="btn" data-act="test-in-fire" ${inGpio===''?'disabled':''}
-                title="Schickt das echte Kommando an ATEM/Companion">⚡ Trigger feuern</button>
-              <span data-role="test-in-status" class="hint" style="font-size:11px;min-height:14px"></span>
             </div>
           </details>
         `;
@@ -1259,6 +1557,17 @@ var qrcode=function(){var t=function(t,r){var e=t,n=g[r],o=null,i=0,a=null,u=[],
               if (link) { link.href = newUrl; link.textContent = newUrl; }
               renderQr(qrBox, newUrl);
               refreshAtemRefs();
+            }
+            // Reflect changes in the card header.
+            const head = card.querySelector('.tally-card-head .name');
+            if (head) head.textContent = devices[i].name || 'Neues Gerät';
+            const meta = card.querySelector('.tally-card-head .meta');
+            if (meta) {
+              const out = devices[i].out_gpio;
+              const inp = devices[i].in_gpio;
+              meta.textContent = 'Input ' + (devices[i].input || 0) + ' · ME ' + (devices[i].me || 1)
+                + (out != null ? ' · OUT GPIO ' + out : '')
+                + (inp != null ? ' · IN GPIO ' + inp : '');
             }
           });
         });
@@ -1482,26 +1791,25 @@ var qrcode=function(){var t=function(t,r){var e=t,n=g[r],o=null,i=0,a=null,u=[],
           return;
         }
         const bool3 = v => v === true ? 'AN' : v === false ? 'aus' : '—';
-        const pinFmt = v => v === 0 ? 'LOW (0V)' : v === 1 ? 'HIGH (3.3V)' : '—';
-        const stateClass = s => s === 'pgm' ? '#ef4444' : s === 'pvw' ? '#16a34a' : (s === 'offline' || s === 'unknown') ? '#9ca3af' : '#cbd5e1';
+        const pinFmt = v => v === 0 ? 'LOW' : v === 1 ? 'HIGH' : '—';
+        const statePill = s => `<span class="pill ${s==='pgm'?'pgm':s==='pvw'?'pvw':'safe'}">${escHtml(s||'?')}</span>`;
         rowsEl.innerHTML = devs.map((d, i) => {
           const cons = d.consistent;
-          const consColor = cons === false ? '#f87171' : cons === true ? '#22c55e' : '#9ca3af';
-          const consText  = cons === false ? '⚠ uneinig' : cons === true ? '✓' : '—';
-          const btnLabel  = d.latched ? '● AN' : 'Test ⚡';
-          const btnStyle  = d.latched
-            ? 'font-size:11px;padding:2px 8px;background:#dc2626;color:#fff;border:1px solid #b91c1c;box-shadow:0 0 8px rgba(220,38,38,0.6)'
-            : 'font-size:11px;padding:2px 8px';
-          return `<tr style="border-bottom:1px solid #1f2937">
-            <td style="padding:4px 6px;font-weight:600">${escHtml(d.name || d.id || '')}</td>
-            <td style="padding:4px 6px">${d.atem_input ?? '—'}</td>
-            <td style="padding:4px 6px;color:${stateClass(d.state)};font-weight:600">${escHtml(d.state || '?')}${d.latched ? ' <span style="color:#fbbf24">[LATCH]</span>' : ''}</td>
-            <td style="padding:4px 6px">${d.out_gpio == null ? '—' : 'GPIO ' + d.out_gpio}</td>
-            <td style="padding:4px 6px;font-size:11px;color:var(--muted)">${d.out_active_high ? 'active-HIGH' : 'active-LOW'}</td>
-            <td style="padding:4px 6px">${bool3(d.sw_on)}</td>
-            <td style="padding:4px 6px">${pinFmt(d.pin_level)}</td>
-            <td style="padding:4px 6px;color:${consColor}">${consText}${cons === false ? ' — Lampe folgt evtl. nicht!' : ''}</td>
-            <td style="padding:4px 6px"><button type="button" class="btn" data-diag-test="${i}" data-latched="${d.latched?'1':'0'}" style="${btnStyle}">${btnLabel}</button></td>
+          const consPill = cons === false ? '<span class="pill err">uneinig</span>'
+                          : cons === true ? '<span class="pill ok">ok</span>'
+                          : '<span class="pill safe">—</span>';
+          const btnCls = d.latched ? 'btn danger' : 'btn warn';
+          const btnLabel = d.latched ? '● AN' : 'Test ⚡';
+          return `<tr>
+            <td style="font-weight:600">${escHtml(d.name || d.id || '')}</td>
+            <td>${d.atem_input ?? '—'}</td>
+            <td>${statePill(d.state)}${d.latched ? ' <span class="pill warn" style="margin-left:4px">LATCH</span>' : ''}</td>
+            <td>${d.out_gpio == null ? '—' : 'GPIO ' + d.out_gpio}</td>
+            <td style="font-size:var(--fs-xs);color:var(--fg-muted)">${d.out_active_high ? 'HIGH' : 'LOW'}</td>
+            <td>${bool3(d.sw_on)}</td>
+            <td>${pinFmt(d.pin_level)}</td>
+            <td>${consPill}</td>
+            <td><button type="button" class="${btnCls}" data-diag-test="${i}" data-latched="${d.latched?'1':'0'}" style="padding:4px 10px;min-height:0;font-size:var(--fs-xs)">${btnLabel}</button></td>
           </tr>`;
         }).join('');
         rowsEl.querySelectorAll('[data-diag-test]').forEach(btn => {
@@ -1518,13 +1826,22 @@ var qrcode=function(){var t=function(t,r){var e=t,n=g[r],o=null,i=0,a=null,u=[],
           });
         });
 
-        // Sync the per-device-card Test buttons with their latch state.
+        // Sync per-device-card UI with diag data: state pill + latch button.
         const cards = document.querySelectorAll('[data-tally-card]');
         cards.forEach((card, idx) => {
           const cardDev = devices[idx];
           if (!cardDev) return;
-          const diagDev = devs.find(x => x.out_gpio === cardDev.out_gpio
-                                       && cardDev.out_gpio != null);
+          // Match by device id when possible (more robust than out_gpio).
+          const diagDev = devs.find(x =>
+            (cardDev.id && x.id === cardDev.id) ||
+            (x.out_gpio != null && x.out_gpio === cardDev.out_gpio)
+          );
+          const pill = card.querySelector('[data-role=state-pill]');
+          if (pill) {
+            const s = diagDev ? (diagDev.state || 'safe') : 'safe';
+            pill.textContent = s.toUpperCase();
+            pill.className = 'pill ' + (s === 'pgm' ? 'pgm' : s === 'pvw' ? 'pvw' : 'safe');
+          }
           const tb = card.querySelector('[data-act=test-out]');
           if (tb && diagDev) setTestBtnVisual(tb, !!diagDev.latched);
         });
