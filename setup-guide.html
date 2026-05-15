@@ -304,6 +304,32 @@
     <span id="tally-save-status" class="hint" style="margin-left:8px"></span>
   </div>
 
+  <div class="card" id="tally-diag-card">
+    <h3>Tally-Diagnose <span id="tally-diag-ts" style="font-size:12px;color:var(--muted);font-weight:normal;margin-left:8px"></span></h3>
+    <p class="hint">
+      Live-Vergleich: was die Software treiben will vs. was der Pi-Kernel tatsächlich am Pin macht.
+      Wenn <em>SW</em> und <em>HW</em> auseinander laufen → Software-Bug.
+      Wenn beide „AN" sagen aber die Lampe aus bleibt → Hardware (Diode/Kabel/Modul).
+    </p>
+    <div style="overflow-x:auto">
+      <table id="tally-diag-table" style="width:100%;border-collapse:collapse;font-size:13px">
+        <thead><tr style="text-align:left;border-bottom:1px solid #334155;color:var(--muted)">
+          <th style="padding:4px 6px">Gerät</th>
+          <th style="padding:4px 6px">Input</th>
+          <th style="padding:4px 6px">State</th>
+          <th style="padding:4px 6px">GPIO</th>
+          <th style="padding:4px 6px">Polarität</th>
+          <th style="padding:4px 6px">SW will</th>
+          <th style="padding:4px 6px">Kernel-Pin</th>
+          <th style="padding:4px 6px">Lampe?</th>
+          <th style="padding:4px 6px">Test</th>
+        </tr></thead>
+        <tbody id="tally-diag-rows"><tr><td colspan="9" style="padding:8px;color:var(--muted)">lade…</td></tr></tbody>
+      </table>
+    </div>
+    <div id="tally-diag-err" style="color:#f87171;font-size:12px;margin-top:6px"></div>
+  </div>
+
   <div class="card" id="watcher-card">
     <h3>GPIO-Input-Watcher</h3>
     <p class="hint">
@@ -1312,6 +1338,61 @@ var qrcode=function(){var t=function(t,r){var e=t,n=g[r],o=null,i=0,a=null,u=[],
     })();
     pollAtem();
     setInterval(pollAtem, 1500);
+
+    // ───── Tally-Diagnose ─────────────────────────────────────────────
+    async function pollTallyDiag(){
+      const rowsEl = document.getElementById('tally-diag-rows');
+      const errEl  = document.getElementById('tally-diag-err');
+      const tsEl   = document.getElementById('tally-diag-ts');
+      if (!rowsEl) return;
+      try {
+        const r = await fetch('/tally-diagnostics', {cache:'no-store'});
+        const d = await r.json();
+        tsEl.textContent = new Date().toLocaleTimeString();
+        errEl.textContent = d.tally_out_error || '';
+        const devs = d.devices || [];
+        if (!devs.length) {
+          rowsEl.innerHTML = '<tr><td colspan="9" style="padding:8px;color:var(--muted)">noch kein Gerät konfiguriert</td></tr>';
+          return;
+        }
+        const bool3 = v => v === true ? 'AN' : v === false ? 'aus' : '—';
+        const pinFmt = v => v === 0 ? 'LOW (0V)' : v === 1 ? 'HIGH (3.3V)' : '—';
+        const stateClass = s => s === 'pgm' ? '#ef4444' : s === 'pvw' ? '#16a34a' : (s === 'offline' || s === 'unknown') ? '#9ca3af' : '#cbd5e1';
+        rowsEl.innerHTML = devs.map((d, i) => {
+          const cons = d.consistent;
+          const consColor = cons === false ? '#f87171' : cons === true ? '#22c55e' : '#9ca3af';
+          const consText  = cons === false ? '⚠ uneinig' : cons === true ? '✓' : '—';
+          return `<tr style="border-bottom:1px solid #1f2937">
+            <td style="padding:4px 6px;font-weight:600">${escHtml(d.name || d.id || '')}</td>
+            <td style="padding:4px 6px">${d.atem_input ?? '—'}</td>
+            <td style="padding:4px 6px;color:${stateClass(d.state)};font-weight:600">${escHtml(d.state || '?')}</td>
+            <td style="padding:4px 6px">${d.out_gpio == null ? '—' : 'GPIO ' + d.out_gpio}</td>
+            <td style="padding:4px 6px;font-size:11px;color:var(--muted)">${d.out_active_high ? 'active-HIGH' : 'active-LOW'}</td>
+            <td style="padding:4px 6px">${bool3(d.sw_on)}</td>
+            <td style="padding:4px 6px">${pinFmt(d.pin_level)}</td>
+            <td style="padding:4px 6px;color:${consColor}">${consText} ${cons === false ? '— Lampe folgt evtl. nicht!' : ''}</td>
+            <td style="padding:4px 6px"><button type="button" class="btn" data-diag-test="${i}" style="font-size:11px;padding:2px 6px">Pulse</button></td>
+          </tr>`;
+        }).join('');
+        // wire test buttons to the same /tally-out endpoint (polarity-aware)
+        rowsEl.querySelectorAll('[data-diag-test]').forEach(btn => {
+          btn.addEventListener('click', async () => {
+            const i = parseInt(btn.dataset.diagTest, 10);
+            const dev = devs[i];
+            if (!dev || dev.out_gpio == null) return;
+            const isHigh = !!dev.out_active_high;
+            const activate   = isHigh ? 'off' : 'on';
+            const deactivate = isHigh ? 'on'  : 'off';
+            await fetch('/tally-out/' + dev.out_gpio + '/' + activate, {method:'POST'});
+            setTimeout(() => fetch('/tally-out/' + dev.out_gpio + '/' + deactivate, {method:'POST'}), 600);
+          });
+        });
+      } catch (e) {
+        errEl.textContent = 'Fehler: ' + (e.message || e);
+      }
+    }
+    pollTallyDiag();
+    setInterval(pollTallyDiag, 700);
 
     if (atemApplyBtn) {
       atemApplyBtn.addEventListener('click', async () => {

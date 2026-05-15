@@ -536,6 +536,69 @@ def reconfigure_tally_outputs():
     TALLY_OUTPUTS.configure(bcms)
 
 
+def build_tally_diagnostics():
+    """Aggregate everything you'd otherwise need 5 SSH calls for, into one
+    JSON the UI polls. Per-device: ATEM state, software-wanted value,
+    actual kernel pin level, polarity. Plus ATEM connection / PGM / PVW."""
+    cfg = load_tally_config()
+    atem = get_atem_state()
+    pins = parse_gpio_state()
+    sw_values = dict(TALLY_OUTPUTS._values)  # type: ignore[attr-defined]
+
+    devices_out = []
+    for d in cfg.get("devices") or []:
+        bcm = d.get("out_gpio")
+        active_high = bool(d.get("out_active_high", False))
+        state = tally_state_for_device(cfg, d.get("id"), atem_state=atem)
+
+        # What the software thinks the pin's "logical" state is right now.
+        # _values: True = pin driven LOW. For active-low this means "on",
+        # for active-high it means "off".
+        sw_low = sw_values.get(bcm) if isinstance(bcm, int) else None
+        sw_on  = None
+        if sw_low is not None:
+            sw_on = sw_low if not active_high else (not sw_low)
+
+        # Actual kernel pin level (independent of software).
+        pin_info = pins.get(str(bcm), {}) if isinstance(bcm, int) else {}
+        pin_level = pin_info.get("value")  # 0=lo, 1=hi
+        kernel_on = None
+        if pin_level is not None:
+            # active-low: pin LOW (0) means on
+            # active-high: pin HIGH (1) means on
+            kernel_on = (pin_level == 0) if not active_high else (pin_level == 1)
+
+        consistent = (sw_on == kernel_on) if (sw_on is not None and kernel_on is not None) else None
+
+        devices_out.append({
+            "id": d.get("id"),
+            "name": d.get("name"),
+            "atem_input": d.get("input"),
+            "atem_me": d.get("me", 1),
+            "state": state,             # pgm | pvw | safe | offline | unknown
+            "out_gpio": bcm,
+            "out_trigger": d.get("out_trigger", "pgm"),
+            "out_active_high": active_high,
+            "sw_on": sw_on,             # what code thinks (True=lamp should be on)
+            "pin_level": pin_level,     # 0=lo, 1=hi, None=not claimed
+            "kernel_on": kernel_on,     # True if pin's physical level matches "on" for this polarity
+            "consistent": consistent,   # True if sw and kernel agree
+        })
+
+    return {
+        "atem": {
+            "connected": atem.get("connected", False),
+            "pgm": atem.get("pgm"),
+            "pvw": atem.get("pvw"),
+            "aux": atem.get("aux"),
+            "error": atem.get("error"),
+        },
+        "devices": devices_out,
+        "claimed_bcms": list(TALLY_OUTPUTS._bcms),  # type: ignore[attr-defined]
+        "tally_out_error": TALLY_OUTPUTS._error,    # type: ignore[attr-defined]
+    }
+
+
 # ---------------------------------------------------------------------------
 # pi-gpio-watcher service control (used by Tally tab to free GPIO pins
 # so Companion's RPi_GPIO module can drive them as tally outputs).
@@ -773,6 +836,9 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return
         elif self.path == "/gpio":
             self._send_json(parse_gpio_state())
+            return
+        elif self.path == "/tally-diagnostics":
+            self._send_json(build_tally_diagnostics())
             return
         elif self.path == "/numato":
             self._send_json(get_numato_state())
