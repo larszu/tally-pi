@@ -384,7 +384,7 @@ class TallyOutputs:
         """Claim the given BCM pins as open-drain outputs. Idempotent."""
         try:
             import gpiod
-            from gpiod.line import Direction, Drive, Value
+            from gpiod.line import Bias, Direction, Drive, Value
         except Exception as e:
             with self._lock:
                 self._error = f"gpiod not available: {e}"
@@ -405,11 +405,16 @@ class TallyOutputs:
                 self._error = None
                 return
             try:
+                # bias=DISABLED is critical on RP1 (Pi 5): without it the
+                # kernel falls back to input-pull-up in the "released" state,
+                # which is NOT high-impedance — tally senders see the pull-up
+                # as a closed contact and the lamp stays on forever.
                 config = {
                     b: gpiod.LineSettings(
                         direction=Direction.OUTPUT,
                         drive=Drive.OPEN_DRAIN,
-                        output_value=Value.ACTIVE,  # HIGH = Hi-Z = open
+                        bias=Bias.DISABLED,
+                        output_value=Value.ACTIVE,  # released, true Hi-Z
                     ) for b in bcms
                 }
                 self._req = gpiod.request_lines(
