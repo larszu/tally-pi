@@ -453,17 +453,17 @@ class TallyOutputs:
         self._values = {}
 
     def _write(self, bcm, on):
-        # Update internal state, then push ALL claimed lines as an ORDERED
-        # LIST (matching self._bcms). The dict form of set_values() has
-        # been observed on Pi 5 / libgpiod 2.2.0 to silently drop updates
-        # for some line offsets (e.g. BCM 20 ends up sticking on HIGH).
-        # The list form matches the native C-API one-to-one and is reliable.
+        # Update internal state, then push ALL claimed lines one-by-one
+        # using per-offset set_value(). set_values(dict) was silently
+        # dropping updates for some offsets on this Pi 5 / libgpiod 2.2.0
+        # (BCM 20 reproducibly stuck at HIGH after a successful API call).
+        # set_values(list) is not supported by the binding ("list indices
+        # must be integers or slices, not Value"). Per-line set_value()
+        # works reliably because each call is a separate kernel transaction.
         self._values[bcm] = bool(on)
-        values_list = [
-            (self._value_on if self._values[b] else self._value_off)
-            for b in self._bcms
-        ]
-        self._req.set_values(values_list)
+        for b in self._bcms:
+            v = self._value_on if self._values[b] else self._value_off
+            self._req.set_value(b, v)
 
     def set(self, bcm, on, respect_pulse=False):
         """on=True drives pin LOW (relay-module IN low → relay engaged).
