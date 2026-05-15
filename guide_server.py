@@ -510,11 +510,13 @@ class TallyOutputs:
 
     @staticmethod
     def _pinctrl_set(bcm, high):
-        """Fallback path: use `pinctrl op <bcm> dh|dl` to force the level.
-        Required on this Pi 5 (libgpiod 2.2.0 set_value silently no-ops for
-        some pins). `pinctrl` is part of raspi-utils and ships with Raspberry
-        Pi OS by default."""
-        cmd = ["pinctrl", "op", str(int(bcm)), "dh" if high else "dl"]
+        """Fallback path: use `pinctrl set <bcm> dh|dl` to force the level.
+        Required on this Pi 5 (libgpiod 2.2.0 set_value occasionally
+        no-ops, or external load briefly fights the push-pull driver).
+        `pinctrl` ships with raspi-utils on Raspberry Pi OS by default.
+        Note: the subcommand is `set`, not `op` — `op` is the *value*
+        the get-form prints to mean "output function"."""
+        cmd = ["pinctrl", "set", str(int(bcm)), "dh" if high else "dl"]
         subprocess.run(cmd, check=True, timeout=2.0,
                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
