@@ -84,15 +84,15 @@ adduser "$TARGET_USER" gpio    >/dev/null 2>&1 || true
 
 log "4/7 Deploying files to /opt/pi-guide and /opt/pi-status"
 install -d /opt/pi-guide /opt/pi-status
-install -m 755 pi-tally.py         /opt/pi-guide/
-install -m 755 atem_watcher.py     /opt/pi-guide/
+install -m 644 setup-guide.html    /opt/pi-guide/
+install -m 755 guide_server.py     /opt/pi-guide/
+install -m 755 gpio_watcher.py     /opt/pi-guide/
 install -m 755 numato_watcher.py   /opt/pi-guide/
+install -m 755 atem_watcher.py     /opt/pi-guide/
 install -m 755 pi_status.py        /opt/pi-status/
-[ -f /opt/pi-guide/tally.json ] || echo '{"atem_ip":"","devices":[]}' > /opt/pi-guide/tally.json
-chmod 664 /opt/pi-guide/tally.json
-
-# Clean up files from previous installations (old buggy stack)
-rm -f /opt/pi-guide/guide_server.py /opt/pi-guide/gpio_watcher.py /opt/pi-guide/setup-guide.html /opt/pi-guide/bindings.json
+[ -f /opt/pi-guide/bindings.json ] || echo '[]' > /opt/pi-guide/bindings.json
+[ -f /opt/pi-guide/tally.json ]   || echo '{"atem_ip":"","devices":[]}' > /opt/pi-guide/tally.json
+chmod 664 /opt/pi-guide/bindings.json /opt/pi-guide/tally.json
 
 # Optional: build the pi-status venv if it doesn't exist yet. pi-status itself
 # stays disabled — enable manually once an OLED is connected.
@@ -103,16 +103,13 @@ if [ ! -d /opt/pi-status/venv ]; then
 fi
 
 log "5/7 Installing systemd units and udev rules"
-install -m 644 pi-tally.service          /etc/systemd/system/
+install -m 644 pi-guide.service          /etc/systemd/system/
+install -m 644 pi-gpio-watcher.service   /etc/systemd/system/
 install -m 644 pi-numato-watcher.service /etc/systemd/system/
 install -m 644 pi-atem-watcher.service   /etc/systemd/system/
 install -m 644 pi-status.service         /etc/systemd/system/
 install -m 644 10-modesetting.conf       /etc/X11/xorg.conf.d/
 install -m 644 99-numato.rules           /etc/udev/rules.d/
-# Remove old units if upgrading from the previous stack
-systemctl stop pi-guide pi-gpio-watcher 2>/dev/null || true
-systemctl disable pi-guide pi-gpio-watcher 2>/dev/null || true
-rm -f /etc/systemd/system/pi-guide.service /etc/systemd/system/pi-gpio-watcher.service
 udevadm control --reload-rules || true
 udevadm trigger --subsystem-match=tty   || true
 systemctl daemon-reload
@@ -167,29 +164,35 @@ chown "$TARGET_USER:$TARGET_USER" "$HOME_DIR/.config/openbox/rc.xml"
 
 log "7/7 Enabling services"
 # Companion may or may not be present (image vs. plain Raspberry Pi OS).
-systemctl enable companion         >/dev/null 2>&1 || true
-systemctl enable pi-tally          >/dev/null 2>&1 || true
-systemctl enable pi-atem-watcher   >/dev/null 2>&1 || true
-systemctl enable pi-numato-watcher >/dev/null 2>&1 || true
-systemctl enable getty@tty1        >/dev/null 2>&1 || true
+systemctl enable companion                >/dev/null 2>&1 || true
+systemctl enable pi-guide                 >/dev/null 2>&1 || true
+# pi-guide owns GPIO OUTPUTS (Tally-Lampen, open-drain) and pi-gpio-watcher
+# owns GPIO INPUTS (Trigger-Taster). Both run together — the config UI
+# enforces disjoint pins.
+systemctl enable pi-gpio-watcher          >/dev/null 2>&1 || true
+systemctl enable pi-atem-watcher          >/dev/null 2>&1 || true
+systemctl enable pi-numato-watcher        >/dev/null 2>&1 || true
+systemctl enable getty@tty1               >/dev/null 2>&1 || true
 # pi-status stays disabled until an OLED is physically present
-systemctl disable pi-status        >/dev/null 2>&1 || true
+systemctl disable pi-status               >/dev/null 2>&1 || true
 
+# Restart what's safe to bounce now (without flapping Companion / kiosk).
+systemctl restart pi-guide          || true
+systemctl restart pi-gpio-watcher   || true
 systemctl restart pi-atem-watcher   || true
-systemctl restart pi-tally          || true
 systemctl restart pi-numato-watcher || true
 
 PI_IP="$(hostname -I | awk '{print $1}')"
 log "=================================================================="
 log "  Installation complete."
-log "  pi-tally UI: http://${PI_IP}:8080/"
-log "  Companion:   http://${PI_IP}:8000/"
-log "  Exit kiosk:  Ctrl+Alt+Q"
+log "  Setup-Guide:  http://${PI_IP}:8080/"
+log "  Companion:    http://${PI_IP}:8000/"
+log "  Exit kiosk:   Ctrl+Alt+Q"
 log ""
 log "  Next steps:"
-log "    1. http://${PI_IP}:8080/ öffnen"
-log "    2. ATEM-IP eintragen + Speichern"
-log "    3. Geräte anlegen — pro Gerät Tally-Out-GPIO und/oder Trigger-In-GPIO"
+log "    1. Setup-Guide öffnen → Tab 'Tally'"
+log "    2. ATEM-IP eintragen → 'Übernehmen'"
+log "    3. Geräte (Kameras) anlegen, pro Gerät GPIO-Pin wählen"
 log ""
 if [ -n "${REBOOT_NEEDED:-}" ]; then
     log "  REBOOT REQUIRED to activate I²C. Run: sudo reboot"
