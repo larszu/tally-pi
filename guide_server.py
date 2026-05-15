@@ -385,18 +385,25 @@ class TallyOutputs:
     def configure(self, bcms):
         """Claim the given BCM pins as tally outputs (idempotent).
 
-        Each pin gets its own gpiod request so we can reconfigure individual
-        pins without touching the others. The two states are:
+        Each pin gets its own gpiod request so we can toggle them
+        independently. The two states are:
 
-          OFF  → Direction.INPUT  + Bias.DISABLED                (true Hi-Z)
-          ON   → Direction.OUTPUT + Drive.PUSH_PULL + Value.LOW  (hard 0 V)
+          OFF  → Direction.OUTPUT + Drive.PUSH_PULL + Value.ACTIVE  (HIGH = +3.3 V)
+          ON   → Direction.OUTPUT + Drive.PUSH_PULL + Value.INACTIVE (LOW  = 0 V)
 
-        We deliberately do NOT use Drive.OPEN_DRAIN: the RP1 pinctrl driver
-        on the Pi 5 implements the "released" state of an open-drain output
-        as INPUT with internal pull-up, which leaks ~3 V through the pin
-        and keeps passive tally contact-sense circuits permanently "closed".
-        Manual reconfigure between INPUT/no-pull and OUTPUT/LOW avoids this
-        entirely.
+        The Pi 5 actively drives 3.3 V in the OFF state instead of going
+        Hi-Z. With a true Hi-Z idle state, common active-low relay modules
+        (1 kΩ pull-up to +5 V at the IN pin via the optocoupler LED) leak
+        enough current through the Pi's ESD-clamp diodes to keep the LED
+        dimly lit, which keeps the relay permanently energized — even
+        though pinctrl reports `ip pn`. Driving 3.3 V actively cuts the
+        LED current to <0.5 mA, well below the optocoupler trigger.
+
+        Trade-off: this no longer works for direct passive contact-sense
+        circuits (e.g. Copperhead Tally In wired straight to a GPIO
+        without a relay/optocoupler buffer), where the +3.3 V is read as
+        "closed". For those, put a relay or optocoupler module between
+        the Pi and the load.
         """
         try:
             import gpiod
@@ -411,7 +418,6 @@ class TallyOutputs:
         with self._lock:
             if bcms == self._bcms and self._reqs:
                 return  # no change
-            # Cancel any pending pulses on pins we're about to release
             for t in self._pulse_timers.values():
                 try: t.cancel()
                 except Exception: pass
@@ -421,23 +427,24 @@ class TallyOutputs:
                 self._error = None
                 return
 
-            self._settings_off = gpiod.LineSettings(
-                direction=Direction.INPUT,
-                bias=Bias.DISABLED,
-            )
-            self._settings_on = gpiod.LineSettings(
+            # Always OUTPUT/PUSH_PULL — only the value differs between
+            # OFF (HIGH/3.3 V) and ON (LOW/0 V). We use set_value() to
+            # toggle, which is faster than reconfigure_lines().
+            base_settings = gpiod.LineSettings(
                 direction=Direction.OUTPUT,
                 drive=Drive.PUSH_PULL,
                 bias=Bias.DISABLED,
-                output_value=Value.INACTIVE,  # physical LOW
+                output_value=Value.ACTIVE,  # HIGH = idle = relay off
             )
+            self._value_off = Value.ACTIVE
+            self._value_on  = Value.INACTIVE
 
             failed = []
             for b in bcms:
                 try:
                     req = gpiod.request_lines(
                         GPIO_CHIP, consumer=TALLY_OUT_CONSUMER,
-                        config={b: self._settings_off},
+                        config={b: base_settings},
                     )
                     self._reqs[b] = req
                     self._bcms.append(b)
@@ -450,7 +457,7 @@ class TallyOutputs:
                 print(f"[tally-out] {self._error}", flush=True)
             else:
                 self._error = None
-            print(f"[tally-out] claimed GPIOs (input/no-pull idle): {self._bcms}",
+            print(f"[tally-out] claimed GPIOs (push-pull, idle=HIGH): {self._bcms}",
                   flush=True)
 
     def _release_locked(self):
@@ -462,10 +469,11 @@ class TallyOutputs:
         self._values = {}
 
     def _write(self, bcm, on):
-        # Reconfigure JUST this pin's direction/drive — others untouched.
+        # Toggle the output value. No reconfigure needed because the line
+        # is permanently configured as OUTPUT/PUSH_PULL — only the
+        # logical value flips between ACTIVE (HIGH) and INACTIVE (LOW).
         req = self._reqs[bcm]
-        settings = self._settings_on if on else self._settings_off
-        req.reconfigure_lines({bcm: settings})
+        req.set_value(bcm, self._value_on if on else self._value_off)
         self._values[bcm] = bool(on)
 
     def set(self, bcm, on, respect_pulse=False):
