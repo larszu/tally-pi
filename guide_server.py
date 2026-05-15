@@ -374,14 +374,30 @@ TALLY_OUT_CONSUMER = "pi-tally-out"
 class TallyOutputs:
     def __init__(self):
         self._lock = threading.Lock()
-        self._req = None
+        self._reqs = {}        # bcm -> gpiod.LineRequest (one per pin)
         self._bcms = []        # active line offsets, in claim order
         self._values = {}      # bcm -> bool (True = active/LOW/bridged)
         self._pulse_timers = {}  # bcm -> threading.Timer
         self._error = None
+        self._settings_off = None
+        self._settings_on = None
 
     def configure(self, bcms):
-        """Claim the given BCM pins as open-drain outputs. Idempotent."""
+        """Claim the given BCM pins as tally outputs (idempotent).
+
+        Each pin gets its own gpiod request so we can reconfigure individual
+        pins without touching the others. The two states are:
+
+          OFF  → Direction.INPUT  + Bias.DISABLED                (true Hi-Z)
+          ON   → Direction.OUTPUT + Drive.PUSH_PULL + Value.LOW  (hard 0 V)
+
+        We deliberately do NOT use Drive.OPEN_DRAIN: the RP1 pinctrl driver
+        on the Pi 5 implements the "released" state of an open-drain output
+        as INPUT with internal pull-up, which leaks ~3 V through the pin
+        and keeps passive tally contact-sense circuits permanently "closed".
+        Manual reconfigure between INPUT/no-pull and OUTPUT/LOW avoids this
+        entirely.
+        """
         try:
             import gpiod
             from gpiod.line import Bias, Direction, Drive, Value
@@ -393,7 +409,7 @@ class TallyOutputs:
 
         bcms = sorted({int(b) for b in bcms if isinstance(b, int) and 0 <= b <= 27})
         with self._lock:
-            if bcms == self._bcms and self._req is not None:
+            if bcms == self._bcms and self._reqs:
                 return  # no change
             # Cancel any pending pulses on pins we're about to release
             for t in self._pulse_timers.values():
@@ -404,59 +420,62 @@ class TallyOutputs:
             if not bcms:
                 self._error = None
                 return
-            try:
-                # bias=DISABLED is critical on RP1 (Pi 5): without it the
-                # kernel falls back to input-pull-up in the "released" state,
-                # which is NOT high-impedance — tally senders see the pull-up
-                # as a closed contact and the lamp stays on forever.
-                config = {
-                    b: gpiod.LineSettings(
-                        direction=Direction.OUTPUT,
-                        drive=Drive.OPEN_DRAIN,
-                        bias=Bias.DISABLED,
-                        output_value=Value.ACTIVE,  # released, true Hi-Z
-                    ) for b in bcms
-                }
-                self._req = gpiod.request_lines(
-                    GPIO_CHIP, consumer=TALLY_OUT_CONSUMER, config=config,
-                )
-                self._bcms = bcms
-                self._values = {b: False for b in bcms}
-                self._error = None
-                print(f"[tally-out] claimed open-drain GPIOs: {bcms}", flush=True)
-            except Exception as e:
-                self._error = f"claim failed: {e}"
-                self._req = None
-                self._bcms = []
-                self._values = {}
+
+            self._settings_off = gpiod.LineSettings(
+                direction=Direction.INPUT,
+                bias=Bias.DISABLED,
+            )
+            self._settings_on = gpiod.LineSettings(
+                direction=Direction.OUTPUT,
+                drive=Drive.PUSH_PULL,
+                bias=Bias.DISABLED,
+                output_value=Value.INACTIVE,  # physical LOW
+            )
+
+            failed = []
+            for b in bcms:
+                try:
+                    req = gpiod.request_lines(
+                        GPIO_CHIP, consumer=TALLY_OUT_CONSUMER,
+                        config={b: self._settings_off},
+                    )
+                    self._reqs[b] = req
+                    self._bcms.append(b)
+                    self._values[b] = False
+                except Exception as e:
+                    failed.append((b, str(e)))
+
+            if failed:
+                self._error = f"some pins failed: {failed}"
                 print(f"[tally-out] {self._error}", flush=True)
+            else:
+                self._error = None
+            print(f"[tally-out] claimed GPIOs (input/no-pull idle): {self._bcms}",
+                  flush=True)
 
     def _release_locked(self):
-        if self._req is not None:
-            try: self._req.release()
+        for req in self._reqs.values():
+            try: req.release()
             except Exception: pass
-            self._req = None
+        self._reqs = {}
         self._bcms = []
         self._values = {}
 
     def _write(self, bcm, on):
-        from gpiod.line import Value
-        # open-drain: ACTIVE/HIGH = release (Hi-Z), INACTIVE/LOW = pull GND
-        self._req.set_value(bcm, Value.INACTIVE if on else Value.ACTIVE)
+        # Reconfigure JUST this pin's direction/drive — others untouched.
+        req = self._reqs[bcm]
+        settings = self._settings_on if on else self._settings_off
+        req.reconfigure_lines({bcm: settings})
         self._values[bcm] = bool(on)
 
     def set(self, bcm, on, respect_pulse=False):
-        """on=True bridges pin to GND; on=False releases pin to Hi-Z (open).
-
-        respect_pulse=True: do nothing if a pulse timer is currently active
-        on this pin (used by the auto-driver so test-pulses stay visible).
-        """
+        """on=True drives pin LOW (contact closed); on=False = Hi-Z (open)."""
         try:
             import gpiod  # noqa: F401
         except Exception as e:
             return False, f"gpiod not available: {e}"
         with self._lock:
-            if self._req is None or bcm not in self._values:
+            if bcm not in self._reqs:
                 return False, f"GPIO{bcm} not configured as tally output"
             if respect_pulse and bcm in self._pulse_timers:
                 return True, "skipped (pulse active)"
