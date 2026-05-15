@@ -73,15 +73,21 @@ def _device_to_binding(d):
                   "aux": d.get("in_atem_aux"),
                   "source": src}
     elif action_type == "companion":
-        action = {"kind": "press",
+        mode = d.get("in_companion_mode", "tap")
+        kind = "down_up" if mode == "hold" else "press"
+        action = {"kind": kind,
                   "page":   d.get("in_companion_page", 1),
                   "row":    d.get("in_companion_row", 0),
                   "column": d.get("in_companion_col", 0)}
     else:
         return None
+    # down_up needs both edges; otherwise honor the user's choice.
+    edge = d.get("in_edge", "falling")
+    if action.get("kind") == "down_up":
+        edge = "both"
     return {
         "bcm": bcm,
-        "trigger_edge": d.get("in_edge", "falling"),
+        "trigger_edge": edge,
         "enabled": True,
         "bias": d.get("in_bias", "pull-up"),
         "debounce_ms": int(d.get("in_debounce_ms", 20)),

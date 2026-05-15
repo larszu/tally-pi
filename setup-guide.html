@@ -1062,6 +1062,10 @@ var qrcode=function(){var t=function(t,r){var e=t,n=g[r],o=null,i=0,a=null,u=[],
       ['atem_aux',  'ATEM direkt: Aux setzen'],
       ['companion', 'Companion-Button drücken'],
     ];
+    const IN_COMPANION_MODES = [
+      ['tap',  'Tap (kurzer Druck — one-shot)'],
+      ['hold', 'Halten (down beim Drücken, up beim Loslassen)'],
+    ];
 
     function setTestBtnVisual(btn, latched){
       if (!btn) return;
@@ -1156,6 +1160,10 @@ var qrcode=function(){var t=function(t,r){var e=t,n=g[r],o=null,i=0,a=null,u=[],
               <label style="font-size:12px">Aktion<br>
                 <select data-f="in_action_type" style="width:100%">${optionsFrom(IN_ACTIONS, d.in_action_type||'none')}</select>
               </label>
+              <label style="font-size:12px" title="Mindestzeit zwischen zwei Flanken — Prelltaster ggf. höher setzen">
+                Debounce (ms)<br>
+                <input data-f="in_debounce_ms" type="number" min="0" max="2000" step="5" value="${Number(d.in_debounce_ms)||20}" style="width:100%">
+              </label>
             </div>
             <!-- conditional ATEM-Aux row -->
             <div data-show="atem_aux" style="display:none;margin-top:8px;padding:8px;background:#0f172a;border-radius:4px">
@@ -1181,6 +1189,19 @@ var qrcode=function(){var t=function(t,r){var e=t,n=g[r],o=null,i=0,a=null,u=[],
                   <input data-f="in_companion_col" type="number" min="0" max="99" value="${Number(d.in_companion_col)||0}" style="width:100%">
                 </label>
               </div>
+              <div style="margin-top:6px">
+                <label style="font-size:12px">Verhalten<br>
+                  <select data-f="in_companion_mode" style="width:100%">${optionsFrom(IN_COMPANION_MODES, d.in_companion_mode||'tap')}</select>
+                </label>
+              </div>
+            </div>
+            <!-- Trigger-Test buttons (work for both action types) -->
+            <div data-show-when-action style="display:none;margin-top:8px;gap:6px;flex-wrap:wrap;align-items:center">
+              <button type="button" class="btn" data-act="test-in-dry" ${inGpio===''?'disabled':''}
+                title="Loggt das Event nur — schickt KEIN Kommando an ATEM/Companion">🔍 Dry-Run</button>
+              <button type="button" class="btn" data-act="test-in-fire" ${inGpio===''?'disabled':''}
+                title="Schickt das echte Kommando an ATEM/Companion">⚡ Trigger feuern</button>
+              <span data-role="test-in-status" class="hint" style="font-size:11px;min-height:14px"></span>
             </div>
           </details>
         `;
@@ -1191,6 +1212,10 @@ var qrcode=function(){var t=function(t,r){var e=t,n=g[r],o=null,i=0,a=null,u=[],
           const t = devices[i].in_action_type || 'none';
           card.querySelectorAll('[data-show]').forEach(el => {
             el.style.display = (el.dataset.show === t) ? '' : 'none';
+          });
+          // Test buttons are visible whenever an action is configured.
+          card.querySelectorAll('[data-show-when-action]').forEach(el => {
+            el.style.display = (t !== 'none') ? 'flex' : 'none';
           });
         };
         showActionDetails();
@@ -1205,9 +1230,12 @@ var qrcode=function(){var t=function(t,r){var e=t,n=g[r],o=null,i=0,a=null,u=[],
             const f = el.dataset.f;
             const v = el.value;
             if (f === 'input' || f === 'me' || f === 'in_atem_aux' ||
-                f === 'in_companion_page' || f === 'in_companion_row' || f === 'in_companion_col') {
-              const def = (f === 'me' || f === 'in_atem_aux' || f === 'in_companion_page') ? 1 : 0;
-              devices[i][f] = parseInt(v, 10) || def;
+                f === 'in_companion_page' || f === 'in_companion_row' || f === 'in_companion_col' ||
+                f === 'in_debounce_ms') {
+              const def = (f === 'me' || f === 'in_atem_aux' || f === 'in_companion_page') ? 1
+                       : (f === 'in_debounce_ms') ? 20 : 0;
+              const n = parseInt(v, 10);
+              devices[i][f] = (isNaN(n) ? def : n);
             } else if (f === 'aux') {
               devices[i].aux = (v||'').split(',')
                 .map(s => parseInt(s.trim(),10))
@@ -1242,6 +1270,45 @@ var qrcode=function(){var t=function(t,r){var e=t,n=g[r],o=null,i=0,a=null,u=[],
         card.querySelector('[data-act=refresh-qr]').addEventListener('click', () => {
           renderQr(qrBox, baseUrl() + '/tally/' + encodeURIComponent(String(Number(devices[i].input) || 0)));
         });
+        // Trigger-Test (input): Dry-Run + Fire
+        const runInputTest = async (dryRun) => {
+          const dev = devices[i];
+          const st = card.querySelector('[data-role=test-in-status]');
+          if (!dev.id) { st.textContent = '✗ erst speichern'; return; }
+          if (dev.in_gpio == null) { st.textContent = '✗ kein GPIO'; return; }
+          if (!dev.in_action_type || dev.in_action_type === 'none') {
+            st.textContent = '✗ keine Aktion gewählt'; return;
+          }
+          st.textContent = dryRun ? '… dry-run' : '… feuere';
+          try {
+            const r = await fetch('/input-test', {
+              method:'POST', headers:{'Content-Type':'application/json'},
+              body: JSON.stringify({ id: dev.id, dry_run: !!dryRun,
+                                     edge: dev.in_edge === 'rising' ? 'rising' : 'falling' }),
+            });
+            const j = await r.json();
+            if (j.ok && j.fired === false && j.dry_run) {
+              st.textContent = '🔍 geloggt (Live-Log)';
+            } else if (j.ok && j.fired) {
+              st.textContent = '⚡ gefeuert';
+            } else if (j.ok) {
+              st.textContent = j.msg || 'ok';
+            } else {
+              st.textContent = '✗ ' + (j.error || 'Fehler');
+            }
+            setTimeout(() => { st.textContent = ''; }, 2500);
+          } catch (e) {
+            st.textContent = '✗ ' + (e.message || e);
+          }
+        };
+        const dryBtn = card.querySelector('[data-act=test-in-dry]');
+        if (dryBtn) dryBtn.addEventListener('click', () => runInputTest(true));
+        const fireBtn = card.querySelector('[data-act=test-in-fire]');
+        if (fireBtn) fireBtn.addEventListener('click', () => {
+          if (!confirm('Trigger wirklich feuern? Schickt ein echtes Kommando an ATEM/Companion.')) return;
+          runInputTest(false);
+        });
+
         const testBtn = card.querySelector('[data-act=test-out]');
         testBtn.addEventListener('click', async () => {
           const bcm = devices[i].out_gpio;
@@ -1304,6 +1371,8 @@ var qrcode=function(){var t=function(t,r){var e=t,n=g[r],o=null,i=0,a=null,u=[],
         in_companion_page: 1,
         in_companion_row: 0,
         in_companion_col: 0,
+        in_companion_mode: 'tap',
+        in_debounce_ms: 20,
       };
     }
 
@@ -1357,6 +1426,9 @@ var qrcode=function(){var t=function(t,r){var e=t,n=g[r],o=null,i=0,a=null,u=[],
           in_companion_page: Number(d.in_companion_page) || 1,
           in_companion_row: Number(d.in_companion_row) || 0,
           in_companion_col: Number(d.in_companion_col) || 0,
+          in_companion_mode: (d.in_companion_mode === 'hold') ? 'hold' : 'tap',
+          in_debounce_ms: (typeof d.in_debounce_ms === 'number' && d.in_debounce_ms >= 0)
+                        ? d.in_debounce_ms : 20,
         })) : [];
         render();
       } catch(e) {

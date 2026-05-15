@@ -349,6 +349,13 @@ def validate_tally_config(cfg):
                 v = d.get(f, 0)
                 if not isinstance(v, int) or v < 0 or v > 99:
                     raise ValueError(f"{f} must be int 0..99")
+            mode = d.get("in_companion_mode", "tap")
+            if mode not in ("tap", "hold"):
+                raise ValueError("in_companion_mode must be 'tap' or 'hold'")
+        # Optional per-binding debounce override (libgpiod ms).
+        deb = d.get("in_debounce_ms")
+        if deb is not None and (not isinstance(deb, int) or deb < 0 or deb > 2000):
+            raise ValueError("in_debounce_ms must be int 0..2000 or null")
 
 
 def get_atem_state():
@@ -1086,6 +1093,9 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         if self.path.startswith("/tally-out/"):
             self._handle_tally_out_post()
             return
+        if self.path == "/input-test":
+            self._handle_input_test()
+            return
         if self.path == "/service/pi-gpio-watcher":
             body = self._read_body()
             try:
@@ -1142,6 +1152,113 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         log_event("tally-out", bcm=bcm, action=action, ok=ok, msg=msg)
         self._send_json({"ok": ok, "message": msg, "state": TALLY_OUTPUTS.state()},
                         code=200 if ok else 409)
+
+    def _handle_input_test(self):
+        """Simulate a trigger-button press for a device.
+
+        Body: {"id": "<device_id>", "dry_run": bool, "edge": "falling"|"rising"}
+        dry_run=true  → log an `input` event but don't fire the action
+        dry_run=false → fire the configured action exactly as the watcher would
+
+        Either way the event lands in the Live-Tally-Log so the user can
+        verify the wiring/config without touching the physical button.
+        """
+        import urllib.request, urllib.parse
+        body = self._read_body()
+        try:
+            data = json.loads(body or b"{}")
+        except Exception as e:
+            self._send_json({"ok": False, "error": f"bad JSON: {e}"}, code=400)
+            return
+        did = data.get("id")
+        dry = bool(data.get("dry_run", True))
+        edge = data.get("edge", "falling")
+        if edge not in ("falling", "rising"):
+            self._send_json({"ok": False, "error": "edge must be falling/rising"}, code=400)
+            return
+        cfg = load_tally_config()
+        dev = next((d for d in (cfg.get("devices") or []) if d.get("id") == did), None)
+        if not dev:
+            self._send_json({"ok": False, "error": f"device {did!r} not found"}, code=404)
+            return
+        bcm = dev.get("in_gpio")
+        if not isinstance(bcm, int):
+            self._send_json({"ok": False, "error": "device has no in_gpio configured"}, code=400)
+            return
+        act = dev.get("in_action_type", "none")
+        label = dev.get("name") or did
+        trig = dev.get("in_edge", "falling")
+        if trig != "both" and trig != edge:
+            log_event("input", bcm=bcm, edge=edge, label=label,
+                      action="ignored", reason=f"trigger={trig}",
+                      dry_run=dry, simulated=True)
+            self._send_json({"ok": True, "fired": False,
+                             "msg": f"edge {edge} ignored (trigger={trig})"})
+            return
+        if act == "none":
+            log_event("input", bcm=bcm, edge=edge, label=label,
+                      action="none", dry_run=dry, simulated=True)
+            self._send_json({"ok": True, "fired": False, "msg": "no action configured"})
+            return
+        # Plan the action.
+        plan = {"label": label, "bcm": bcm, "edge": edge, "simulated": True,
+                "dry_run": dry}
+        if act == "atem_aux":
+            aux = int(dev.get("in_atem_aux") or 0)
+            src = dev.get("in_atem_source")
+            if not isinstance(src, int):
+                src = dev.get("input")
+            plan.update(action="atem_aux", aux=aux, source=src)
+        elif act == "companion":
+            mode = dev.get("in_companion_mode", "tap")
+            sub = "press"
+            if mode == "hold":
+                sub = "down" if edge == "falling" else "up"
+            plan.update(action="companion_" + sub,
+                        page=dev.get("in_companion_page", 1),
+                        row=dev.get("in_companion_row", 0),
+                        column=dev.get("in_companion_col", 0))
+        else:
+            self._send_json({"ok": False, "error": f"unknown action_type {act!r}"}, code=400)
+            return
+        if dry:
+            log_event("input", **plan, ok=True)
+            self._send_json({"ok": True, "fired": False, "dry_run": True,
+                             "msg": "dry-run logged"})
+            return
+        # Real fire: replicate the watcher's behavior here.
+        try:
+            if act == "atem_aux":
+                if not plan["aux"] or not isinstance(plan["source"], int):
+                    raise RuntimeError("missing aux/source")
+                sock_path = Path("/run/pi-guide/atem-cmd.sock")
+                if not sock_path.exists():
+                    raise RuntimeError("atem-cmd socket not present (atem watcher down?)")
+                s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+                s.settimeout(2.0)
+                try:
+                    s.connect(str(sock_path))
+                    cmd = {"cmd": "set_aux", "aux": plan["aux"], "source": plan["source"]}
+                    s.sendall((json.dumps(cmd) + "\n").encode("utf-8"))
+                    resp = s.recv(4096).decode("utf-8", errors="replace").strip()
+                    if resp:
+                        j = json.loads(resp.split("\n", 1)[0])
+                        if not j.get("ok"):
+                            raise RuntimeError(j.get("error", "atem cmd rejected"))
+                finally:
+                    try: s.close()
+                    except Exception: pass
+            elif act == "companion":
+                sub = plan["action"].split("_", 1)[1]
+                url = f"http://localhost:8000/api/location/{plan['page']}/{plan['row']}/{plan['column']}/{sub}"
+                req = urllib.request.Request(url, data=b"", method="POST")
+                with urllib.request.urlopen(req, timeout=5):
+                    pass
+            log_event("input", **plan, ok=True)
+            self._send_json({"ok": True, "fired": True, "msg": "fired"})
+        except Exception as e:
+            log_event("input", **plan, ok=False, error=str(e))
+            self._send_json({"ok": False, "fired": False, "error": str(e)}, code=502)
 
     def log_message(self, *a, **k):
         pass
