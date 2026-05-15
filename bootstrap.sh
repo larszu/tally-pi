@@ -11,11 +11,18 @@
 #   git clone https://github.com/larszu/tw-broadcast-interface.git
 #   cd tw-broadcast-interface && sudo bash bootstrap.sh
 #
-# The script is idempotent: re-running it updates to the latest main.
+# To deploy from a non-main branch (e.g. while testing a feature):
+#
+#   curl -fsSL https://raw.githubusercontent.com/larszu/tw-broadcast-interface/<branch>/bootstrap.sh \
+#     | sudo REPO_BRANCH=<branch> bash
+#
+# The script is idempotent: re-running it updates to the current
+# REPO_BRANCH (default: main).
 
 set -euo pipefail
 
 REPO_URL="${REPO_URL:-https://github.com/larszu/tw-broadcast-interface.git}"
+REPO_BRANCH="${REPO_BRANCH:-main}"
 REPO_DIR="${REPO_DIR:-/opt/tw-broadcast-interface}"
 TARGET_USER="${TARGET_USER:-talentwerk}"
 
@@ -37,12 +44,13 @@ apt-get install -y --no-install-recommends \
     fonts-dejavu \
     onboard at-spi2-core
 
-log "2/7 Cloning / updating repository at $REPO_DIR"
+log "2/7 Cloning / updating repository at $REPO_DIR (branch=$REPO_BRANCH)"
 if [ -d "$REPO_DIR/.git" ]; then
-    git -C "$REPO_DIR" fetch --depth 1 origin main
-    git -C "$REPO_DIR" reset --hard origin/main
+    git -C "$REPO_DIR" fetch --depth 1 origin "$REPO_BRANCH"
+    git -C "$REPO_DIR" checkout -B "$REPO_BRANCH" "origin/$REPO_BRANCH"
+    git -C "$REPO_DIR" reset --hard "origin/$REPO_BRANCH"
 else
-    git clone --depth 1 "$REPO_URL" "$REPO_DIR"
+    git clone --depth 1 --branch "$REPO_BRANCH" "$REPO_URL" "$REPO_DIR"
 fi
 cd "$REPO_DIR"
 
