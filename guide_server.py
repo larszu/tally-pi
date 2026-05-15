@@ -374,36 +374,23 @@ TALLY_OUT_CONSUMER = "pi-tally-out"
 class TallyOutputs:
     def __init__(self):
         self._lock = threading.Lock()
-        self._reqs = {}        # bcm -> gpiod.LineRequest (one per pin)
+        self._req = None       # single multi-line gpiod.LineRequest
         self._bcms = []        # active line offsets, in claim order
         self._values = {}      # bcm -> bool (True = active/LOW/bridged)
         self._pulse_timers = {}  # bcm -> threading.Timer
         self._error = None
-        self._settings_off = None
-        self._settings_on = None
+        self._value_off = None
+        self._value_on = None
 
     def configure(self, bcms):
         """Claim the given BCM pins as tally outputs (idempotent).
 
-        Each pin gets its own gpiod request so we can toggle them
-        independently. The two states are:
+        Single multi-line gpiod request, push-pull output. Toggle between:
 
-          OFF  → Direction.OUTPUT + Drive.PUSH_PULL + Value.ACTIVE  (HIGH = +3.3 V)
-          ON   → Direction.OUTPUT + Drive.PUSH_PULL + Value.INACTIVE (LOW  = 0 V)
+          OFF  → output_value HIGH (+3.3 V), relay-module LED gets 0 mA → off
+          ON   → output_value LOW  (0 V),    relay-module LED gets ~3 mA → on
 
-        The Pi 5 actively drives 3.3 V in the OFF state instead of going
-        Hi-Z. With a true Hi-Z idle state, common active-low relay modules
-        (1 kΩ pull-up to +5 V at the IN pin via the optocoupler LED) leak
-        enough current through the Pi's ESD-clamp diodes to keep the LED
-        dimly lit, which keeps the relay permanently energized — even
-        though pinctrl reports `ip pn`. Driving 3.3 V actively cuts the
-        LED current to <0.5 mA, well below the optocoupler trigger.
-
-        Trade-off: this no longer works for direct passive contact-sense
-        circuits (e.g. Copperhead Tally In wired straight to a GPIO
-        without a relay/optocoupler buffer), where the +3.3 V is read as
-        "closed". For those, put a relay or optocoupler module between
-        the Pi and the load.
+        Single-request semantics, the standard libgpiod 2.x usage pattern.
         """
         try:
             import gpiod
@@ -416,7 +403,7 @@ class TallyOutputs:
 
         bcms = sorted({int(b) for b in bcms if isinstance(b, int) and 0 <= b <= 27})
         with self._lock:
-            if bcms == self._bcms and self._reqs:
+            if bcms == self._bcms and self._req is not None:
                 return  # no change
             for t in self._pulse_timers.values():
                 try: t.cancel()
@@ -427,9 +414,6 @@ class TallyOutputs:
                 self._error = None
                 return
 
-            # Always OUTPUT/PUSH_PULL — only the value differs between
-            # OFF (HIGH/3.3 V) and ON (LOW/0 V). We use set_value() to
-            # toggle, which is faster than reconfigure_lines().
             base_settings = gpiod.LineSettings(
                 direction=Direction.OUTPUT,
                 drive=Drive.PUSH_PULL,
@@ -439,56 +423,50 @@ class TallyOutputs:
             self._value_off = Value.ACTIVE
             self._value_on  = Value.INACTIVE
 
-            failed = []
-            for b in bcms:
-                try:
-                    req = gpiod.request_lines(
-                        GPIO_CHIP, consumer=TALLY_OUT_CONSUMER,
-                        config={b: base_settings},
-                    )
-                    self._reqs[b] = req
-                    self._bcms.append(b)
-                    self._values[b] = False
-                except Exception as e:
-                    failed.append((b, str(e)))
-
-            if failed:
-                self._error = f"some pins failed: {failed}"
-                print(f"[tally-out] {self._error}", flush=True)
-            else:
+            try:
+                # ONE request with all lines — standard libgpiod 2.x pattern.
+                config = {b: base_settings for b in bcms}
+                self._req = gpiod.request_lines(
+                    GPIO_CHIP, consumer=TALLY_OUT_CONSUMER, config=config,
+                )
+                self._bcms = list(bcms)
+                self._values = {b: False for b in bcms}
                 self._error = None
-            print(f"[tally-out] claimed GPIOs (push-pull, idle=HIGH): {self._bcms}",
-                  flush=True)
+                print(f"[tally-out] claimed GPIOs (single request, push-pull, idle=HIGH): {self._bcms}",
+                      flush=True)
+            except Exception as e:
+                self._error = f"claim failed: {e}"
+                self._req = None
+                self._bcms = []
+                self._values = {}
+                print(f"[tally-out] {self._error}", flush=True)
 
     def _release_locked(self):
-        for req in self._reqs.values():
-            try: req.release()
+        if self._req is not None:
+            try: self._req.release()
             except Exception: pass
-        self._reqs = {}
+        self._req = None
         self._bcms = []
         self._values = {}
 
     def _write(self, bcm, on):
-        # Toggle the output value. No reconfigure needed because the line
-        # is permanently configured as OUTPUT/PUSH_PULL — only the
-        # logical value flips between ACTIVE (HIGH) and INACTIVE (LOW).
-        req = self._reqs[bcm]
-        req.set_value(bcm, self._value_on if on else self._value_off)
+        # Single request – set_value writes to one line of the multi-line claim.
+        self._req.set_value(bcm, self._value_on if on else self._value_off)
         self._values[bcm] = bool(on)
 
     def set(self, bcm, on, respect_pulse=False):
-        """on=True drives pin LOW (contact closed); on=False = Hi-Z (open)."""
+        """on=True drives pin LOW (relay-module IN low → relay engaged).
+        on=False drives pin HIGH (idle, relay disengaged)."""
         try:
             import gpiod  # noqa: F401
         except Exception as e:
             return False, f"gpiod not available: {e}"
         with self._lock:
-            if bcm not in self._reqs:
+            if self._req is None or bcm not in self._values:
                 return False, f"GPIO{bcm} not configured as tally output"
             if respect_pulse and bcm in self._pulse_timers:
                 return True, "skipped (pulse active)"
             if self._values.get(bcm) == bool(on) and not respect_pulse:
-                # cancel any leftover pulse timer; value already matches
                 t = self._pulse_timers.pop(bcm, None)
                 if t:
                     try: t.cancel()
@@ -503,6 +481,8 @@ class TallyOutputs:
                         except Exception: pass
                 return True, "ok"
             except Exception as e:
+                # surface the error so the auto-driver loop can be debugged
+                print(f"[tally-out] set({bcm}, {on}) failed: {e}", flush=True)
                 return False, f"set failed: {e}"
 
     def pulse(self, bcm, ms):
