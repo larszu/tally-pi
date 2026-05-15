@@ -65,16 +65,18 @@ def _device_to_binding(d):
     action_type = d.get("in_action_type", "none")
     if action_type == "none":
         return None
-    if action_type == "atem_aux":
+    if action_type in ("atem_aux", "atem_pgm", "atem_pvw"):
         src = d.get("in_atem_source")
         if not isinstance(src, int):
             src = d.get("input")  # fall back to device's own ATEM input
         rel = d.get("in_atem_source_release")
         rel = rel if isinstance(rel, int) else None
-        action = {"kind": "atem_aux",
-                  "aux": d.get("in_atem_aux"),
+        action = {"kind": action_type,
                   "source": src,
-                  "source_release": rel}
+                  "source_release": rel,
+                  "me": int(d.get("me") or 1)}
+        if action_type == "atem_aux":
+            action["aux"] = d.get("in_atem_aux")
     elif action_type == "companion":
         mode = d.get("in_companion_mode", "tap")
         kind = "down_up" if mode == "hold" else "press"
@@ -86,11 +88,12 @@ def _device_to_binding(d):
         return None
     # Modes that need both edges (so we can fire press AND release):
     #   - companion down_up
-    #   - atem_aux with a release-source defined
+    #   - atem_aux/pgm/pvw with a release-source defined
     edge = d.get("in_edge", "falling")
-    needs_both = (action.get("kind") == "down_up"
-                  or (action.get("kind") == "atem_aux"
-                      and action.get("source_release") is not None))
+    kind = action.get("kind")
+    is_atem = kind in ("atem_aux", "atem_pgm", "atem_pvw")
+    needs_both = (kind == "down_up"
+                  or (is_atem and action.get("source_release") is not None))
     if needs_both:
         edge = "both"
     return {
@@ -212,8 +215,7 @@ def run_action(binding, event_type):
             log_event("input", bcm=bcm, edge=event_type, label=label,
                       action="companion_variable",
                       variable=a['variable'], value=val, ok=True)
-        elif kind == "atem_aux":
-            aux = int(a.get("aux") or 0)
+        elif kind in ("atem_aux", "atem_pgm", "atem_pvw"):
             src_press   = a.get("source")
             src_release = a.get("source_release")
             # Decide which logical event this edge represents.
@@ -231,17 +233,31 @@ def run_action(binding, event_type):
                 if not is_press:
                     return
                 target = src_press
-            if not aux or not isinstance(target, int):
-                log(f"{label}: atem_aux missing aux/source ({a})")
+            if not isinstance(target, int):
+                log(f"{label}: {kind} missing source ({a})")
                 log_event("input", bcm=bcm, edge=event_type, label=label,
-                          action="atem_aux", phase=phase, ok=False,
-                          error="missing aux/source")
+                          action=kind, phase=phase, ok=False,
+                          error="missing source")
                 return
-            atem_cmd({"cmd": "set_aux", "aux": aux, "source": target})
-            log(f"{label} {event_type}({phase}) -> ATEM Aux{aux} <- src {target}")
-            log_event("input", bcm=bcm, edge=event_type, label=label,
-                      action="atem_aux", phase=phase,
-                      aux=aux, source=target, ok=True)
+            if kind == "atem_aux":
+                aux = int(a.get("aux") or 0)
+                if not aux:
+                    log_event("input", bcm=bcm, edge=event_type, label=label,
+                              action=kind, phase=phase, ok=False,
+                              error="missing aux number")
+                    return
+                atem_cmd({"cmd": "set_aux", "aux": aux, "source": target})
+                log(f"{label} {event_type}({phase}) -> ATEM Aux{aux} <- src {target}")
+                log_event("input", bcm=bcm, edge=event_type, label=label,
+                          action=kind, phase=phase, aux=aux, source=target, ok=True)
+            else:
+                me = int(a.get("me") or 1)
+                sub = "set_program" if kind == "atem_pgm" else "set_preview"
+                atem_cmd({"cmd": sub, "me": me, "source": target})
+                bus = "PGM" if kind == "atem_pgm" else "PVW"
+                log(f"{label} {event_type}({phase}) -> ATEM {bus} ME{me} <- src {target}")
+                log_event("input", bcm=bcm, edge=event_type, label=label,
+                          action=kind, phase=phase, me=me, source=target, ok=True)
         else:
             log(f"{label}: unknown action kind {kind!r}")
             log_event("input", bcm=bcm, edge=event_type, label=label,

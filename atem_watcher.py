@@ -92,6 +92,23 @@ def make_caus(session_id: int, local_pkt_id: int, aux_index_0based: int, source_
     return header + cmd
 
 
+def make_cpgi(session_id: int, local_pkt_id: int, me_index_0based: int, source_input: int) -> bytes:
+    """Build a reliable packet containing one CPgI (Change Program Input) command."""
+    header = struct.pack(">HHHHHH", 0x0818, session_id, 0x0000, local_pkt_id, 0x0000, 0x0000)
+    # cmd_len=12, pad=0, name="CPgI", me_index(0-based), pad, source (BE)
+    cmd = struct.pack(">HH4sBBH", 12, 0x0000, b"CPgI",
+                      me_index_0based & 0xFF, 0x00, source_input & 0xFFFF)
+    return header + cmd
+
+
+def make_cpvi(session_id: int, local_pkt_id: int, me_index_0based: int, source_input: int) -> bytes:
+    """Build a reliable packet containing one CPvI (Change Preview Input) command."""
+    header = struct.pack(">HHHHHH", 0x0818, session_id, 0x0000, local_pkt_id, 0x0000, 0x0000)
+    cmd = struct.pack(">HH4sBBH", 12, 0x0000, b"CPvI",
+                      me_index_0based & 0xFF, 0x00, source_input & 0xFFFF)
+    return header + cmd
+
+
 def parse_commands(data: bytes):
     """Yield (name, raw_data) tuples from the command blocks in a data packet."""
     offset = 12
@@ -247,6 +264,26 @@ class AtemClient:
         pkt = make_caus(self.session_id, self.local_pkt_id, aux_1based - 1, int(source))
         self.sock.sendto(pkt, (self.ip, ATEM_PORT))
 
+    def send_program(self, me_1based: int, source: int) -> None:
+        """Tell the ATEM: set the Program bus on `me_1based` to `source`."""
+        if not self.sock or not self.connected:
+            raise RuntimeError("not connected")
+        if not (1 <= me_1based <= 4):
+            raise ValueError(f"me out of range: {me_1based}")
+        self.local_pkt_id = (self.local_pkt_id + 1) & 0x7FFF
+        pkt = make_cpgi(self.session_id, self.local_pkt_id, me_1based - 1, int(source))
+        self.sock.sendto(pkt, (self.ip, ATEM_PORT))
+
+    def send_preview(self, me_1based: int, source: int) -> None:
+        """Tell the ATEM: set the Preview bus on `me_1based` to `source`."""
+        if not self.sock or not self.connected:
+            raise RuntimeError("not connected")
+        if not (1 <= me_1based <= 4):
+            raise ValueError(f"me out of range: {me_1based}")
+        self.local_pkt_id = (self.local_pkt_id + 1) & 0x7FFF
+        pkt = make_cpvi(self.session_id, self.local_pkt_id, me_1based - 1, int(source))
+        self.sock.sendto(pkt, (self.ip, ATEM_PORT))
+
     def close(self):
         if self.sock:
             try:
@@ -330,6 +367,12 @@ def drain_commands(client):
             if cmd == "set_aux":
                 client.send_aux(int(req["aux"]), int(req["source"]))
                 print(f"atem set_aux {req['aux']} <- {req['source']}", flush=True)
+            elif cmd == "set_program":
+                client.send_program(int(req.get("me", 1)), int(req["source"]))
+                print(f"atem set_program ME{req.get('me', 1)} <- {req['source']}", flush=True)
+            elif cmd == "set_preview":
+                client.send_preview(int(req.get("me", 1)), int(req["source"]))
+                print(f"atem set_preview ME{req.get('me', 1)} <- {req['source']}", flush=True)
             else:
                 print(f"atem cmd unknown: {cmd!r}", flush=True)
         except Exception as e:

@@ -1370,6 +1370,8 @@ var qrcode=function(){var t=function(t,r){var e=t,n=g[r],o=null,i=0,a=null,u=[],
     const IN_ACTIONS = [
       ['none',      '— keine —'],
       ['atem_aux',  'ATEM direkt: Aux setzen'],
+      ['atem_pgm',  'ATEM direkt: Program (PGM) setzen'],
+      ['atem_pvw',  'ATEM direkt: Preview (PVW) setzen'],
       ['companion', 'Companion-Button drücken'],
     ];
     const IN_COMPANION_MODES = [
@@ -1484,16 +1486,22 @@ var qrcode=function(){var t=function(t,r){var e=t,n=g[r],o=null,i=0,a=null,u=[],
                   <input data-f="in_debounce_ms" type="number" min="0" max="2000" step="5" value="${Number(d.in_debounce_ms)||20}">
                 </label>
               </div>
-              <!-- conditional ATEM-Aux row -->
-              <div data-show="atem_aux" style="display:none;margin-top:var(--space-3);padding:var(--space-3);background:var(--bg-2);border:1px solid var(--border);border-radius:var(--r-sm)">
-                <div style="display:grid;grid-template-columns:1fr 1fr;gap:var(--space-3)">
+              <!-- conditional ATEM block (Aux / PGM / PVW share the source fields) -->
+              <div data-show="atem_aux atem_pgm atem_pvw" style="display:none;margin-top:var(--space-3);padding:var(--space-3);background:var(--bg-2);border:1px solid var(--border);border-radius:var(--r-sm)">
+                <!-- Aux-only: which Aux output -->
+                <div data-show="atem_aux" style="display:none;margin-bottom:var(--space-3)">
                   <label>ATEM Aux-Ausgang
                     <input data-f="in_atem_aux" type="number" min="1" max="24" value="${Number(d.in_atem_aux)||1}">
                   </label>
-                  <label>Source bei DRUCK <span style="color:var(--fg-faint)">(leer = ATEM-Input dieses Geräts)</span>
-                    <input data-f="in_atem_source" type="number" min="0" value="${inSrc}" placeholder="${inputNum}">
-                  </label>
                 </div>
+                <!-- PGM/PVW: which ME (info only — uses device's ME field above) -->
+                <div data-show="atem_pgm atem_pvw" style="display:none;margin-bottom:var(--space-3);font-size:var(--fs-xs);color:var(--fg-muted)">
+                  Ziel: <strong>ME ${Number(d.me)||1}</strong> <span style="color:var(--fg-faint)">(vom ME-Feld dieses Geräts oben)</span>
+                </div>
+                <!-- Shared source fields (press + release) -->
+                <label>Source bei DRUCK <span style="color:var(--fg-faint)">(leer = ATEM-Input dieses Geräts)</span>
+                  <input data-f="in_atem_source" type="number" min="0" value="${inSrc}" placeholder="${inputNum}">
+                </label>
                 <label style="margin-top:var(--space-3);display:block">
                   Source bei LOSLASSEN <span style="color:var(--fg-faint)">(leer = unverändert / one-shot wie bisher)</span>
                   <input data-f="in_atem_source_release" type="number" min="0"
@@ -1501,7 +1509,7 @@ var qrcode=function(){var t=function(t,r){var e=t,n=g[r],o=null,i=0,a=null,u=[],
                     placeholder="(nur reagieren beim Drücken)">
                 </label>
                 <p class="hint" style="margin:6px 0 0 0;font-size:var(--fs-xs)">
-                  Wenn beide Source-Felder gesetzt sind: gedrückt-halten schaltet die Aux-Source um, loslassen schaltet zurück. Sonst Tap (one-shot).
+                  Wenn beide Source-Felder gesetzt sind: gedrückt-halten schaltet um, loslassen schaltet zurück. Sonst Tap (one-shot).
                 </p>
               </div>
               <!-- conditional Companion row -->
@@ -1538,8 +1546,10 @@ var qrcode=function(){var t=function(t,r){var e=t,n=g[r],o=null,i=0,a=null,u=[],
 
         const showActionDetails = () => {
           const t = devices[i].in_action_type || 'none';
+          // data-show may be a space-separated list of action types.
           card.querySelectorAll('[data-show]').forEach(el => {
-            el.style.display = (el.dataset.show === t) ? '' : 'none';
+            const wants = (el.dataset.show || '').split(/\s+/).filter(Boolean);
+            el.style.display = wants.includes(t) ? '' : 'none';
           });
           // Test buttons are visible whenever an action is configured.
           card.querySelectorAll('[data-show-when-action]').forEach(el => {

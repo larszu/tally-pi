@@ -208,7 +208,7 @@ def get_numato_state():
 # ---------------------------------------------------------------------------
 GPIO_TRIGGER_MODES = ("pgm", "pgm_pvw", "manual")
 GPIO_INPUT_EDGES = ("falling", "rising", "both")
-GPIO_INPUT_ACTIONS = ("none", "companion", "atem_aux")
+GPIO_INPUT_ACTIONS = ("none", "companion", "atem_aux", "atem_pgm", "atem_pvw")
 
 # BCM pins safe to claim (avoid I2C/UART/SPI/EEPROM).
 USABLE_BCMS = (4, 5, 6, 12, 13, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27)
@@ -337,10 +337,11 @@ def validate_tally_config(cfg):
         act = d.get("in_action_type", "none")
         if act not in GPIO_INPUT_ACTIONS:
             raise ValueError(f"in_action_type must be one of {GPIO_INPUT_ACTIONS}")
-        if in_pin is not None and act == "atem_aux":
-            aux_n = d.get("in_atem_aux")
-            if not isinstance(aux_n, int) or aux_n < 1 or aux_n > 32:
-                raise ValueError("in_atem_aux must be int 1..32")
+        if in_pin is not None and act in ("atem_aux", "atem_pgm", "atem_pvw"):
+            if act == "atem_aux":
+                aux_n = d.get("in_atem_aux")
+                if not isinstance(aux_n, int) or aux_n < 1 or aux_n > 32:
+                    raise ValueError("in_atem_aux must be int 1..32")
             src = d.get("in_atem_source")
             if src is not None and (not isinstance(src, int) or src < 0 or src > 99999):
                 raise ValueError("in_atem_source must be int 0..99999 or null")
@@ -1266,8 +1267,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         # Plan the action.
         plan = {"label": label, "bcm": bcm, "edge": edge, "simulated": True,
                 "dry_run": dry}
-        if act == "atem_aux":
-            aux = int(dev.get("in_atem_aux") or 0)
+        if act in ("atem_aux", "atem_pgm", "atem_pvw"):
             src_press = dev.get("in_atem_source")
             if not isinstance(src_press, int):
                 src_press = dev.get("input")
@@ -1283,8 +1283,11 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             target = src_press if is_press else src_release
             if target is None:
                 target = src_press  # fall back when no release source set
-            plan.update(action="atem_aux", aux=aux, source=target,
+            plan.update(action=act, source=target,
+                        me=int(dev.get("me") or 1),
                         phase="press" if is_press else "release")
+            if act == "atem_aux":
+                plan["aux"] = int(dev.get("in_atem_aux") or 0)
         elif act == "companion":
             mode = dev.get("in_companion_mode", "tap")
             sub = "press"
@@ -1304,9 +1307,11 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return
         # Real fire: replicate the watcher's behavior here.
         try:
-            if act == "atem_aux":
-                if not plan["aux"] or not isinstance(plan["source"], int):
-                    raise RuntimeError("missing aux/source")
+            if act in ("atem_aux", "atem_pgm", "atem_pvw"):
+                if not isinstance(plan["source"], int):
+                    raise RuntimeError("missing source")
+                if act == "atem_aux" and not plan.get("aux"):
+                    raise RuntimeError("missing aux number")
                 sock_path = Path("/run/pi-guide/atem-cmd.sock")
                 if not sock_path.exists():
                     raise RuntimeError("atem-cmd socket not present (atem watcher down?)")
@@ -1314,7 +1319,11 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 s.settimeout(2.0)
                 try:
                     s.connect(str(sock_path))
-                    cmd = {"cmd": "set_aux", "aux": plan["aux"], "source": plan["source"]}
+                    if act == "atem_aux":
+                        cmd = {"cmd": "set_aux", "aux": plan["aux"], "source": plan["source"]}
+                    else:
+                        sub = "set_program" if act == "atem_pgm" else "set_preview"
+                        cmd = {"cmd": sub, "me": plan["me"], "source": plan["source"]}
                     s.sendall((json.dumps(cmd) + "\n").encode("utf-8"))
                     resp = s.recv(4096).decode("utf-8", errors="replace").strip()
                     if resp:
