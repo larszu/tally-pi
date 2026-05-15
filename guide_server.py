@@ -419,6 +419,9 @@ class TallyOutputs:
                 try: t.cancel()
                 except Exception: pass
             self._pulse_timers.clear()
+            # Drop stale latched-markers when the pin map changes — they refer
+            # to pins that may no longer be claimed.
+            self._latched.clear()
             self._release_locked()
             if not bcms:
                 self._error = None
@@ -545,10 +548,29 @@ class TallyOutputs:
         """Drive pin to `on` (True=LOW, False=HIGH) and pause the auto-driver
         for this pin until release() is called. Used by the UI test buttons
         as a hold/toggle."""
-        ok, msg = self.set(bcm, on, source="latch")
-        if not ok:
-            return ok, msg
+        # We need the latched-marker added atomically with the pin write,
+        # otherwise the auto-driver (running every 250 ms) can squeeze in
+        # between the set() return and the _latched.add() call and overwrite
+        # the value we just wrote. Once that race happens, future auto-driver
+        # ticks DO skip the pin because by then it's in _latched, so the bad
+        # value sticks until the user toggles again.
+        try:
+            import gpiod  # noqa: F401
+        except Exception as e:
+            return False, f"gpiod not available: {e}"
         with self._lock:
+            if self._req is None or bcm not in self._values:
+                return False, f"GPIO{bcm} not configured as tally output"
+            try:
+                self._write(bcm, on, source="latch")
+            except Exception as e:
+                print(f"[tally-out] latch({bcm}, {on}) failed: {e}", flush=True)
+                return False, f"latch failed: {e}"
+            # Cancel any in-flight pulse and mark latched, all under the same lock.
+            t = self._pulse_timers.pop(bcm, None)
+            if t:
+                try: t.cancel()
+                except Exception: pass
             self._latched.add(bcm)
         try:
             log_event("latch", bcm=bcm, value=bool(on), action="latch")
