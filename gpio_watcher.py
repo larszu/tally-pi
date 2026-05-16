@@ -89,11 +89,14 @@ def _device_to_binding(d):
     # Modes that need both edges (so we can fire press AND release):
     #   - companion down_up
     #   - atem_aux/pgm/pvw with a release-source defined
+    #   - any binding with hold_release_ms > 0 (burst tracker needs every edge)
     edge = d.get("in_edge", "falling")
     kind = action.get("kind")
     is_atem = kind in ("atem_aux", "atem_pgm", "atem_pvw")
+    hold_ms = int(d.get("in_hold_release_ms") or 0)
     needs_both = (kind == "down_up"
-                  or (is_atem and action.get("source_release") is not None))
+                  or (is_atem and action.get("source_release") is not None)
+                  or hold_ms > 0)
     if needs_both:
         edge = "both"
     return {
@@ -102,6 +105,7 @@ def _device_to_binding(d):
         "enabled": True,
         "bias": d.get("in_bias", "pull-up"),
         "debounce_ms": int(d.get("in_debounce_ms", 20)),
+        "hold_release_ms": hold_ms,
         "action": action,
         "_label": d.get("name") or d.get("id") or f"in_gpio_{bcm}",
     }
@@ -274,6 +278,114 @@ def bias_of(s):
     )
 
 
+import threading as _threading
+
+
+class BurstTracker:
+    """Collapse a burst of edges (from a poorly debouncing button or noisy
+    line) into one logical press at the start and one logical release at
+    the end.
+
+    The first edge after a quiet period fires `run_press`. Each subsequent
+    edge resets a timer; when the timer expires without a new edge, the
+    button is considered released and `run_release` fires. So a clean tap,
+    a long hold with chatter, or a continuously oscillating contact all
+    produce exactly one press + one release event each.
+    """
+
+    __slots__ = ("label", "release_s", "_run_press", "_run_release",
+                 "_lock", "_pressed", "_timer")
+
+    def __init__(self, label, release_ms, run_press, run_release):
+        self.label = label
+        self.release_s = max(release_ms, 1) / 1000.0
+        self._run_press = run_press
+        self._run_release = run_release
+        self._lock = _threading.Lock()
+        self._pressed = False
+        self._timer = None
+
+    def on_edge(self, _event_type):
+        fire_press = False
+        with self._lock:
+            if self._timer is not None:
+                self._timer.cancel()
+                self._timer = None
+            if not self._pressed:
+                self._pressed = True
+                fire_press = True
+            t = _threading.Timer(self.release_s, self._on_quiet)
+            t.daemon = True
+            self._timer = t
+        # Run the callback OUTSIDE the lock — it may do socket I/O.
+        if fire_press:
+            try:
+                self._run_press()
+            except Exception as e:
+                log(f"burst press error on {self.label}: {e}")
+        # Start timer outside the lock to avoid holding it during scheduling.
+        t.start()
+
+    def _on_quiet(self):
+        with self._lock:
+            self._pressed = False
+            self._timer = None
+        try:
+            self._run_release()
+        except Exception as e:
+            log(f"burst release error on {self.label}: {e}")
+
+    def cancel(self):
+        with self._lock:
+            if self._timer is not None:
+                self._timer.cancel()
+                self._timer = None
+            self._pressed = False
+
+
+def _edges_for_burst(binding):
+    """Return (press_edge, release_edge) — synthesised edge labels that
+    feed run_action's is_press logic correctly for this binding."""
+    trig = binding.get("trigger_edge", "falling")
+    if trig == "rising":
+        return "rising", "falling"
+    return "falling", "rising"
+
+
+def _build_trackers(by_offset):
+    """Build a {bcm: BurstTracker} dict for bindings that opted into burst
+    tracking (hold_release_ms > 0). Other bindings keep the old direct
+    edge → run_action wiring."""
+    trackers = {}
+    for bcm, b in by_offset.items():
+        hold_ms = int(b.get("hold_release_ms", 0) or 0)
+        if hold_ms <= 0:
+            continue
+        press_e, release_e = _edges_for_burst(b)
+        # Capture binding via default args so the closure doesn't share state.
+        def make_press(binding=b, e=press_e):
+            return lambda: run_action(binding, e)
+        def make_release(binding=b, e=release_e):
+            return lambda: run_action(binding, e)
+        trackers[bcm] = BurstTracker(
+            label=b.get("_label") or f"GPIO{bcm}",
+            release_ms=hold_ms,
+            run_press=make_press(),
+            run_release=make_release(),
+        )
+    return trackers
+
+
+def _dispatch(b, etype, trackers):
+    """Route an edge event either through the burst tracker (if configured)
+    or directly to run_action."""
+    t = trackers.get(int(b["bcm"]))
+    if t is not None:
+        t.on_edge(etype)
+    else:
+        run_action(b, etype)
+
+
 def watch_loop():
     last_mtime = file_mtime()
     bindings = load_bindings()
@@ -304,6 +416,10 @@ def watch_loop():
         time.sleep(2)
         return
 
+    trackers = _build_trackers(by_offset)
+    if trackers:
+        log(f"burst trackers active for GPIOs: {sorted(trackers)}")
+
     log(f"claiming GPIOs: {sorted(config)}")
     try:
         req = gpiod.request_lines(CHIP, consumer=CONSUMER, config=config)
@@ -328,10 +444,12 @@ def watch_loop():
                     if r.wait_edge_events(timeout=timedelta(milliseconds=50)):
                         for ev in r.read_edge_events():
                             etype = "rising" if ev.event_type == ev.Type.RISING_EDGE else "falling"
-                            run_action(by_offset[bcm], etype)
+                            _dispatch(by_offset[bcm], etype, trackers)
                 if file_mtime() != last_mtime:
                     return
         finally:
+            for t in trackers.values():
+                t.cancel()
             for r in active.values():
                 try:
                     r.release()
@@ -347,10 +465,12 @@ def watch_loop():
                     etype = "rising" if ev.event_type == ev.Type.RISING_EDGE else "falling"
                     b = by_offset.get(bcm)
                     if b:
-                        run_action(b, etype)
+                        _dispatch(b, etype, trackers)
             if file_mtime() != last_mtime:
                 return
     finally:
+        for t in trackers.values():
+            t.cancel()
         try:
             req.release()
         except Exception:

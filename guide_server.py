@@ -360,6 +360,13 @@ def validate_tally_config(cfg):
         deb = d.get("in_debounce_ms")
         if deb is not None and (not isinstance(deb, int) or deb < 0 or deb > 2000):
             raise ValueError("in_debounce_ms must be int 0..2000 or null")
+        # Optional burst-release timeout (ms): if > 0, the gpio_watcher
+        # uses a software burst tracker that collapses a stream of bouncy
+        # edges into one logical press at the start and one release after
+        # this many ms of edge-silence.
+        hr = d.get("in_hold_release_ms")
+        if hr is not None and (not isinstance(hr, int) or hr < 0 or hr > 5000):
+            raise ValueError("in_hold_release_ms must be int 0..5000 or null")
 
 
 def get_atem_state():
