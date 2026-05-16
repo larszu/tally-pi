@@ -365,8 +365,14 @@ def validate_tally_config(cfg):
         # edges into one logical press at the start and one release after
         # this many ms of edge-silence.
         hr = d.get("in_hold_release_ms")
-        if hr is not None and (not isinstance(hr, int) or hr < 0 or hr > 5000):
-            raise ValueError("in_hold_release_ms must be int 0..5000 or null")
+        if hr is not None and (not isinstance(hr, int) or hr < 0 or hr > 10000):
+            raise ValueError("in_hold_release_ms must be int 0..10000 or null")
+        # Optional minimum edge count for the burst to be considered a
+        # real press. Filters out single-edge crosstalk / sync glitches
+        # on fibre-link inputs. Default 1 = legacy behavior.
+        me = d.get("in_burst_min_edges")
+        if me is not None and (not isinstance(me, int) or me < 1 or me > 100):
+            raise ValueError("in_burst_min_edges must be int 1..100 or null")
 
 
 def get_atem_state():

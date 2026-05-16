@@ -1532,7 +1532,11 @@ var qrcode=function(){var t=function(t,r){var e=t,n=g[r],o=null,i=0,a=null,u=[],
                 </label>
                 <label title="Burst-Halten-Erkennung: wenn nach der letzten Flanke X ms keine weitere kommt, gilt der Taster als losgelassen. Hilft bei wackelnden Kontakten — der Watcher feuert dann genau einmal Press am Anfang und einmal Release am Ende, statt 200x dazwischen. 0 = aus (klassische Edge-Logik).">
                   Halten (ms)
-                  <input data-f="in_hold_release_ms" type="number" min="0" max="5000" step="50" value="${Number(d.in_hold_release_ms)||0}">
+                  <input data-f="in_hold_release_ms" type="number" min="0" max="10000" step="50" value="${Number(d.in_hold_release_ms)||0}">
+                </label>
+                <label title="Mindest-Flankenzahl pro Burst damit der Press feuert. Filtert Crosstalk auf Faser-Linien: ein einzelner Spike-Edge auf einem Nachbar-Kanal sieht für den Tracker aus wie ein 1-Edge-Burst, das wird damit verworfen. Echte Drücke haben Dutzende Flanken. Default 1 = wie bisher.">
+                  Min-Flanken
+                  <input data-f="in_burst_min_edges" type="number" min="1" max="100" step="1" value="${Number(d.in_burst_min_edges)||1}">
                 </label>
               </div>
               <!-- conditional ATEM block (Aux / PGM / PVW share the source fields) -->
@@ -1626,8 +1630,9 @@ var qrcode=function(){var t=function(t,r){var e=t,n=g[r],o=null,i=0,a=null,u=[],
             const v = el.value;
             if (f === 'input' || f === 'me' || f === 'in_atem_aux' ||
                 f === 'in_companion_page' || f === 'in_companion_row' || f === 'in_companion_col' ||
-                f === 'in_debounce_ms' || f === 'in_hold_release_ms') {
-              const def = (f === 'me' || f === 'in_atem_aux' || f === 'in_companion_page') ? 1
+                f === 'in_debounce_ms' || f === 'in_hold_release_ms' || f === 'in_burst_min_edges') {
+              const def = (f === 'me' || f === 'in_atem_aux' || f === 'in_companion_page'
+                           || f === 'in_burst_min_edges') ? 1
                        : (f === 'in_debounce_ms') ? 20 : 0;
               const n = parseInt(v, 10);
               devices[i][f] = (isNaN(n) ? def : n);
@@ -1797,6 +1802,7 @@ var qrcode=function(){var t=function(t,r){var e=t,n=g[r],o=null,i=0,a=null,u=[],
         in_companion_mode: 'tap',
         in_debounce_ms: 20,
         in_hold_release_ms: 0,
+        in_burst_min_edges: 1,
       };
     }
 
@@ -1867,6 +1873,8 @@ var qrcode=function(){var t=function(t,r){var e=t,n=g[r],o=null,i=0,a=null,u=[],
                         ? d.in_debounce_ms : 20,
           in_hold_release_ms: (typeof d.in_hold_release_ms === 'number' && d.in_hold_release_ms >= 0)
                             ? d.in_hold_release_ms : 0,
+          in_burst_min_edges: (typeof d.in_burst_min_edges === 'number' && d.in_burst_min_edges >= 1)
+                            ? d.in_burst_min_edges : 1,
         })) : [];
         render();
       } catch(e) {
