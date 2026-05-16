@@ -1093,25 +1093,35 @@ var qrcode=function(){var t=function(t,r){var e=t,n=g[r],o=null,i=0,a=null,u=[],
       if (s.value === 0) el.classList.add('out-lo');
       else if (s.value === 1) el.classList.add('out-hi');
     } else if (s.direction === 'in') {
-      // "Pressed" combines two signals:
-      //   - sw_pressed: the gpio_watcher's burst tracker says the user is
-      //     holding the button. Stable across fiber-link "quiet gaps"
-      //     mid-press where the raw pad is back at idle HIGH.
-      //   - raw bias-deviation: pull-up + value=LOW means a direct-wired
-      //     button is being pressed (for inputs without a burst tracker).
+      // Two regimes:
+      //   - Pin has burst-tracker (sw_pressed present in /gpio data): trust
+      //     ONLY the tracker. It already knows about debounce_ms,
+      //     hold_release_ms, and burst_min_edges — so glitches the tracker
+      //     filtered out shouldn't make the badge flicker either.
+      //   - Pin is direct-wired (no tracker): fall back to comparing the
+      //     pad level against the pull-bias resting state.
+      const hasTracker = ('sw_pressed' in s);
       const swPressed = !!s.sw_pressed;
       const levelPressed =
         (s.bias === 'pu' && s.value === 0) ||
         (s.bias === 'pd' && s.value === 1);
-      const pressed = swPressed || levelPressed;
-      // Color: while sw_pressed, lock in the "active" look so the tile
-      // doesn't flicker between in-hi/in-lo as the fiber carrier bursts.
-      if (swPressed) el.classList.add('in-lo');
-      else if (s.value === 0) el.classList.add('in-lo');
-      else if (s.value === 1) el.classList.add('in-hi');
-      // value === null and not sw_pressed: leave the tile without a level
-      // class — don't fall back to "free" (that would suggest the pin is
-      // unused, but it's claimed).
+      const pressed = hasTracker ? swPressed : levelPressed;
+
+      // Color: when a tracker is active, the tile stays in a stable
+      // pressed-or-idle color (no flicker as the carrier bursts in/out).
+      // When no tracker, follow the raw level.
+      if (pressed) {
+        el.classList.add('in-lo');
+      } else if (hasTracker) {
+        el.classList.add('in-hi');     // tracker says idle → stable green
+      } else if (s.value === 1) {
+        el.classList.add('in-hi');
+      } else if (s.value === 0) {
+        el.classList.add('in-lo');
+      }
+      // value === null and no tracker: leave without a level class — DON'T
+      // fall back to "free" (would suggest the pin is unused, it isn't).
+
       if (pressed && s.claimed) {
         const tag = document.createElement('span');
         tag.className = 'pressed';
