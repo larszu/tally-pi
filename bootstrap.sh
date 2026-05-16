@@ -84,6 +84,9 @@ adduser "$TARGET_USER" gpio    >/dev/null 2>&1 || true
 
 log "4/7 Deploying files to /opt/pi-guide and /opt/pi-status"
 install -d /opt/pi-guide /opt/pi-status
+# Clean up timestamped backups left by earlier installers — they're never
+# used at runtime and accumulate over time.
+rm -f /opt/pi-guide/*.bak.* /opt/pi-status/*.bak.* 2>/dev/null || true
 install -m 644 setup-guide.html    /opt/pi-guide/
 install -m 755 guide_server.py     /opt/pi-guide/
 install -m 755 gpio_watcher.py     /opt/pi-guide/
