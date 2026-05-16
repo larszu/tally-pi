@@ -1530,6 +1530,10 @@ var qrcode=function(){var t=function(t,r){var e=t,n=g[r],o=null,i=0,a=null,u=[],
                   Debounce (ms)
                   <input data-f="in_debounce_ms" type="number" min="0" max="2000" step="5" value="${Number(d.in_debounce_ms)||20}">
                 </label>
+                <label title="Burst-Halten-Erkennung: wenn nach der letzten Flanke X ms keine weitere kommt, gilt der Taster als losgelassen. Hilft bei wackelnden Kontakten — der Watcher feuert dann genau einmal Press am Anfang und einmal Release am Ende, statt 200x dazwischen. 0 = aus (klassische Edge-Logik).">
+                  Halten (ms)
+                  <input data-f="in_hold_release_ms" type="number" min="0" max="5000" step="50" value="${Number(d.in_hold_release_ms)||0}">
+                </label>
               </div>
               <!-- conditional ATEM block (Aux / PGM / PVW share the source fields) -->
               <div data-show="atem_aux atem_pgm atem_pvw" style="display:none;margin-top:var(--space-3);padding:var(--space-3);background:var(--bg-2);border:1px solid var(--border);border-radius:var(--r-sm)">
@@ -1622,7 +1626,7 @@ var qrcode=function(){var t=function(t,r){var e=t,n=g[r],o=null,i=0,a=null,u=[],
             const v = el.value;
             if (f === 'input' || f === 'me' || f === 'in_atem_aux' ||
                 f === 'in_companion_page' || f === 'in_companion_row' || f === 'in_companion_col' ||
-                f === 'in_debounce_ms') {
+                f === 'in_debounce_ms' || f === 'in_hold_release_ms') {
               const def = (f === 'me' || f === 'in_atem_aux' || f === 'in_companion_page') ? 1
                        : (f === 'in_debounce_ms') ? 20 : 0;
               const n = parseInt(v, 10);
@@ -1792,6 +1796,7 @@ var qrcode=function(){var t=function(t,r){var e=t,n=g[r],o=null,i=0,a=null,u=[],
         in_companion_col: 0,
         in_companion_mode: 'tap',
         in_debounce_ms: 20,
+        in_hold_release_ms: 0,
       };
     }
 
@@ -1860,6 +1865,8 @@ var qrcode=function(){var t=function(t,r){var e=t,n=g[r],o=null,i=0,a=null,u=[],
           in_companion_mode: (d.in_companion_mode === 'hold') ? 'hold' : 'tap',
           in_debounce_ms: (typeof d.in_debounce_ms === 'number' && d.in_debounce_ms >= 0)
                         ? d.in_debounce_ms : 20,
+          in_hold_release_ms: (typeof d.in_hold_release_ms === 'number' && d.in_hold_release_ms >= 0)
+                            ? d.in_hold_release_ms : 0,
         })) : [];
         render();
       } catch(e) {
