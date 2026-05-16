@@ -1093,18 +1093,25 @@ var qrcode=function(){var t=function(t,r){var e=t,n=g[r],o=null,i=0,a=null,u=[],
       if (s.value === 0) el.classList.add('out-lo');
       else if (s.value === 1) el.classList.add('out-hi');
     } else if (s.direction === 'in') {
-      // "Pressed" only when the level deviates from the pull bias' resting
-      // state. With pull-up: idle=HIGH, pressed=LOW. With pull-down:
-      // idle=LOW, pressed=HIGH. Without a known bias we can't tell, so we
-      // show the level but never the GEDRÜCKT badge to avoid false positives.
-      const pressed =
+      // "Pressed" combines two signals:
+      //   - sw_pressed: the gpio_watcher's burst tracker says the user is
+      //     holding the button. Stable across fiber-link "quiet gaps"
+      //     mid-press where the raw pad is back at idle HIGH.
+      //   - raw bias-deviation: pull-up + value=LOW means a direct-wired
+      //     button is being pressed (for inputs without a burst tracker).
+      const swPressed = !!s.sw_pressed;
+      const levelPressed =
         (s.bias === 'pu' && s.value === 0) ||
         (s.bias === 'pd' && s.value === 1);
-      if (s.value === 0) el.classList.add('in-lo');
+      const pressed = swPressed || levelPressed;
+      // Color: while sw_pressed, lock in the "active" look so the tile
+      // doesn't flicker between in-hi/in-lo as the fiber carrier bursts.
+      if (swPressed) el.classList.add('in-lo');
+      else if (s.value === 0) el.classList.add('in-lo');
       else if (s.value === 1) el.classList.add('in-hi');
-      // value === null means the pin is claimed but the level hasn't been
-      // read this tick — leave the tile without a level class, but DON'T
-      // fall back to "free" (that would suggest the pin is unused).
+      // value === null and not sw_pressed: leave the tile without a level
+      // class — don't fall back to "free" (that would suggest the pin is
+      // unused, but it's claimed).
       if (pressed && s.claimed) {
         const tag = document.createElement('span');
         tag.className = 'pressed';

@@ -18,6 +18,7 @@ DEBUG_GPIO = Path("/sys/kernel/debug/gpio")
 BINDINGS_FILE = Path("/opt/pi-guide/bindings.json")
 NUMATO_STATE_FILE = Path("/run/pi-guide/numato.json")
 ATEM_STATE_FILE = Path("/run/pi-guide/atem.json")
+INPUT_STATE_FILE = Path("/run/pi-guide/input-state.json")
 TALLY_CONFIG_FILE = Path("/opt/pi-guide/tally.json")
 EVENT_LOG_FILE = Path("/opt/pi-guide/events.log")
 EVENT_LOG_MAX = 1_000_000  # bytes before rotation
@@ -98,6 +99,23 @@ def parse_gpio_state():
             "global_line": global_line,
             "sysfs": consumer == "sysfs",
         }
+    # Merge in software-level "pressed" state from gpio_watcher's burst
+    # trackers. The raw pad level can flip HIGH while the user is still
+    # holding the button (fiber link goes quiet between bursts), so the
+    # UI's "GEDRÜCKT" badge needs the SW-tracked state, not just the
+    # momentary level.
+    try:
+        input_state = json.loads(INPUT_STATE_FILE.read_text())
+        for bcm_str, info in input_state.items():
+            if bcm_str in result and isinstance(info, dict):
+                result[bcm_str]["sw_pressed"] = bool(info.get("pressed"))
+                ec = info.get("edge_count")
+                if isinstance(ec, int):
+                    result[bcm_str]["sw_edge_count"] = ec
+    except (FileNotFoundError, json.JSONDecodeError):
+        pass
+    except Exception:
+        pass
     return result
 
 

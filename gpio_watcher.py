@@ -9,6 +9,7 @@ Two input sources, merged at load time:
     which sends a CAuS command via the atem_watcher's unix socket.
 """
 import json
+import os
 import socket as _socket
 import sys
 import time
@@ -24,6 +25,7 @@ BINDINGS = Path("/opt/pi-guide/bindings.json")
 TALLY_CONFIG = Path("/opt/pi-guide/tally.json")
 EVENT_LOG_FILE = Path("/opt/pi-guide/events.log")
 ATEM_CMD_SOCKET = Path("/run/pi-guide/atem-cmd.sock")
+INPUT_STATE_FILE = Path("/run/pi-guide/input-state.json")
 CHIP = "/dev/gpiochip0"
 COMPANION = "http://localhost:8000"
 CONSUMER = "pi-gpio-watcher"
@@ -303,20 +305,27 @@ class BurstTracker:
 
     __slots__ = ("label", "release_s", "min_edges",
                  "_run_press", "_run_release", "_is_at_idle",
+                 "_on_state_change",
                  "_lock", "_pressed", "_press_fired",
                  "_timer", "_edge_count")
 
     def __init__(self, label, release_ms, run_press, run_release,
-                 is_at_idle=None, min_edges=1):
+                 is_at_idle=None, min_edges=1, on_state_change=None):
         self.label = label
         self.release_s = max(release_ms, 1) / 1000.0
         self.min_edges = max(1, int(min_edges))
-        # run_press()        — called once the burst is confirmed real
-        # run_release(count) — called when the burst settles, with the
-        #                      number of edges seen in this burst
+        # run_press()         — called once the burst is confirmed real
+        # run_release(count)  — called when the burst settles
+        # on_state_change()   — called on every press/release transition,
+        #                        used to publish state to /run/pi-guide
+        #                        so guide_server (and thus the UI) can
+        #                        show the correct "pressed" badge even
+        #                        when the raw pad level is momentarily
+        #                        between bursts.
         self._run_press = run_press
         self._run_release = run_release
         self._is_at_idle = is_at_idle
+        self._on_state_change = on_state_change
         self._lock = _threading.Lock()
         self._pressed = False        # we're currently inside a burst
         self._press_fired = False    # have we fired the press callback?
@@ -346,6 +355,9 @@ class BurstTracker:
                 self._run_press()
             except Exception as e:
                 log(f"burst press error on {self.label}: {e}")
+            if self._on_state_change is not None:
+                try: self._on_state_change()
+                except Exception: pass
         t.start()
 
     def _on_quiet(self):
@@ -377,6 +389,9 @@ class BurstTracker:
                 self._run_release(count)
             except Exception as e:
                 log(f"burst release error on {self.label}: {e}")
+            if self._on_state_change is not None:
+                try: self._on_state_change()
+                except Exception: pass
 
     def cancel(self):
         with self._lock:
@@ -394,6 +409,29 @@ def _edges_for_burst(binding):
     if trig == "rising":
         return "rising", "falling"
     return "falling", "rising"
+
+
+def _publish_input_state(trackers):
+    """Snapshot each burst tracker's pressed state to a small JSON file
+    that guide_server includes in its /gpio response. The UI uses this
+    so the "GEDRÜCKT" badge stays on while the user is holding the
+    button, even though the raw pad level is momentarily HIGH between
+    fiber-link bursts."""
+    state = {}
+    for bcm, t in trackers.items():
+        with t._lock:
+            state[str(bcm)] = {
+                "pressed": bool(t._press_fired),
+                "edge_count": int(t._edge_count),
+                "ts": time.time(),
+            }
+    try:
+        INPUT_STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+        tmp = INPUT_STATE_FILE.with_suffix(".tmp")
+        tmp.write_text(json.dumps(state))
+        os.replace(tmp, INPUT_STATE_FILE)
+    except Exception:
+        pass
 
 
 def _build_trackers(by_offset, req=None):
@@ -441,7 +479,10 @@ def _build_trackers(by_offset, req=None):
             run_release=make_release(),
             is_at_idle=make_idle_check(),
             min_edges=int(b.get("burst_min_edges") or 1),
+            on_state_change=lambda: _publish_input_state(trackers),
         )
+    # Initial publish so the state file exists even before any press.
+    _publish_input_state(trackers)
     return trackers
 
 
@@ -562,6 +603,7 @@ def watch_loop():
     finally:
         for t in trackers.values():
             t.cancel()
+        _publish_input_state(trackers)  # final flush
         try:
             req.release()
         except Exception:
