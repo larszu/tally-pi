@@ -75,17 +75,39 @@ def make_ack(session_id: int, remote_pkt_id: int) -> bytes:
     return struct.pack(">HHHHHH", 0x800C, session_id, remote_pkt_id, 0x0000, 0x0000, 0x0000)
 
 
+def _atem_header(flags_and_len: int, session_id: int, local_pkt_id: int,
+                 ack_pkt_id: int = 0) -> bytes:
+    """Build the 12-byte ATEM header. Field layout (BE 16-bit each):
+        0..1  : flags(5 top bits) | length(11 bottom bits)
+        2..3  : session_id
+        4..5  : ack_pkt_id (the packet WE are acknowledging — 0 for plain TX)
+        6..7  : reserved — must be 0
+        8..9  : reserved — must be 0 on first transmission
+       10..11 : local_pkt_id (OUR outgoing packet id, monotonically increasing)
+
+    A previous version put local_pkt_id at offset 6..7. That kept the
+    session alive (the switcher tolerates the unknown field) but broke
+    reliable delivery of command packets — the switcher couldn't track
+    our sequence and so CAuS/CPgI/CPvI silently did nothing despite the
+    socket showing "connected". Use this helper everywhere so the layout
+    stays consistent.
+    """
+    return struct.pack(">HHHHHH",
+                       flags_and_len, session_id, ack_pkt_id,
+                       0x0000, 0x0000, local_pkt_id)
+
+
 def make_ping(session_id: int, local_pkt_id: int) -> bytes:
     """Build a 12-byte empty reliable packet (keepalive)."""
     # flags=RELIABLE (0x01) -> (0x01 << 11) | 12 = 0x080C
-    return struct.pack(">HHHHHH", 0x080C, session_id, 0x0000, local_pkt_id, 0x0000, 0x0000)
+    return _atem_header(0x080C, session_id, local_pkt_id)
 
 
 def make_caus(session_id: int, local_pkt_id: int, aux_index_0based: int, source_input: int) -> bytes:
     """Build a 24-byte reliable packet containing one CAuS (set aux source) command."""
     # 12-byte header (RELIABLE) + 12-byte command block.
     # flags=RELIABLE (0x01) -> (0x01 << 11) | 24 = 0x0818
-    header = struct.pack(">HHHHHH", 0x0818, session_id, 0x0000, local_pkt_id, 0x0000, 0x0000)
+    header = _atem_header(0x0818, session_id, local_pkt_id)
     # cmd_len=12, pad=0, name="CAuS", mask=0x01 (source), aux_idx, source (BE)
     cmd = struct.pack(">HH4sBBH", 12, 0x0000, b"CAuS",
                       0x01, aux_index_0based & 0xFF, source_input & 0xFFFF)
@@ -94,7 +116,7 @@ def make_caus(session_id: int, local_pkt_id: int, aux_index_0based: int, source_
 
 def make_cpgi(session_id: int, local_pkt_id: int, me_index_0based: int, source_input: int) -> bytes:
     """Build a reliable packet containing one CPgI (Change Program Input) command."""
-    header = struct.pack(">HHHHHH", 0x0818, session_id, 0x0000, local_pkt_id, 0x0000, 0x0000)
+    header = _atem_header(0x0818, session_id, local_pkt_id)
     # cmd_len=12, pad=0, name="CPgI", me_index(0-based), pad, source (BE)
     cmd = struct.pack(">HH4sBBH", 12, 0x0000, b"CPgI",
                       me_index_0based & 0xFF, 0x00, source_input & 0xFFFF)
@@ -103,7 +125,7 @@ def make_cpgi(session_id: int, local_pkt_id: int, me_index_0based: int, source_i
 
 def make_cpvi(session_id: int, local_pkt_id: int, me_index_0based: int, source_input: int) -> bytes:
     """Build a reliable packet containing one CPvI (Change Preview Input) command."""
-    header = struct.pack(">HHHHHH", 0x0818, session_id, 0x0000, local_pkt_id, 0x0000, 0x0000)
+    header = _atem_header(0x0818, session_id, local_pkt_id)
     cmd = struct.pack(">HH4sBBH", 12, 0x0000, b"CPvI",
                       me_index_0based & 0xFF, 0x00, source_input & 0xFFFF)
     return header + cmd
