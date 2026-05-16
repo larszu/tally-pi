@@ -2007,8 +2007,12 @@ var qrcode=function(){var t=function(t,r){var e=t,n=g[r],o=null,i=0,a=null,u=[],
         color = e.ok === false ? '#f87171' : (e.action === 'ignored' ? '#64748b' : '#34d399');
         const lbl = e.label || `GPIO${e.bcm}`;
         const edge = e.edge ? ` ${e.edge}` : '';
+        const phase = e.phase ? `(${e.phase})` : '';
+        const burst = (typeof e.edge_count === 'number') ? ` [${e.edge_count} edges]` : '';
         let tail = '';
         if (e.action === 'atem_aux')         tail = ` → ATEM Aux${e.aux} ← src ${e.source}`;
+        else if (e.action === 'atem_pgm')    tail = ` → ATEM PGM ME${e.me} ← src ${e.source}`;
+        else if (e.action === 'atem_pvw')    tail = ` → ATEM PVW ME${e.me} ← src ${e.source}`;
         else if (e.action === 'companion_press' || e.action === 'companion_down' || e.action === 'companion_up')
           tail = ` → Companion ${e.page}/${e.row}/${e.column} (${e.action.replace('companion_','')})`;
         else if (e.action === 'companion_variable') tail = ` → var ${e.variable}=${e.value}`;
@@ -2016,7 +2020,7 @@ var qrcode=function(){var t=function(t,r){var e=t,n=g[r],o=null,i=0,a=null,u=[],
         else if (e.action === 'unknown')     tail = ` (unbekannt: ${e.kind || ''})`;
         else if (e.action)                   tail = ` → ${e.action}`;
         if (e.ok === false && e.error)       tail += ` ✗ ${e.error}`;
-        body = `IN  GPIO${e.bcm}${edge} ${lbl}${tail}`;
+        body = `IN  GPIO${e.bcm}${edge}${phase} ${lbl}${tail}${burst}`;
       } else if (k === 'latch'){
         color = '#a78bfa';
         if (e.action === 'latch'){ body = `Latch GPIO${e.bcm} ${e.value ? 'AN' : 'aus'}`; }
