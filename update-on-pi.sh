@@ -8,6 +8,8 @@ log() { printf '\033[1;34m[update]\033[0m %s\n' "$*"; }
 
 log "Python-Watcher und setup-guide.html nach /opt/pi-guide"
 install -d /opt/pi-guide
+# Drop timestamped backups left by earlier installer versions.
+rm -f /opt/pi-guide/*.bak.* 2>/dev/null || true
 install -m 644 setup-guide.html    /opt/pi-guide/
 install -m 755 guide_server.py     /opt/pi-guide/
 install -m 755 gpio_watcher.py     /opt/pi-guide/
