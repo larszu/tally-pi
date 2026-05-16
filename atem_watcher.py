@@ -334,7 +334,11 @@ def cmd_listener_thread():
         srv = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         srv.bind(str(CMD_SOCKET))
         try:
-            os.chmod(str(CMD_SOCKET), 0o660)
+            # 0o666: any local user can send commands. This is a LAN-only
+            # appliance socket (not reachable over the network), so opening
+            # it up lets non-root users like `talentwerk` test set_aux via
+            # `nc -U /run/pi-guide/atem-cmd.sock` without sudo.
+            os.chmod(str(CMD_SOCKET), 0o666)
         except Exception:
             pass
         srv.listen(8)
