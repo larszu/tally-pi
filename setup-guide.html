@@ -779,6 +779,9 @@ sudo systemctl restart getty@tty1</pre>
 
 </div><!-- /help -->
 
+  <!-- Populated live by JS from /atem inputs. Used as autocomplete for the
+       ATEM-source number fields (PGM/PVW/Cam1/Color bars/etc.). -->
+  <datalist id="atem-sources"></datalist>
 </main>
 <script>
 /* qrcode-generator 1.4.4 MIT by Kazuhiko Arase � embedded inline */
@@ -1322,16 +1325,58 @@ var qrcode=function(){var t=function(t,r){var e=t,n=g[r],o=null,i=0,a=null,u=[],
       }
     }
 
+    function atemSourceName(n){
+      if (n == null || n === '') return '';
+      const info = atemInputs[String(n)] || {};
+      return info.long || info.short || '';
+    }
+
+    function refreshAtemSourceList(){
+      // Build the global datalist used by all atem-source inputs. PGM/PVW
+      // are surfaced first so the user discovers them, then regular inputs
+      // by numeric order.
+      const dl = document.getElementById('atem-sources');
+      if (!dl) return;
+      const entries = Object.entries(atemInputs)
+        .map(([k, v]) => [Number(k), (v && (v.long || v.short)) || ''])
+        .filter(([n, _]) => Number.isFinite(n) && n >= 0);
+      // Sort: PGM/PVW first (10010, 10011), then ascending by number.
+      entries.sort((a, b) => {
+        const aProg = (a[0] === 10010 || a[0] === 10011) ? 0 : 1;
+        const bProg = (b[0] === 10010 || b[0] === 10011) ? 0 : 1;
+        if (aProg !== bProg) return aProg - bProg;
+        return a[0] - b[0];
+      });
+      dl.innerHTML = entries.map(([n, name]) =>
+        `<option value="${n}" label="${escHtml(name)} (${n})">${escHtml(name)}</option>`
+      ).join('');
+    }
+
     function refreshAtemRefs(){
       const cards = host.querySelectorAll('[data-tally-card]');
       cards.forEach((card, i) => {
         const ref = card.querySelector('.tally-atem-ref');
-        if (!ref) return;
-        const inputNum = Number((devices[i] || {}).input) || 0;
-        const info = atemInputs[String(inputNum)] || {};
-        const name = info.long || info.short || '—';
-        ref.textContent = 'ATEM: Input ' + inputNum + ' = ' + name;
+        if (ref) {
+          const inputNum = Number((devices[i] || {}).input) || 0;
+          ref.textContent = 'ATEM: Input ' + inputNum + ' = '
+                          + (atemSourceName(inputNum) || '—');
+        }
+        // Live name hints under the trigger-source fields.
+        const press = card.querySelector('[data-f=in_atem_source]');
+        const pressHint = card.querySelector('[data-role=src-press-name]');
+        if (press && pressHint) {
+          const v = press.value === '' ? (devices[i] || {}).input : press.value;
+          const nm = atemSourceName(v);
+          pressHint.textContent = nm ? ('→ ' + nm) : '';
+        }
+        const rel = card.querySelector('[data-f=in_atem_source_release]');
+        const relHint = card.querySelector('[data-role=src-release-name]');
+        if (rel && relHint) {
+          const nm = rel.value === '' ? '' : atemSourceName(rel.value);
+          relHint.textContent = nm ? ('→ ' + nm) : '';
+        }
       });
+      refreshAtemSourceList();
     }
 
     // BCM pins safe to claim (no I2C/UART/SPI/EEPROM).
@@ -1498,18 +1543,26 @@ var qrcode=function(){var t=function(t,r){var e=t,n=g[r],o=null,i=0,a=null,u=[],
                 <div data-show="atem_pgm atem_pvw" style="display:none;margin-bottom:var(--space-3);font-size:var(--fs-xs);color:var(--fg-muted)">
                   Ziel: <strong>ME ${Number(d.me)||1}</strong> <span style="color:var(--fg-faint)">(vom ME-Feld dieses Geräts oben)</span>
                 </div>
-                <!-- Shared source fields (press + release) -->
-                <label>Source bei DRUCK <span style="color:var(--fg-faint)">(leer = ATEM-Input dieses Geräts)</span>
-                  <input data-f="in_atem_source" type="number" min="0" value="${inSrc}" placeholder="${inputNum}">
+                <!-- Shared source fields (press + release).
+                     Datalist "atem-sources" is populated live from the ATEM
+                     state, so PGM (10010), PVW (10011), Cam 1..n, color bars
+                     etc. all appear as autocomplete suggestions with their
+                     friendly names. Manual numeric entry still works. -->
+                <label>Source bei DRUCK <span style="color:var(--fg-faint)">(PGM/PVW/Input — Klick öffnet Liste)</span>
+                  <input data-f="in_atem_source" type="number" min="0" list="atem-sources"
+                    value="${inSrc}" placeholder="${inputNum}">
+                  <span data-role="src-press-name" class="hint" style="font-size:var(--fs-xs);margin-top:2px;display:block"></span>
                 </label>
                 <label style="margin-top:var(--space-3);display:block">
                   Source bei LOSLASSEN <span style="color:var(--fg-faint)">(leer = unverändert / one-shot wie bisher)</span>
-                  <input data-f="in_atem_source_release" type="number" min="0"
+                  <input data-f="in_atem_source_release" type="number" min="0" list="atem-sources"
                     value="${(d.in_atem_source_release == null) ? '' : d.in_atem_source_release}"
                     placeholder="(nur reagieren beim Drücken)">
+                  <span data-role="src-release-name" class="hint" style="font-size:var(--fs-xs);margin-top:2px;display:block"></span>
                 </label>
                 <p class="hint" style="margin:6px 0 0 0;font-size:var(--fs-xs)">
-                  Wenn beide Source-Felder gesetzt sind: gedrückt-halten schaltet um, loslassen schaltet zurück. Sonst Tap (one-shot).
+                  Tipp: für „Aux zeigt PGM" → Source = <code>Program</code> (10010), für „Aux zeigt PVW" → <code>Preview</code> (10011).
+                  Wenn beide Felder gesetzt sind: gedrückt-halten schaltet um, loslassen schaltet zurück. Sonst Tap (one-shot).
                 </p>
               </div>
               <!-- conditional Companion row -->
@@ -1596,6 +1649,9 @@ var qrcode=function(){var t=function(t,r){var e=t,n=g[r],o=null,i=0,a=null,u=[],
               const link = card.querySelector('.tally-qr a');
               if (link) { link.href = newUrl; link.textContent = newUrl; }
               renderQr(qrBox, newUrl);
+              refreshAtemRefs();
+            }
+            if (f === 'in_atem_source' || f === 'in_atem_source_release') {
               refreshAtemRefs();
             }
             // Reflect changes in the card header.
