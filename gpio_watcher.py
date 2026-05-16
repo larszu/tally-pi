@@ -106,6 +106,7 @@ def _device_to_binding(d):
         "bias": d.get("in_bias", "pull-up"),
         "debounce_ms": int(d.get("in_debounce_ms", 20)),
         "hold_release_ms": hold_ms,
+        "burst_min_edges": max(1, int(d.get("in_burst_min_edges") or 1)),
         "action": action,
         "_label": d.get("name") or d.get("id") or f"in_gpio_{bcm}",
     }
@@ -277,46 +278,53 @@ import threading as _threading
 
 
 class BurstTracker:
-    """Collapse a burst of edges (from a poorly debouncing button or noisy
-    line) into one logical press at the start and one logical release at
-    the end.
+    """Collapse a burst of edges from a noisy line into one logical press at
+    the start and one logical release at the end.
 
-    The first edge after a quiet period fires `run_press`. Each subsequent
-    edge resets a timer; when the timer expires without a new edge, the
-    button is considered released and `run_release` fires.
+    Two filters:
+
+    1. min_edges (>=1): how many edges must accumulate before press fires.
+       Default 1 = fire on first edge (legacy). Set higher to reject
+       isolated single-edge glitches — fibre-link crosstalk on adjacent
+       channels often shows up as 1-2 edge spikes, while a real button
+       press generates dozens. Press latency = (min_edges-1) * inter-edge.
+
+    2. release_s: how long the line must be silent before release fires.
+       Each new edge resets the timer.
 
     `is_at_idle()` (optional) is sampled when the release timer expires.
     If it returns False (the line is currently in the pressed/active
-    state — e.g. the user's finger is still on the button but contact
-    has briefly silenced edges), the release is POSTPONED — we
-    re-arm the timer and wait for either a new edge or for the line to
-    return to idle. This makes the tracker robust against intermittent
-    contacts that go quiet for hundreds of ms while still being held.
+    state — intermittent contact silent gap), the release is POSTPONED
+    until a new edge arrives or the line returns to idle.
 
     Edge count per burst is reported to the release callback so the user
     can see how noisy the contact is.
     """
 
-    __slots__ = ("label", "release_s", "_run_press", "_run_release",
-                 "_is_at_idle", "_lock", "_pressed", "_timer", "_edge_count")
+    __slots__ = ("label", "release_s", "min_edges",
+                 "_run_press", "_run_release", "_is_at_idle",
+                 "_lock", "_pressed", "_press_fired",
+                 "_timer", "_edge_count")
 
     def __init__(self, label, release_ms, run_press, run_release,
-                 is_at_idle=None):
+                 is_at_idle=None, min_edges=1):
         self.label = label
         self.release_s = max(release_ms, 1) / 1000.0
-        # run_press()       — called on first edge
+        self.min_edges = max(1, int(min_edges))
+        # run_press()        — called once the burst is confirmed real
         # run_release(count) — called when the burst settles, with the
         #                      number of edges seen in this burst
         self._run_press = run_press
         self._run_release = run_release
         self._is_at_idle = is_at_idle
         self._lock = _threading.Lock()
-        self._pressed = False
+        self._pressed = False        # we're currently inside a burst
+        self._press_fired = False    # have we fired the press callback?
         self._timer = None
         self._edge_count = 0
 
     def on_edge(self, _event_type):
-        fire_press = False
+        fire_press_now = False
         with self._lock:
             if self._timer is not None:
                 self._timer.cancel()
@@ -324,12 +332,16 @@ class BurstTracker:
             if not self._pressed:
                 self._pressed = True
                 self._edge_count = 0
-                fire_press = True
+                self._press_fired = False
             self._edge_count += 1
+            # Confirm press once we've accumulated enough edges.
+            if not self._press_fired and self._edge_count >= self.min_edges:
+                self._press_fired = True
+                fire_press_now = True
             t = _threading.Timer(self.release_s, self._on_quiet)
             t.daemon = True
             self._timer = t
-        if fire_press:
+        if fire_press_now:
             try:
                 self._run_press()
             except Exception as e:
@@ -337,9 +349,8 @@ class BurstTracker:
         t.start()
 
     def _on_quiet(self):
-        # If the line is still in the "pressed" state right now, the user
-        # is probably still holding the button (intermittent contact,
-        # silent gap in the burst). Re-arm and wait.
+        # Postpone release if the line is still in the pressed state
+        # (intermittent contact, silent gap in the burst).
         try:
             still_pressed = (self._is_at_idle is not None
                              and not self._is_at_idle())
@@ -353,13 +364,19 @@ class BurstTracker:
                 t.start()
                 return
             count = self._edge_count
+            had_press = self._press_fired
             self._pressed = False
+            self._press_fired = False
             self._timer = None
             self._edge_count = 0
-        try:
-            self._run_release(count)
-        except Exception as e:
-            log(f"burst release error on {self.label}: {e}")
+        # Only fire release if we actually fired press. A burst that
+        # ended before reaching min_edges was filtered out — no press
+        # was sent, so no release either, the gesture is invisible.
+        if had_press:
+            try:
+                self._run_release(count)
+            except Exception as e:
+                log(f"burst release error on {self.label}: {e}")
 
     def cancel(self):
         with self._lock:
@@ -423,6 +440,7 @@ def _build_trackers(by_offset, req=None):
             run_press=make_press(),
             run_release=make_release(),
             is_at_idle=make_idle_check(),
+            min_edges=int(b.get("burst_min_edges") or 1),
         )
     return trackers
 
