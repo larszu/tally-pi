@@ -455,11 +455,22 @@ def watch_loop():
             bcm = int(b["bcm"])
         except Exception:
             continue
+        # If the binding uses the software burst tracker, kernel-side
+        # debounce would actively HIDE the signal we want to detect —
+        # a fast-toggling fiber-link output ("carrier on" = pressed)
+        # may never stay stable for 20 ms, so libgpiod with
+        # debounce=20 ms emits zero edges and the watcher hears
+        # nothing even though a direct poll sees the activity. Disable
+        # kernel debounce entirely; all filtering happens in the
+        # burst tracker which is what it's there for.
+        hold_ms = int(b.get("hold_release_ms", 0) or 0)
+        configured_debounce = int(b.get("debounce_ms", 20))
+        effective_debounce = 0 if hold_ms > 0 else configured_debounce
         config[bcm] = gpiod.LineSettings(
             direction=Direction.INPUT,
             edge_detection=Edge.BOTH,
             bias=bias_of(b.get("bias")),
-            debounce_period=timedelta(milliseconds=int(b.get("debounce_ms", 20))),
+            debounce_period=timedelta(milliseconds=effective_debounce),
         )
         by_offset[bcm] = b
 
