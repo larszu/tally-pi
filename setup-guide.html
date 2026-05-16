@@ -351,6 +351,9 @@
   .gtile.in-lo  .gval { color:#fcd34d; }
   .gtile.out    { border-color:rgba(96,165,250,.45); background:rgba(96,165,250,.07); }
   .gtile.out    .gval { color:#93c5fd; }
+  .gtile.out-hi { border-color:rgba(96,165,250,.7); background:rgba(96,165,250,.18); box-shadow:0 0 0 1px rgba(96,165,250,.2), 0 0 14px rgba(96,165,250,.18); }
+  .gtile.out-lo { border-color:var(--border); background:var(--bg-2); }
+  .gtile.out-lo .gval { color:var(--fg-faint); }
   .gtile.sys    { border-color:rgba(167,139,250,.4); background:rgba(167,139,250,.06); }
   .gtile.sys    .gval { color:#c4b5fd; }
   .gtile .pressed {
@@ -1066,7 +1069,7 @@ var qrcode=function(){var t=function(t,r){var e=t,n=g[r],o=null,i=0,a=null,u=[],
     const dirEl = document.getElementById('d'+bcm);
     const valEl = document.getElementById('v'+bcm);
     const consEl = document.getElementById('c'+bcm);
-    el.classList.remove('free','in-hi','in-lo','out','sys');
+    el.classList.remove('free','in-hi','in-lo','out','out-hi','out-lo','sys');
     el.querySelectorAll('.pressed,.bound').forEach(n => n.remove());
 
     if (!s) { el.classList.add('free'); return; }
@@ -1086,6 +1089,9 @@ var qrcode=function(){var t=function(t,r){var e=t,n=g[r],o=null,i=0,a=null,u=[],
       el.classList.add('sys');
     } else if (s.direction === 'out') {
       el.classList.add('out');
+      // Differentiate HIGH/LOW visually so the user can see lamp state.
+      if (s.value === 0) el.classList.add('out-lo');
+      else if (s.value === 1) el.classList.add('out-hi');
     } else if (s.direction === 'in') {
       // "Pressed" only when the level deviates from the pull bias' resting
       // state. With pull-up: idle=HIGH, pressed=LOW. With pull-down:
@@ -1096,7 +1102,9 @@ var qrcode=function(){var t=function(t,r){var e=t,n=g[r],o=null,i=0,a=null,u=[],
         (s.bias === 'pd' && s.value === 1);
       if (s.value === 0) el.classList.add('in-lo');
       else if (s.value === 1) el.classList.add('in-hi');
-      else el.classList.add('free');
+      // value === null means the pin is claimed but the level hasn't been
+      // read this tick — leave the tile without a level class, but DON'T
+      // fall back to "free" (that would suggest the pin is unused).
       if (pressed && s.claimed) {
         const tag = document.createElement('span');
         tag.className = 'pressed';
@@ -1331,10 +1339,14 @@ var qrcode=function(){var t=function(t,r){var e=t,n=g[r],o=null,i=0,a=null,u=[],
       return info.long || info.short || '';
     }
 
+    let _atemSourceListHash = '';
     function refreshAtemSourceList(){
       // Build the global datalist used by all atem-source inputs. PGM/PVW
       // are surfaced first so the user discovers them, then regular inputs
-      // by numeric order.
+      // by numeric order. We hash the entries and only touch the DOM when
+      // the list actually changes — pollAtem fires every 1.5 s, and
+      // rewriting innerHTML every poll can clobber an actively-edited
+      // input's value in some browsers.
       const dl = document.getElementById('atem-sources');
       if (!dl) return;
       const entries = Object.entries(atemInputs)
@@ -1347,6 +1359,9 @@ var qrcode=function(){var t=function(t,r){var e=t,n=g[r],o=null,i=0,a=null,u=[],
         if (aProg !== bProg) return aProg - bProg;
         return a[0] - b[0];
       });
+      const hash = JSON.stringify(entries);
+      if (hash === _atemSourceListHash) return;
+      _atemSourceListHash = hash;
       dl.innerHTML = entries.map(([n, name]) =>
         `<option value="${n}" label="${escHtml(name)} (${n})">${escHtml(name)}</option>`
       ).join('');
@@ -1661,7 +1676,20 @@ var qrcode=function(){var t=function(t,r){var e=t,n=g[r],o=null,i=0,a=null,u=[],
               refreshAtemRefs();
             }
             if (f === 'in_atem_source' || f === 'in_atem_source_release') {
-              refreshAtemRefs();
+              // Only update the name hint under this specific input. DO NOT
+              // call refreshAtemRefs here — it would rebuild the global
+              // <datalist> on every keystroke, and Chromium has been
+              // observed to clobber the input's value when the associated
+              // datalist's options are replaced while the field is being
+              // edited (the "Source bei Druck verschwindet beim Speichern"
+              // bug). The datalist gets rebuilt by pollAtem when needed.
+              const role = (f === 'in_atem_source')
+                ? 'src-press-name' : 'src-release-name';
+              const hintEl = card.querySelector('[data-role=' + role + ']');
+              if (hintEl) {
+                const nm = atemSourceName(v === '' ? devices[i].input : v);
+                hintEl.textContent = nm ? ('→ ' + nm) : '';
+              }
             }
             // Reflect changes in the card header.
             const head = card.querySelector('.tally-card-head .name');
