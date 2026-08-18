@@ -1,4 +1,4 @@
-# TW Broadcast Interface
+# tally-pi
 
 Raspberry Pi 5 based broadcast tally / trigger / control appliance built on
 top of [Bitfocus Companion](https://bitfocus.io/companion/). Turns a Pi
@@ -34,28 +34,30 @@ functions**, freely combinable per device:
 
 Prerequisites: any Raspberry Pi 5 (Pi 4 also works) running either the
 [Companion Pi image](https://github.com/bitfocus/companion-pi) **or**
-plain Raspberry Pi OS with Companion installed at `/opt/companion/`. A
-non-root user named `talentwerk` must exist (Companion Pi default).
+plain Raspberry Pi OS with Companion installed at `/opt/companion/`. The
+installer sets up the kiosk for the Pi's regular user — the account that
+runs `sudo`, or the lowest-numbered UID ≥ 1000 when the script is piped
+straight into root. Override with `TARGET_USER=<name>`.
 
 One-shot install — pipe the bootstrap through `bash`:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/larszu/tw-broadcast-interface/main/bootstrap.sh \
+curl -fsSL https://raw.githubusercontent.com/larszu/tally-pi/main/bootstrap.sh \
   | sudo bash
 ```
 
 …or clone first if you want to inspect it:
 
 ```bash
-git clone https://github.com/larszu/tw-broadcast-interface.git
-cd tw-broadcast-interface
+git clone https://github.com/larszu/tally-pi.git
+cd tally-pi
 sudo bash bootstrap.sh
 ```
 
 The installer:
 
 1. Installs apt packages (X.org, Chromium, libgpiod, etc.).
-2. Clones/updates this repo to `/opt/tw-broadcast-interface`.
+2. Clones/updates this repo to `/opt/tally-pi`.
 3. Enables I²C and HDMI safety flags in `/boot/firmware/config.txt`.
 4. Deploys all Python services to `/opt/pi-guide` and `/opt/pi-status`.
 5. Installs systemd units + udev rules.
@@ -75,7 +77,7 @@ files, and bounces the services. No reboot required for updates.
 ### Deploying a feature branch
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/larszu/tw-broadcast-interface/<branch>/bootstrap.sh \
+curl -fsSL https://raw.githubusercontent.com/larszu/tally-pi/<branch>/bootstrap.sh \
   | sudo REPO_BRANCH=<branch> bash
 ```
 
@@ -84,10 +86,10 @@ curl -fsSL https://raw.githubusercontent.com/larszu/tw-broadcast-interface/<bran
 From a working copy on your dev machine:
 
 ```bash
-tar --exclude='.git' -czf twbi.tgz *
-scp twbi.tgz talentwerk@<pi-ip>:/tmp/
-ssh -tt talentwerk@<pi-ip> "cd /tmp && rm -rf twbi && mkdir twbi && \
-  tar xzf twbi.tgz -C twbi && cd twbi && \
+tar --exclude='.git' -czf tally-pi.tgz *
+scp tally-pi.tgz <user>@<pi-ip>:/tmp/
+ssh -tt <user>@<pi-ip> "cd /tmp && rm -rf tally-pi && mkdir tally-pi && \
+  tar xzf tally-pi.tgz -C tally-pi && cd tally-pi && \
   echo '<sudo-password>' | sudo -S bash update-on-pi.sh"
 ```
 

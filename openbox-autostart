@@ -3,7 +3,7 @@ for i in $(seq 1 60); do
   if curl -fs http://localhost:8000/ >/dev/null 2>&1; then break; fi
   sleep 1
 done
-rm -rf /home/talentwerk/.config/chromium/Singleton* 2>/dev/null
+rm -rf "$HOME/.config/chromium/Singleton"* 2>/dev/null
 chromium \
   --no-first-run --disable-translate --disable-infobars \
   --noerrdialogs --disable-session-crashed-bubble --disable-features=TranslateUI \
