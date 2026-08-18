@@ -1,34 +1,65 @@
+<div align="center">
+
 # tally-pi
 
-Raspberry Pi 5 based broadcast tally / trigger / control appliance built on
-top of [Bitfocus Companion](https://bitfocus.io/companion/). Turns a Pi
-with a 40-pin header, an HDMI screen and (optionally) an I²C OLED into a
-self-contained ATEM controller with hardware tally lamps and trigger
-buttons — all configurable through a simple web UI.
+**ATEM tally lamps, browser tally and GPIO trigger buttons — on a Raspberry Pi.**
+
+A self-contained broadcast appliance built on top of
+[Bitfocus Companion](https://bitfocus.io/companion/): hardware tally lamps,
+smartphone tally pages and physical trigger buttons, all configured from one
+web UI. No build step, no cloud, no framework.
+
+[![syntax](https://github.com/larszu/tally-pi/actions/workflows/syntax.yml/badge.svg)](https://github.com/larszu/tally-pi/actions/workflows/syntax.yml)
+![platform](https://img.shields.io/badge/platform-Raspberry%20Pi%204%20%2F%205-c51a4a)
+![python](https://img.shields.io/badge/python-stdlib%20only-3776ab)
+
+<img src="docs/img/setup-ui.png" alt="tally-pi setup UI, Tally tab" width="820">
+
+</div>
 
 ## What it does
 
-Per camera (or any ATEM source) you can configure **three independent
-functions**, freely combinable per device:
+Turn a Pi with a 40-pin header, an HDMI screen and (optionally) an I²C OLED
+into an ATEM controller. Per camera (or any ATEM source) you configure
+**three independent functions**, freely combinable per device:
 
-1. **📱 Browser-Tally** — a QR-code URL any smartphone/tablet can open;
-   the page paints itself red (PGM) / green (PVW) / black (safe) directly
-   from live ATEM state.
-2. **💡 Tally-Lampe (GPIO output)** — the Pi watches the ATEM input you
-   pick and drives a chosen GPIO pin accordingly. Polarity is per-device:
-   active-LOW (drives the pin to GND when on-air, for opto-coupled relay
-   modules) or active-HIGH (3.3 V on-air, for direct-LED + resistor).
-3. **🔘 Trigger-Taster (GPIO input)** — an external short-to-GND on a
-   chosen GPIO fires one of several actions:
-   - **ATEM Aux setzen** — change an Aux output's source.
-   - **ATEM PGM / PVW setzen** — switch the program / preview bus.
-   - **Companion-Button drücken** — press a Companion button at a chosen
-     page/row/column via Companion's HTTP API.
+| | Function | What it gives you |
+|---|---|---|
+| 📱 | **Browser-Tally** | A QR-code URL any smartphone or tablet opens; the page paints itself red (PGM) / green (PVW) / black (safe) straight from live ATEM state. |
+| 💡 | **Tally-Lampe** | The Pi watches your ATEM input and drives a GPIO pin. Polarity per device: active-LOW for opto-coupled relay modules, active-HIGH for a direct LED. |
+| 🔘 | **Trigger-Taster** | A short-to-GND on a GPIO fires an action: set an ATEM Aux, switch PGM / PVW, or press a Companion button over its HTTP API. |
 
-   Each trigger has **press source + optional release source** (hold-to-
-   switch behaviour) and a software **burst tracker** that handles noisy
-   inputs (fibre-optic GPIO converters, long unshielded cables) by
-   collapsing a flurry of edges into one logical press + one release.
+Each trigger has **press source + optional release source** (hold-to-switch
+behaviour) and a software **burst tracker** that handles noisy inputs —
+fibre-optic GPIO converters, long unshielded cables — by collapsing a flurry
+of edges into one logical press and one release.
+
+## Screenshots
+
+Per-device configuration — the three functions stack inside one collapsible
+card, with a live PGM/PVW/SAFE badge in the header:
+
+<img src="docs/img/device-card.png" alt="Device card with Browser-Tally, Tally-Lampe and Trigger-Taster" width="820">
+
+Live diagnostics — what the software *wants* each pin to do next to what the
+kernel actually reports, plus an event log you can copy straight into a bug
+report:
+
+<img src="docs/img/diagnostics.png" alt="Tally diagnostics table and live event log" width="820">
+
+The browser tally as it looks on a phone — full-bleed colour, source name
+and bus label, nothing else to misread across a dark studio:
+
+<p>
+  <img src="docs/img/browser-tally-pgm.png" alt="Browser tally showing PGM (red)" width="200">
+  <img src="docs/img/browser-tally-pvw.png" alt="Browser tally showing PVW (green)" width="200">
+</p>
+
+<sub>Captured by `docs/screenshots.py` — headless Chromium driving the real
+`guide_server.py` against demo data (three cameras, a stubbed ATEM on
+PGM 1 / PVW 2). The empty SW/HW columns and the `gpiod not available` note
+in the diagnostics shot are expected: that host has no GPIO hardware. Run
+the script yourself to regenerate them.</sub>
 
 ## Quick install — fresh Pi
 
