@@ -1,5 +1,5 @@
 [Unit]
-Description=TW Broadcast Interface - Numato USB GPIO watcher (hot-plug)
+Description=tally-pi Numato USB GPIO watcher (hot-plug)
 After=network.target companion.service
 
 [Service]

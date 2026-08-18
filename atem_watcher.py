@@ -336,7 +336,7 @@ def cmd_listener_thread():
         try:
             # 0o666: any local user can send commands. This is a LAN-only
             # appliance socket (not reachable over the network), so opening
-            # it up lets non-root users like `talentwerk` test set_aux via
+            # it up lets the Pi's regular (non-root) user test set_aux via
             # `nc -U /run/pi-guide/atem-cmd.sock` without sudo.
             os.chmod(str(CMD_SOCKET), 0o666)
         except Exception:

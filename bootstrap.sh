@@ -1,19 +1,19 @@
 #!/bin/bash
-# TW Broadcast Interface — one-shot installer for a fresh Companion Pi.
+# tally-pi — one-shot installer for a fresh Companion Pi.
 #
-# Usage on a brand new Pi (already flashed with Companion Pi image,
-# SSH enabled, logged in as user 'talentwerk'):
+# Usage on a brand new Pi (already flashed with Companion Pi image
+# and SSH enabled), run over SSH as the Pi's regular user:
 #
-#   curl -fsSL https://raw.githubusercontent.com/larszu/tw-broadcast-interface/main/bootstrap.sh | sudo bash
+#   curl -fsSL https://raw.githubusercontent.com/larszu/tally-pi/main/bootstrap.sh | sudo bash
 #
 # or clone first:
 #
-#   git clone https://github.com/larszu/tw-broadcast-interface.git
-#   cd tw-broadcast-interface && sudo bash bootstrap.sh
+#   git clone https://github.com/larszu/tally-pi.git
+#   cd tally-pi && sudo bash bootstrap.sh
 #
 # To deploy from a non-main branch (e.g. while testing a feature):
 #
-#   curl -fsSL https://raw.githubusercontent.com/larszu/tw-broadcast-interface/<branch>/bootstrap.sh \
+#   curl -fsSL https://raw.githubusercontent.com/larszu/tally-pi/<branch>/bootstrap.sh \
 #     | sudo REPO_BRANCH=<branch> bash
 #
 # The script is idempotent: re-running it updates to the current
@@ -21,16 +21,29 @@
 
 set -euo pipefail
 
-REPO_URL="${REPO_URL:-https://github.com/larszu/tw-broadcast-interface.git}"
+REPO_URL="${REPO_URL:-https://github.com/larszu/tally-pi.git}"
 REPO_BRANCH="${REPO_BRANCH:-main}"
-REPO_DIR="${REPO_DIR:-/opt/tw-broadcast-interface}"
-TARGET_USER="${TARGET_USER:-talentwerk}"
+REPO_DIR="${REPO_DIR:-/opt/tally-pi}"
+# The desktop/kiosk user. Defaults to whoever invoked sudo, falling back to
+# the lowest-numbered regular account (UID >= 1000) when the script is piped
+# straight into root. Override with TARGET_USER=<name>.
+default_target_user() {
+    if [ -n "${SUDO_USER:-}" ] && [ "$SUDO_USER" != "root" ]; then
+        printf '%s' "$SUDO_USER"
+        return
+    fi
+    awk -F: '$3 >= 1000 && $3 < 65534 { print $3, $1 }' /etc/passwd \
+        | sort -n | head -1 | cut -d' ' -f2
+}
+TARGET_USER="${TARGET_USER:-$(default_target_user)}"
 
 log() { printf '\033[1;34m[bootstrap]\033[0m %s\n' "$*"; }
 die() { printf '\033[1;31m[error]\033[0m %s\n' "$*" >&2; exit 1; }
 
 [ "$(id -u)" -eq 0 ] || die "Run this as root (sudo bash bootstrap.sh)"
+[ -n "$TARGET_USER" ] || die "No regular user found; re-run with TARGET_USER=<name>"
 id "$TARGET_USER" >/dev/null 2>&1 || die "User '$TARGET_USER' does not exist"
+log "Target user: $TARGET_USER"
 
 log "1/7 Installing apt packages"
 export DEBIAN_FRONTEND=noninteractive
