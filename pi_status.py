@@ -1,9 +1,7 @@
 #!/usr/bin/env python3
 """Companion Pi status display on SSD1306 128x32 I2C OLED."""
 import json
-import pwd
 import re
-import socket
 import subprocess
 import time
 from pathlib import Path
@@ -60,23 +58,6 @@ def gpio_states() -> list:
     return [(bcm, states.get(bcm, "?")) for bcm in bcm_list]
 
 
-def ssh_user() -> str:
-    try:
-        for p in pwd.getpwall():
-            if p.pw_uid >= 1000 and p.pw_shell not in ("/usr/sbin/nologin", "/bin/false"):
-                return p.pw_name
-    except Exception:
-        pass
-    return "pi"
-
-
-def hostname() -> str:
-    try:
-        return socket.gethostname()
-    except Exception:
-        return "pi"
-
-
 def uptime() -> str:
     try:
         s = float(Path("/proc/uptime").read_text().split()[0])
@@ -111,8 +92,6 @@ def main() -> None:
         ip = current_ip()
         temp = cpu_temp()
         up = uptime()
-        host = hostname()
-        user = ssh_user()
         gpio = gpio_states()
 
         gpio_tokens = [f"{bcm}:{v}" for bcm, v in gpio]
