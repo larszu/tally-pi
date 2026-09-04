@@ -273,6 +273,81 @@ def load_tally_config():
         return dict(DEFAULT_TALLY_CONFIG)
 
 
+# Felder, die der PI besitzt und ein Poster nicht mitbringt.
+#
+# WARUM ES DIESE LISTE GIBT (gemessen 2026-09-04). `POST /tally-config` schrieb
+# das gepostete Objekt vollstaendig; `load_tally_config` fuellt fehlende
+# Schluessel aus DEFAULT_TALLY_CONFIG nach, und dort ist `atem_ip` leer.
+#
+# Der Planer erzeugt eine Datei mit genau `{id, name, input}` je Geraet -- und
+# zwar mit Absicht: `tallyMap.ts` laesst `out_gpio`, `out_trigger` und `me`
+# ausdruecklich weg, weil das Verdrahtungs-Entscheidungen an der Hardware sind
+# und der Plan sie nicht kennt. Woertlich dort: "eine erfundene Pin-Nummer
+# waere schlimmer als ein fehlendes Feld".
+#
+# Genau diese Zurueckhaltung wurde hier bestraft: wer die Planer-Datei postete
+# (oder von Hand nach tally.json kopierte), loeschte `atem_ip` und JEDE
+# GPIO-Zuordnung. `tally_state_for_device` liefert danach fuer alles "offline",
+# und keine Lampe schaltet mehr. Der Medienbruch war damit nicht bloss
+# unbequem, er war zerstoererisch.
+#
+# Die Regel jetzt: der Poster besitzt die Rollen-Liste (id, name, input, me,
+# aux). Der Pi besitzt die Verdrahtung. Ein Feld, das der Poster NICHT als
+# Schluessel mitschickt, bleibt stehen; ein Feld, das er mitschickt -- auch
+# leer oder null --, gewinnt. Absent heisst "weiss ich nicht", nicht "loesch
+# das".
+PI_OWNED_DEVICE_FIELDS = (
+    "out_gpio",
+    "out_trigger",
+    "in_gpio",
+    "in_edge",
+    "in_action_type",
+    "in_atem_aux",
+    "in_atem_source",
+    "in_companion_page",
+    "in_companion_row",
+    "in_companion_col",
+)
+
+
+def merge_tally_config(new_cfg, old_cfg):
+    """Neue Konfiguration ueber die alte legen, ohne die Verdrahtung zu verlieren.
+
+    Reine Funktion -- ohne Datei, ohne Netz, ohne Hardware pruefbar.
+    """
+    if not isinstance(new_cfg, dict):
+        return new_cfg
+    out = dict(new_cfg)
+
+    # Top-Level: nur nachtragen, was gar nicht mitgeschickt wurde.
+    for key in DEFAULT_TALLY_CONFIG:
+        if key == "devices":
+            continue
+        if key not in out and isinstance(old_cfg, dict) and key in old_cfg:
+            out[key] = old_cfg[key]
+
+    old_by_id = {}
+    for dev in (old_cfg or {}).get("devices") or []:
+        if isinstance(dev, dict) and dev.get("id"):
+            old_by_id[dev["id"]] = dev
+
+    merged = []
+    for dev in out.get("devices") or []:
+        if not isinstance(dev, dict):
+            continue
+        alt_dev = old_by_id.get(dev.get("id"))
+        if not alt_dev:
+            merged.append(dev)
+            continue
+        neu_dev = dict(dev)
+        for field in PI_OWNED_DEVICE_FIELDS:
+            if field not in neu_dev and field in alt_dev:
+                neu_dev[field] = alt_dev[field]
+        merged.append(neu_dev)
+    out["devices"] = merged
+    return out
+
+
 def save_tally_config(cfg):
     TALLY_CONFIG_FILE.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp = tempfile.mkstemp(dir=str(TALLY_CONFIG_FILE.parent), prefix=".tally.", suffix=".tmp")
@@ -1171,6 +1246,9 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             body = self._read_body()
             try:
                 data = json.loads(body or b"{}")
+                # Die Verdrahtung des Pi ueberlebt einen Post, der sie nicht
+                # kennt. Siehe merge_tally_config.
+                data = merge_tally_config(data, load_tally_config())
                 validate_tally_config(data)
                 save_tally_config(data)
                 reconfigure_tally_outputs()
