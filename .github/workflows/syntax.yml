@@ -8,14 +8,20 @@ jobs:
   check:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: '3.11'
       - name: Compile Python services
         run: python -m compileall -q *.py
       - name: Check shell scripts
         run: for f in *.sh; do bash -n "$f"; done
+      # Fragt die action.yml jedes Pins nach ihrer Node-Version, statt sie in
+      # einem Kommentar zu behaupten. Am 2026-09-05 liefen hier BEIDE Actions
+      # auf dem abgekuendigten node20, und niemandem ist es aufgefallen -- die
+      # Warnung steht am Ende jedes Laufs, und genau deshalb liest sie keiner.
+      - name: Actions laufen auf einer unterstuetzten Node-Version
+        run: python scripts/actions_node_runtime.py
       # Bis 2026-09-04 pruefte dieses Repo NUR Syntax. Die beiden Stellen mit
       # dem groessten stillen Schadenspotenzial -- das ATEM-Paketlayout und die
       # Entscheidung, ob eine Tally-Lampe rot zeigt -- sind reine Funktionen und
