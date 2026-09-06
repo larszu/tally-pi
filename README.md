@@ -25,7 +25,7 @@ into an ATEM controller. Per camera (or any ATEM source) you configure
 
 | | Function | What it gives you |
 |---|---|---|
-| 📱 | **Browser-Tally** | A QR-code URL any smartphone or tablet opens; the page paints itself red (PGM) / green (PVW) / black (safe) straight from live ATEM state. |
+| 📱 | **Browser-Tally** | A QR-code URL any smartphone or tablet opens; the page paints itself red (PGM) / green (PVW) / black (safe) straight from live ATEM state — and amber, in words, whenever it can no longer vouch for what it shows. Optional beep and vibration when you go live. |
 | 💡 | **Tally-Lampe** | The Pi watches your ATEM input and drives a GPIO pin. Polarity per device: active-LOW for opto-coupled relay modules, active-HIGH for a direct LED. |
 | 🔘 | **Trigger-Taster** | A short-to-GND on a GPIO fires an action: set an ATEM Aux, switch PGM / PVW, or press a Companion button over its HTTP API. |
 
@@ -147,6 +147,25 @@ Exit kiosk with <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>Q</kbd>.
 4. Expand the blocks you need:
    - **📱 Browser-Tally** is always available; the QR code already works.
      Optionally list Aux outputs that should also count as PGM.
+
+     The page never shows a reassuring colour it cannot back up. Red is PGM,
+     green is PVW, near-black is safe — and those three are the *only* states
+     that stay silent. Anything else is amber and says so in words:
+     `MISCHER NICHT ERREICHBAR` (the Pi cannot see the mixer),
+     `KEINE VERBINDUNG` (the page has heard nothing from the Pi for eight
+     seconds), `KEINE AUSKUNFT` (the Pi does not know this device). The
+     stream sends the state every three seconds even when nothing changes,
+     so a connection that dies quietly — the normal failure of a phone on
+     mobile data — is visible rather than frozen on the last colour.
+
+     Tap **Ton aktivieren** once and the page beeps and vibrates the moment
+     you go to PGM. Browsers only allow sound after a tap, so the button
+     tells you whether it actually armed; a silent alarm you believe in is
+     worse than none.
+
+     > **Reach is your job, not the Pi's.** The page is served on the house
+     > LAN. A contributor joining from somewhere else needs a tunnel or a VPN
+     > you provide — this repo builds no relay and no cloud account.
    - **💡 Tally-Lampe** — pick a free GPIO pin and an *Auslöser* (PGM /
      PGM+PVW / manual) plus *Pegel bei on-air* (LOW for relay modules
      with opto-coupler input, HIGH for direct-LED + series resistor).
