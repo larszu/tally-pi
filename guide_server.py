@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Serves setup-guide.html, live GPIO status, and bindings API on port 8080."""
+import html as html_mod
 import http.server
 import json
 import os
@@ -23,6 +24,70 @@ TALLY_CONFIG_FILE = Path("/opt/pi-guide/tally.json")
 EVENT_LOG_FILE = Path("/opt/pi-guide/events.log")
 EVENT_LOG_MAX = 1_000_000  # bytes before rotation
 EVENT_LOG_LOCK = threading.Lock()
+
+# ---------------------------------------------------------------------------
+# BEDARF 86 — die Tally-Seite eines entfernten Beitragenden.
+#
+#   > Remote guests have no reliable way to know they are live; the in-room
+#   > tally chain is solved and stops at the venue boundary.
+#
+# Belegt durch steveseguin/vdo.ninja#569 (Tally im Director-View, 2020) und
+# #654 (On-Air-Anzeige und HOERBARER Alarm fuer Gaeste, 2021) — beide seit
+# Jahren offen.
+#
+# WAS HIER NICHT GEBAUT WIRD: die Erreichbarkeit. Der Pi steht im Haus-LAN;
+# ein Gast im Homeoffice kommt ohne Tunnel oder Relay nicht heran. Ein Relay
+# waere ein Cloud-Dienst mit Anmeldung, Hosting und NAT-Durchstich — das ist
+# kein Detail dieser Seite, sondern ein eigenes Produkt, und es widerspraeche
+# der Zusage dieses Repos („No build step, no cloud, no framework"). Wer die
+# Seite von aussen erreichbar macht, tut das mit seinem eigenen Tunnel.
+#
+# WAS HIER GEBAUT WIRD: dass die Seite NICHT LUEGT, wenn sie die Verbindung
+# verliert. Genau das ist der Teil, der ueber eine Fernstrecke bricht, und
+# genau der fehlte:
+#
+#   1. Der Heartbeat war ein SSE-KOMMENTAR (`: ping`). Kommentare loesen
+#      `onmessage` NICHT aus — die Seite konnte ihn also nicht sehen. Eine
+#      halboffene Verbindung durch ein NAT (die Normallage einer Fernstrecke)
+#      liefert nichts mehr, feuert aber auch kein `onerror`. Die Seite zeigte
+#      den letzten Zustand weiter. FUER IMMER.
+#   2. Es gab keinen Wachhund auf der Seite.
+#   3. `offline` war ein dunkles Blau (#1e293b) neben `safe` (#111) — auf
+#      einem Handy im Tageslicht nicht unterscheidbar.
+#   4. Ein leerer Zustand fiel auf `safe` zurueck, also auf die BERUHIGENDE
+#      Antwort. `tests/test_tally_state.py` haelt fuer die Server-Funktion
+#      ausdruecklich fest: „Ein unbekannter Zustand darf nicht wie 'sicher'
+#      aussehen." Fuer die Seite galt das Gegenteil.
+#
+# Die Zahlen stehen hier und werden in die Seite eingesetzt, damit Sender und
+# Wachhund nicht getrennt voneinander verstellt werden koennen.
+# ---------------------------------------------------------------------------
+
+#: Abstand, in dem der Stream den Zustand auch UNVERAENDERT sendet (Sekunden).
+TALLY_HEARTBEAT_S = 3.0
+#: Ab wann die Seite ihren Zustand fuer veraltet erklaert (Sekunden).
+#: Bewusst mehr als das Doppelte: ein einzelner verlorener Herzschlag ueber
+#: eine Mobilfunkstrecke ist normal, zwei sind ein Befund.
+TALLY_STALE_S = 8.0
+
+
+def tally_stream_should_send(state, last_state, seconds_since_send,
+                             heartbeat_s=TALLY_HEARTBEAT_S):
+    """Soll der Stream jetzt senden?
+
+    Zwei Gruende, und beide zaehlen: der Zustand hat sich GEAENDERT, oder der
+    letzte Versand ist zu lange her. Der zweite ist der neue: ohne ihn kann
+    die Seite eine tote Leitung nicht von einem ruhigen Mischer unterscheiden,
+    und der Unterschied ist genau das, was ein Gast wissen muss.
+
+    `last_state is None` heisst „noch nie gesendet" und muss senden -- sonst
+    wartet ein frisch verbundener Gast bis zum naechsten Schnitt auf seine
+    erste Auskunft.
+    """
+    if last_state is None or state != last_state:
+        return True
+    return seconds_since_send >= heartbeat_s
+
 
 # Physical header pin for each BCM GPIO (2..27)
 BCM_TO_PIN = {
@@ -976,6 +1041,9 @@ def read_event_log(limit=200):
         return []
 
 
+# BEDARF 86 — die Seite. `__STALE_MS__` und `__HEARTBEAT_MS__` werden beim
+# Ausliefern aus `TALLY_STALE_S`/`TALLY_HEARTBEAT_S` eingesetzt, damit Sender
+# und Wachhund nicht getrennt voneinander verstellt werden koennen.
 TALLY_PAGE = """<!doctype html>
 <html><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -988,32 +1056,110 @@ TALLY_PAGE = """<!doctype html>
   #bg.pgm{background:#e11d48}
   #bg.pvw{background:#16a34a}
   #bg.safe{background:#111}
-  #bg.offline{background:#1e293b}
+  /* Kein Zustand, dem man trauen darf, sieht aus wie `safe`. Vorher war
+     `offline` ein dunkles Blau neben Fast-Schwarz — auf einem Handy im
+     Tageslicht nicht unterscheidbar, und damit die gefaehrlichste Anzeige
+     ueberhaupt: der Gast entspannt sich, weil die Seite dunkel ist. */
+  #bg.offline{background:#b45309}
+  #bg.unknown{background:#b45309}
+  #bg.stale{background:repeating-linear-gradient(45deg,#b45309 0 28px,#111 28px 56px)}
+  /* Der grosse Text sagt es AUCH IN WORTEN. Farbe allein traegt die Auskunft
+     nicht: ein Teil der Leute unterscheidet Rot und Gruen nicht, und ein
+     gesprungener Bildschirm gar nichts. */
+  #big{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;
+       font-size:clamp(28px,9vw,80px);font-weight:800;letter-spacing:.04em;
+       text-align:center;padding:0 6vw;text-shadow:0 2px 8px rgba(0,0,0,.6);
+       pointer-events:none}
+  #big.hidden{display:none}
+  #sound{position:fixed;bottom:10px;right:10px;font-size:12px;padding:6px 10px;
+         border:1px solid rgba(255,255,255,.4);border-radius:6px;background:rgba(0,0,0,.35);
+         color:#fff;cursor:pointer}
+  #sound.armed{opacity:.35}
   body:fullscreen #label,body:fullscreen #state{display:none}
 </style></head><body>
-<div id="bg" class="offline"></div>
+<div id="bg" class="unknown"></div>
+<div id="big">VERBINDE ...</div>
 <div id="label">__NAME__</div>
 <div id="state">verbinde ...</div>
+<button id="sound" type="button">Ton aktivieren</button>
 <script>
 (function(){
+  var STALE_MS=__STALE_MS__, HEARTBEAT_MS=__HEARTBEAT_MS__;
   var bg=document.getElementById('bg');
   var st=document.getElementById('state');
+  var big=document.getElementById('big');
+  var soundBtn=document.getElementById('sound');
+  var lastSeen=0, current='unknown', audio=null;
+
+  // Was gross auf dem Bildschirm steht. `safe` und `pgm` brauchen es nicht in
+  // Worten -- die Farbe fuellt das ganze Bild und ist eindeutig. Alles andere
+  // ist ein Zustand, den der Gast NICHT erraten koennen soll.
+  var WORT={pgm:'', pvw:'', safe:'',
+            offline:'MISCHER NICHT ERREICHBAR',
+            unknown:'KEINE AUSKUNFT',
+            stale:'KEINE VERBINDUNG'};
+
   function set(state){
-    bg.className='';
-    bg.classList.add(state);
+    if(!WORT.hasOwnProperty(state)) state='unknown';
+    var vorher=current;
+    current=state;
+    bg.className=state;
     st.textContent=state.toUpperCase();
+    if(WORT[state]){ big.textContent=WORT[state]; big.classList.remove('hidden'); }
+    else { big.classList.add('hidden'); }
+    // Der Ton kommt beim EINTRITT in PGM, nicht bei jedem Herzschlag.
+    if(state==='pgm' && vorher!=='pgm') alarm();
   }
+
+  // vdo.ninja#654 verlangt den hoerbaren Alarm ausdruecklich. Browser lassen
+  // Ton erst nach einer Geste zu -- deshalb der Knopf, und deshalb sagt die
+  // Seite auch, ob der Ton wirklich scharf ist. Ein stiller Alarm, den man
+  // fuer scharf haelt, ist schlimmer als gar keiner.
+  function armSound(){
+    try{
+      var Ctx=window.AudioContext||window.webkitAudioContext;
+      if(!Ctx) return;
+      audio=new Ctx();
+      if(audio.resume) audio.resume();
+      soundBtn.textContent='Ton ist an';
+      soundBtn.classList.add('armed');
+    }catch(e){ soundBtn.textContent='Ton nicht moeglich'; }
+  }
+  function alarm(){
+    if(navigator.vibrate) try{ navigator.vibrate([120,60,120]); }catch(e){}
+    if(!audio) return;
+    try{
+      var o=audio.createOscillator(), g=audio.createGain();
+      o.type='square'; o.frequency.value=880;
+      g.gain.value=0.12;
+      o.connect(g); g.connect(audio.destination);
+      o.start(); o.stop(audio.currentTime+0.25);
+    }catch(e){}
+  }
+  soundBtn.addEventListener('click',function(e){ e.stopPropagation(); armSound(); });
+
+  function sah(state){ lastSeen=Date.now(); set(state); }
+
+  // DER WACHHUND. Ohne ihn kann die Seite eine tote Leitung nicht von einem
+  // ruhigen Mischer unterscheiden -- und eine halboffene Verbindung durch ein
+  // NAT feuert weder `onmessage` noch `onerror`.
+  setInterval(function(){
+    if(lastSeen && Date.now()-lastSeen>STALE_MS && current!=='stale') set('stale');
+  }, 1000);
+
   function connect(){
     try { var ev=new EventSource('/tally/stream?id=__ID__'); } catch(e){ return fallback(); }
-    ev.onmessage=function(e){ try{ var d=JSON.parse(e.data); set(d.state||'safe'); }catch(_){} };
-    ev.onerror=function(){ set('offline'); ev.close(); setTimeout(connect,2000); };
+    ev.onmessage=function(e){
+      try{ var d=JSON.parse(e.data); sah(d.state||'unknown'); }catch(_){}
+    };
+    ev.onerror=function(){ set('stale'); ev.close(); setTimeout(connect,2000); };
   }
   function fallback(){
-    set('offline');
+    set('stale');
     setTimeout(function poll(){
       fetch('/tally/state?id=__ID__',{cache:'no-store'}).then(r=>r.json()).then(d=>{
-        set(d.state||'safe'); setTimeout(poll,500);
-      }).catch(()=>{ set('offline'); setTimeout(poll,2000); });
+        sah(d.state||'unknown'); setTimeout(poll,HEARTBEAT_MS/4);
+      }).catch(()=>{ set('stale'); setTimeout(poll,2000); });
     },100);
   }
   connect();
@@ -1023,6 +1169,28 @@ TALLY_PAGE = """<!doctype html>
   });
 })();
 </script></body></html>"""
+
+
+def render_tally_page(device_id, name):
+    """Die Tally-Seite fuer ein Geraet — rein, ohne Netz und ohne Handler.
+
+    Setzt VIER Platzhalter, und die beiden neuen sind der Punkt: Sender und
+    Wachhund lesen dieselben Zahlen (`TALLY_HEARTBEAT_S`/`TALLY_STALE_S`).
+    Waeren sie in der Seite fest eingetragen, koennte jemand den Herzschlag
+    verstellen und der Wachhund liefe unbemerkt in die falsche Richtung —
+    entweder schlaegt er staendig an, oder er schlaegt nie an.
+
+    Der NAME WIRD MASKIERT. Er kommt aus `tally.json` oder, bei einem Ad-hoc-
+    Geraet, aus dem LANGEN NAMEN DES MISCHERS — also von einem Geraet im Netz.
+    Er wurde bis hierher roh in das HTML gesetzt; ein `<` darin zerlegte die
+    Seite, und das ist auf einem Tally-Schirm kein Schoenheitsfehler.
+    """
+    return (
+        TALLY_PAGE.replace("__ID__", html_mod.escape(str(device_id), quote=True))
+        .replace("__NAME__", html_mod.escape(str(name)))
+        .replace("__STALE_MS__", str(int(TALLY_STALE_S * 1000)))
+        .replace("__HEARTBEAT_MS__", str(int(TALLY_HEARTBEAT_S * 1000)))
+    )
 
 
 class Handler(http.server.SimpleHTTPRequestHandler):
@@ -1129,7 +1297,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             name = f"Input {did}" + (f" – {long_name}" if long_name else "")
         else:
             name = did
-        html = (TALLY_PAGE.replace("__ID__", did).replace("__NAME__", name)).encode()
+        html = render_tally_page(did, name).encode()
         self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=utf-8")
         self.send_header("Cache-Control", "no-store")
@@ -1157,22 +1325,26 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         self.send_header("X-Accel-Buffering", "no")
         self.end_headers()
         last_state = None
-        # 5 Hz tick, write a heartbeat every ~15 s to keep proxies happy
-        heartbeat = 0
+        # BEDARF 86 — 5-Hz-Takt; gesendet wird bei ZUSTANDSWECHSEL und
+        # zusaetzlich alle `TALLY_HEARTBEAT_S` auch unveraendert.
+        #
+        # Vorher stand hier alle ~15 s ein SSE-KOMMENTAR (`: ping`). Der haelt
+        # Proxys wach und ist fuer die Seite UNSICHTBAR: Kommentare loesen
+        # `onmessage` nicht aus. Eine halboffene Verbindung lieferte damit
+        # nichts mehr, ohne dass die Seite es merken konnte. Ein echtes
+        # Daten-Ereignis haelt Proxys genauso wach und ist ausserdem sichtbar.
+        last_sent = 0.0
         try:
             while True:
                 cfg = load_tally_config()
                 state = tally_state_for_device(cfg, did)
-                if state != last_state:
+                now = time.monotonic()
+                if tally_stream_should_send(state, last_state, now - last_sent):
                     payload = json.dumps({"id": did, "state": state})
                     self.wfile.write(f"data: {payload}\n\n".encode())
                     self.wfile.flush()
                     last_state = state
-                heartbeat += 1
-                if heartbeat >= 75:  # ~15s at 5 Hz
-                    self.wfile.write(b": ping\n\n")
-                    self.wfile.flush()
-                    heartbeat = 0
+                    last_sent = now
                 time.sleep(0.2)
         except (BrokenPipeError, ConnectionResetError):
             return
