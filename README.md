@@ -198,6 +198,36 @@ The Tally tab also shows two live cards:
   trigger-button presses, latch actions, pin transitions) with copy/
   clear buttons. Replaces the need to SSH into the Pi for debugging.
 
+### Cue to the stage (`/cue`)
+
+A speaker on stage cannot read a cue sheet and is not on talkback; today
+messages are passed by a person walking, or by hand signals from the wings.
+Two pages replace that walk:
+
+- **`/cue/display`** — the stage-facing screen. One message, huge, and **no
+  controls at all**: the recipient is under lights and talking, so anything
+  clickable is a thing they hit by accident. Urgency is carried in words
+  (`ZUM SCHLUSS KOMMEN`, `BITTE JETZT BEENDEN`) as well as colour.
+- **`/cue`** — the control page. A text field and the three hand signals
+  (info / wrap / stop), plus *clear screen*.
+
+Two rules matter more than the pages:
+
+- **A message expires.** The dangerous state here is not the empty screen but
+  the *stale* one: "5 minutes left", still up ten minutes later. Every cue
+  carries its timestamp and a lifetime (default 120 s, max 900 s), and the
+  screen clears itself — nobody in the control room has to remember.
+- **A dead link does not look like quiet.** The stream sends a heartbeat on
+  the same interval the tally page uses, and the display shows
+  `KEINE VERBINDUNG ZUR REGIE` and drops the old text when it stops arriving.
+
+There is deliberately **no read receipt** — the speaker has nothing to press,
+and "displayed" is not "read". Claiming otherwise would be worse than nothing.
+
+There is also **no countdown or run-of-show** here: the Pi has no schedule,
+and the production's run sheet lives in the planner. A second schedule would
+be a second truth about the same evening, and nobody would maintain it.
+
 ### Wiring notes
 
 - **Output pin** drives 3.3 V CMOS (~16 mA sink). Two common setups:
@@ -216,7 +246,7 @@ The Tally tab also shows two live cards:
 | File | Role |
 |---|---|
 | `setup-guide.html` | Single-page setup-guide UI (served on `:8080`): Status, Tally, Hilfe. Vanilla HTML/CSS/JS — no build step, no framework. |
-| `guide_server.py` | Python-stdlib HTTP server. Endpoints: `/ipconfig` `/gpio` `/numato` `/atem` `/bindings` `/tally-config` `/tally-out/<bcm>/(on\|off\|pulse\|latch-on\|latch-off\|release)` `/tally-diagnostics` `/input-test` `/service/pi-gpio-watcher` `/logs` + `/logs/stream` (SSE) + `/tally/{state,stream,<id>}`. Owns GPIO outputs via libgpiod 2.x. |
+| `guide_server.py` | Python-stdlib HTTP server. Endpoints: `/ipconfig` `/gpio` `/numato` `/atem` `/bindings` `/tally-config` `/tally-out/<bcm>/(on\|off\|pulse\|latch-on\|latch-off\|release)` `/tally-diagnostics` `/input-test` `/service/pi-gpio-watcher` `/logs` + `/logs/stream` (SSE) + `/tally/{state,stream,<id>}` `/cue` + `/cue/{display,state,stream,clear}`. Owns GPIO outputs via libgpiod 2.x. |
 | `gpio_watcher.py` | libgpiod input watcher. Merges `tally.json` devices (with `in_gpio` set) and legacy `bindings.json`. Burst tracker for noisy inputs. Fires ATEM CAuS/CPgI/CPvI via the atem-watcher socket, or Companion HTTP API calls. |
 | `atem_watcher.py` | Hand-rolled ATEM UDP client (no `pyatem` dep). Writes state to `/run/pi-guide/atem.json`. Listens on `/run/pi-guide/atem-cmd.sock` for JSON commands: `set_aux`, `set_program`, `set_preview`. |
 | `numato_watcher.py` | Hot-plug watcher for Numato 32-CH USB GPIO modules via udev. |
@@ -274,6 +304,7 @@ through the Tally tab instead.
 | `/run/pi-guide/atem-cmd.sock` | atem_watcher | gpio_watcher, guide_server | UNIX socket for set_aux/set_program/set_preview |
 | `/run/pi-guide/input-state.json` | gpio_watcher | guide_server | Burst-tracker pressed state per pin |
 | `/opt/pi-guide/events.log` | guide_server, gpio_watcher | guide_server (live-log UI) | JSON-lines event log with rotation |
+| `/run/pi-guide/cue.json` | guide_server | guide_server (`/cue/display`) | Current stage cue. Under `/run` on purpose: a cue must not survive a reboot. |
 
 ## Services
 

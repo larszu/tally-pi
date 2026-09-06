@@ -1044,6 +1044,159 @@ def read_event_log(limit=200):
 # BEDARF 86 — die Seite. `__STALE_MS__` und `__HEARTBEAT_MS__` werden beim
 # Ausliefern aus `TALLY_STALE_S`/`TALLY_HEARTBEAT_S` eingesetzt, damit Sender
 # und Wachhund nicht getrennt voneinander verstellt werden koennen.
+# ---------------------------------------------------------------------------
+# BEDARF 104 — eine Nachricht an jemanden, der NICHT auf Comms ist.
+#
+#   > Speakers cannot read a cue sheet and are not on talkback. Messages are
+#   > passed by A PERSON WALKING, or by hand signals from the wings.
+#
+# Belegt an `cpvalente/ontime#371` (2023-04-30): „Speaker are very busy and
+# stressed on stage and wish strong visual helpers on the active speech. This
+# is one piece of few wishes/requests from our collection what speakers told
+# us after a event was happen."
+#
+# ─── EIN EMPFAENGER, DER NICHT BEDIENEN KANN ───────────────────────────────
+#
+# Diese Seite ist NICHT die Tally-Seite mit anderem Text. Der Empfaenger steht
+# im Licht, redet, und hat keine Hand frei. Daraus folgt alles Weitere:
+#
+#   * KEINE Bedienelemente. Kein Knopf, kein Menue, kein Ton-Freischalter --
+#     der Tally-Seite steht er gut zu Gesicht (der Gast sitzt vor dem Laptop),
+#     hier waere er ein Ding, das der Redner versehentlich trifft.
+#   * EINE Nachricht. Nicht die letzten drei, keine Liste, keine Historie.
+#     Wer im Reden liest, liest genau eine Zeile.
+#   * Die Dringlichkeit steht in WORTEN und in der Farbe. Farbe allein traegt
+#     die Auskunft nicht -- dieselbe Regel wie auf der Tally-Seite, und aus
+#     demselben Grund: ein Teil der Leute unterscheidet Rot und Gruen nicht.
+#
+# ─── EINE NACHRICHT LAEUFT AB ──────────────────────────────────────────────
+#
+# Der gefaehrlichste Zustand dieser Seite ist nicht der leere, sondern der
+# ALTE: „NOCH 2 MINUTEN", zehn Minuten spaeter unveraendert. Der Redner
+# richtet sich danach. Deshalb traegt jede Nachricht ihren Zeitpunkt und eine
+# Lebensdauer, und die Seite raeumt sie selbst weg -- ohne dass jemand im
+# Regieraum daran denken muss.
+#
+# Und deshalb liegt der Zustand unter /run und nicht unter /opt: eine
+# Nachricht ueberlebt den Neustart NICHT. Ein Cue von gestern Abend, der nach
+# dem Booten wieder auf dem Schirm steht, ist genau die Luege, gegen die
+# Bedarf 86 die Tally-Seite abgedichtet hat.
+#
+# ─── WAS HIER NICHT GEBAUT WIRD ────────────────────────────────────────────
+#
+# Kein Countdown und kein Ablauf. Ontime ist eine Ablauf-Uhr, und die
+# „visual helpers on the active speech" aus dem Beleg sind dort an einen
+# ZEITPLAN gebunden. Der Pi hat keinen. Das Ablaufblatt der Produktion liegt
+# im Planer (`runOfShowSheetForProject`, Bedarf 33); hier einen zweiten
+# Zeitplan zu fuehren hiesse, zwei Wahrheiten ueber denselben Abend zu haben,
+# und die zweite haette niemand gepflegt. Was hier gebaut wird, ist der Weg
+# fuer die Nachricht -- der Teil, den heute ein Mensch zu Fuss erledigt.
+#
+# KEINE Empfangsbestaetigung. Sie braeuchte eine Handlung des Redners, und
+# genau die gibt es nicht. Eine erfundene Bestaetigung („angezeigt" statt
+# „gelesen") waere schlimmer als keine: die Regie glaubte, die Nachricht sei
+# angekommen.
+# ---------------------------------------------------------------------------
+
+CUE_FILE = Path("/run/pi-guide/cue.json")
+
+#: Dringlichkeiten. Drei, weil es drei Handzeichen aus der Gasse gibt --
+#: „Info", „zum Schluss kommen", „sofort aufhoeren". Mehr Stufen kann niemand
+#: im Reden unterscheiden.
+CUE_KINDS = ("info", "wrap", "stop")
+
+CUE_KIND_WORD = {
+    "info": "",
+    "wrap": "ZUM SCHLUSS KOMMEN",
+    "stop": "BITTE JETZT BEENDEN",
+}
+
+#: Vorgabe-Lebensdauer einer Nachricht (Sekunden). Zwei Minuten: lang genug,
+#: dass sie im Redefluss auffaellt, kurz genug, dass sie nicht zur Tapete
+#: wird. Der Sender kann sie je Nachricht ueberschreiben.
+CUE_DEFAULT_TTL_S = 120
+#: Obergrenze. Eine Nachricht, die eine Stunde stehen bleibt, ist keine
+#: Nachricht mehr, sondern eine Behauptung ueber die Gegenwart.
+CUE_MAX_TTL_S = 900
+#: Zeichen. Was laenger ist, liest im Reden niemand.
+CUE_MAX_CHARS = 120
+
+
+def normalise_cue(raw, now):
+    """Macht aus einer Eingabe eine Nachricht -- oder gibt None zurueck.
+
+    Streng, und mit Absicht: eine halb gueltige Nachricht auf einem Schirm im
+    Licht ist schlimmer als keine. Wer nichts schickt, loescht (siehe
+    `/cue/clear`); wer Unsinn schickt, bekommt einen Fehler und keine leere
+    Zeile auf der Buehne.
+    """
+    if not isinstance(raw, dict):
+        raise ValueError("expected JSON object")
+    text = raw.get("text")
+    if not isinstance(text, str) or not text.strip():
+        raise ValueError("text is required")
+    text = " ".join(text.split())[:CUE_MAX_CHARS]
+    kind = raw.get("kind", "info")
+    if kind not in CUE_KINDS:
+        raise ValueError("kind must be one of %s" % (", ".join(CUE_KINDS),))
+    ttl = raw.get("ttl_s", CUE_DEFAULT_TTL_S)
+    if isinstance(ttl, bool) or not isinstance(ttl, (int, float)):
+        raise ValueError("ttl_s must be a number")
+    ttl = int(ttl)
+    if ttl < 1 or ttl > CUE_MAX_TTL_S:
+        raise ValueError("ttl_s must be between 1 and %d" % CUE_MAX_TTL_S)
+    return {"text": text, "kind": kind, "ttl_s": ttl, "at": float(now)}
+
+
+def cue_view(cue, now):
+    """Was die Seite JETZT zeigen soll.
+
+    Drei Antworten und keine vierte: eine gueltige Nachricht, „nichts
+    anliegend", oder -- der Fall, um den es geht -- eine ABGELAUFENE, die
+    weggeraeumt wird. Abgelaufen heisst hier wirklich weg: die Seite zeigt
+    dann `none`, nicht den alten Text in blass.
+    """
+    if not isinstance(cue, dict) or not cue.get("text"):
+        return {"state": "none", "text": "", "kind": "info", "age_s": 0}
+    at = cue.get("at")
+    if not isinstance(at, (int, float)) or isinstance(at, bool):
+        # Ohne Zeitpunkt laesst sich nicht sagen, ob sie noch gilt -- und
+        # „gilt vermutlich noch" ist genau die Annahme, die hier verboten ist.
+        return {"state": "none", "text": "", "kind": "info", "age_s": 0}
+    alter = max(0.0, float(now) - float(at))
+    ttl = cue.get("ttl_s")
+    if not isinstance(ttl, (int, float)) or isinstance(ttl, bool) or ttl < 1:
+        ttl = CUE_DEFAULT_TTL_S
+    if alter >= ttl:
+        return {"state": "none", "text": "", "kind": "info", "age_s": int(alter)}
+    kind = cue.get("kind")
+    if kind not in CUE_KINDS:
+        kind = "info"
+    return {"state": "cue", "text": str(cue["text"]), "kind": kind, "age_s": int(alter)}
+
+
+def load_cue():
+    try:
+        return json.loads(CUE_FILE.read_text())
+    except Exception:
+        return {}
+
+
+def save_cue(cue):
+    CUE_FILE.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=str(CUE_FILE.parent), prefix=".cue.", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w") as f:
+            json.dump(cue, f)
+        os.replace(tmp, CUE_FILE)
+    except Exception:
+        try:
+            os.unlink(tmp)
+        except Exception:
+            pass
+        raise
+
+
 TALLY_PAGE = """<!doctype html>
 <html><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -1171,6 +1324,169 @@ TALLY_PAGE = """<!doctype html>
 </script></body></html>"""
 
 
+CUE_PAGE = """<!doctype html>
+<html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Cue</title>
+<style>
+  html,body{margin:0;padding:0;height:100%;background:#000;color:#fff;
+            font-family:system-ui,sans-serif;overflow:hidden}
+  /* KEIN Bedienelement auf dieser Seite. Der Empfaenger steht im Licht und
+     redet; alles Anfassbare ist ein Ding, das er versehentlich trifft. */
+  #bg{position:fixed;inset:0;background:#000;transition:background 120ms linear}
+  #bg.info{background:#1d4ed8}
+  #bg.wrap{background:#b45309}
+  #bg.stop{background:#b91c1c}
+  #bg.none{background:#000}
+  /* KEINE VERBINDUNG sieht anders aus als „nichts anliegend". Sonst haelt
+     der Redner eine tote Leitung fuer Ruhe -- derselbe Fehler, den Bedarf 86
+     auf der Tally-Seite abgestellt hat. */
+  #bg.stale{background:repeating-linear-gradient(45deg,#334155 0 40px,#000 40px 80px)}
+  #wort{position:fixed;left:0;right:0;top:8vh;text-align:center;
+        font-size:clamp(18px,4vw,40px);font-weight:700;letter-spacing:.12em;
+        opacity:.85;pointer-events:none}
+  #text{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;
+        font-size:clamp(34px,11vw,140px);font-weight:800;line-height:1.05;
+        text-align:center;padding:0 5vw;text-shadow:0 2px 10px rgba(0,0,0,.6);
+        pointer-events:none}
+  #fuss{position:fixed;bottom:3vh;left:0;right:0;text-align:center;
+        font-size:clamp(12px,1.6vw,18px);opacity:.55;pointer-events:none}
+</style></head><body>
+<div id="bg" class="stale"></div>
+<div id="wort"></div>
+<div id="text">...</div>
+<div id="fuss"></div>
+<script>
+(function(){
+  var STALE_MS=__STALE_MS__;
+  var bg=document.getElementById('bg');
+  var wort=document.getElementById('wort');
+  var text=document.getElementById('text');
+  var fuss=document.getElementById('fuss');
+  var lastSeen=0;
+
+  var WORT={info:'', wrap:'ZUM SCHLUSS KOMMEN', stop:'BITTE JETZT BEENDEN'};
+
+  function zeige(d){
+    if(d && d.state==='cue'){
+      bg.className=d.kind||'info';
+      wort.textContent=WORT[d.kind]||'';
+      text.textContent=d.text||'';
+      fuss.textContent='';
+    } else {
+      // „Nichts anliegend" ist ein SCHWARZER Schirm ohne Text. Der Redner
+      // soll nichts lesen muessen, um zu wissen, dass nichts anliegt.
+      bg.className='none';
+      wort.textContent='';
+      text.textContent='';
+      fuss.textContent='';
+    }
+  }
+
+  function veraltet(){
+    // Der alte Text verschwindet. Eine Nachricht ueber eine tote Leitung ist
+    // keine Nachricht mehr, und „noch 2 Minuten" von vorhin schickt den
+    // Redner in die Irre.
+    bg.className='stale';
+    wort.textContent='';
+    text.textContent='';
+    fuss.textContent='KEINE VERBINDUNG ZUR REGIE';
+  }
+
+  var es=new EventSource('/cue/stream');
+  es.onmessage=function(ev){
+    lastSeen=Date.now();
+    try{ zeige(JSON.parse(ev.data)); }catch(e){ veraltet(); }
+  };
+  es.onerror=function(){ if(Date.now()-lastSeen>STALE_MS) veraltet(); };
+  setInterval(function(){ if(Date.now()-lastSeen>STALE_MS) veraltet(); }, 1000);
+})();
+</script></body></html>
+"""
+
+
+CUE_CONTROL_PAGE = """<!doctype html>
+<html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Cue senden</title>
+<style>
+  body{margin:0;padding:16px;background:#0b0f19;color:#e5e7eb;font-family:system-ui,sans-serif}
+  h1{font-size:18px;margin:0 0 4px}
+  p.hint{font-size:13px;color:#9ca3af;margin:0 0 14px;max-width:46em}
+  input,button,select{font:inherit}
+  #text{width:100%;box-sizing:border-box;padding:10px;font-size:18px;border-radius:6px;
+        border:1px solid #374151;background:#111827;color:#e5e7eb}
+  .reihe{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
+  button{padding:10px 16px;border-radius:6px;border:1px solid #374151;background:#1f2937;
+         color:#e5e7eb;cursor:pointer}
+  button.info{background:#1d4ed8;border-color:#1d4ed8}
+  button.wrap{background:#b45309;border-color:#b45309}
+  button.stop{background:#b91c1c;border-color:#b91c1c}
+  #jetzt{margin-top:16px;padding:10px;border:1px solid #374151;border-radius:6px;
+         background:#111827;font-size:14px}
+  a{color:#93c5fd}
+</style></head><body>
+<h1>Cue an die Buehne</h1>
+<p class="hint">Eine Nachricht, gross auf dem Schirm unter
+<a href="/cue/display">/cue/display</a>. Sie laeuft nach __TTL__ Sekunden von
+selbst ab &mdash; eine alte Nachricht, die stehen bleibt, schickt den Redner
+in die Irre. Es gibt KEINE Empfangsbestaetigung: der Redner kann nichts
+druecken, und „angezeigt" ist nicht „gelesen".</p>
+<input id="text" maxlength="__MAXCHARS__" placeholder="Noch 5 Minuten">
+<div class="reihe">
+  <button class="info" data-kind="info">Info senden</button>
+  <button class="wrap" data-kind="wrap">Zum Schluss kommen</button>
+  <button class="stop" data-kind="stop">Bitte jetzt beenden</button>
+  <button id="clear">Schirm leeren</button>
+</div>
+<div id="jetzt">&mdash;</div>
+<script>
+(function(){
+  var text=document.getElementById('text');
+  var jetzt=document.getElementById('jetzt');
+  function zeige(d){
+    jetzt.textContent = (d && d.state==='cue')
+      ? 'Steht auf dem Schirm: "' + d.text + '" (' + d.kind + ', seit ' + d.age_s + ' s)'
+      : 'Schirm ist leer.';
+  }
+  function senden(kind){
+    if(!text.value.trim()) return;
+    fetch('/cue',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({text:text.value,kind:kind})})
+      .then(function(r){return r.json();}).then(zeige);
+  }
+  Array.prototype.forEach.call(document.querySelectorAll('button[data-kind]'),function(b){
+    b.addEventListener('click',function(){ senden(b.getAttribute('data-kind')); });
+  });
+  document.getElementById('clear').addEventListener('click',function(){
+    fetch('/cue/clear',{method:'POST'}).then(function(r){return r.json();}).then(zeige);
+  });
+  var es=new EventSource('/cue/stream');
+  es.onmessage=function(ev){ try{ zeige(JSON.parse(ev.data)); }catch(e){} };
+})();
+</script></body></html>
+"""
+
+
+def render_cue_page():
+    """Die Buehnen-Seite. Rein, ohne Netz und ohne Handler.
+
+    Der Wachhund liest DIESELBE Zahl wie die Tally-Seite (`TALLY_STALE_S`).
+    Zwei getrennte Zahlen hiessen zwei Wahrheiten darueber, wann eine Leitung
+    als tot gilt -- und die eine liesse sich verstellen, ohne dass jemand die
+    andere anfasst.
+    """
+    return CUE_PAGE.replace("__STALE_MS__", str(int(TALLY_STALE_S * 1000)))
+
+
+def render_cue_control_page():
+    """Die Regie-Seite. Hier DUERFEN Knoepfe sein -- hier sitzt jemand davor."""
+    return (
+        CUE_CONTROL_PAGE.replace("__TTL__", str(int(CUE_DEFAULT_TTL_S)))
+        .replace("__MAXCHARS__", str(int(CUE_MAX_CHARS)))
+    )
+
+
 def render_tally_page(device_id, name):
     """Die Tally-Seite fuer ein Geraet — rein, ohne Netz und ohne Handler.
 
@@ -1263,6 +1579,21 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         elif self.path.startswith("/tally/"):
             self._handle_tally_page()
             return
+        # BEDARF 104 — der Cue an die Buehne. Die Reihenfolge ist wichtig:
+        # `/cue/display` und `/cue/stream` VOR `/cue`, sonst faengt die
+        # Regie-Seite die Buehnen-Seite ab.
+        elif self.path.startswith("/cue/display"):
+            self._send_html(render_cue_page())
+            return
+        elif self.path.startswith("/cue/state"):
+            self._send_json(cue_view(load_cue(), time.time()))
+            return
+        elif self.path.startswith("/cue/stream"):
+            self._handle_cue_stream()
+            return
+        elif self.path == "/cue" or self.path.startswith("/cue?"):
+            self._send_html(render_cue_control_page())
+            return
         return super().do_GET()
 
     def _query(self):
@@ -1304,6 +1635,45 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         self.send_header("Content-Length", str(len(html)))
         self.end_headers()
         self.wfile.write(html)
+
+    def _send_html(self, text, code=200):
+        body = text.encode()
+        self.send_response(code)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _handle_cue_stream(self):
+        # BEDARF 104 — derselbe Herzschlag wie beim Tally, aus demselben
+        # Grund: ohne ihn kann die Buehnen-Seite eine tote Leitung nicht von
+        # „nichts anliegend" unterscheiden, und der Redner haelt Stille fuer
+        # Ruhe. Gesendet wird bei Zustandswechsel ODER wenn der letzte Versand
+        # zu lange her ist.
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream")
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("X-Accel-Buffering", "no")
+        self.end_headers()
+        last_payload = None
+        last_send = 0.0
+        try:
+            while True:
+                jetzt = time.time()
+                view = cue_view(load_cue(), jetzt)
+                # Das Alter waechst jede Sekunde; verglichen wird nur das,
+                # was den Schirm aendert. Sonst gaebe es nie einen
+                # unveraenderten Zustand und der Herzschlag waere sinnlos.
+                payload = (view["state"], view["text"], view["kind"])
+                if tally_stream_should_send(payload, last_payload, jetzt - last_send):
+                    self.wfile.write(("data: " + json.dumps(view) + "\n\n").encode())
+                    self.wfile.flush()
+                    last_payload = payload
+                    last_send = jetzt
+                time.sleep(0.2)
+        except Exception:
+            return
 
     def _handle_tally_state(self):
         did = self._device_id_from_path()
@@ -1437,6 +1807,31 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return
         if self.path.startswith("/tally-out/"):
             self._handle_tally_out_post()
+            return
+        if self.path == "/cue":
+            body = self._read_body()
+            try:
+                cue = normalise_cue(json.loads(body or b"{}"), time.time())
+                save_cue(cue)
+                # `cue_kind` und nicht `kind`: der erste Parameter von
+                # `log_event` heisst selbst `kind`, und ein zweiter mit
+                # demselben Namen ist ein TypeError. Der fiel nicht beim
+                # Schreiben auf, sondern erst im Rauchtest -- und er war
+                # boesartig: die Nachricht stand schon auf dem Schirm, die
+                # Regie bekam eine 400 und haette sie noch einmal geschickt.
+                log_event("cue", action="send", cue_kind=cue["kind"], ttl_s=cue["ttl_s"])
+                self._send_json(cue_view(cue, time.time()))
+            except Exception as e:
+                log_event("cue", action="send_failed", error=str(e))
+                self._send_json({"ok": False, "error": str(e)}, code=400)
+            return
+        if self.path == "/cue/clear":
+            try:
+                save_cue({})
+                log_event("cue", action="clear")
+                self._send_json(cue_view({}, time.time()))
+            except Exception as e:
+                self._send_json({"ok": False, "error": str(e)}, code=400)
             return
         if self.path == "/input-test":
             self._handle_input_test()
