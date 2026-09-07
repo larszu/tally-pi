@@ -306,8 +306,8 @@ class BurstTracker:
     __slots__ = ("label", "release_s", "min_edges",
                  "_run_press", "_run_release", "_is_at_idle",
                  "_on_state_change",
-                 "_lock", "_pressed", "_press_fired",
-                 "_timer", "_edge_count")
+                 "_lock", "_cond", "_pressed", "_press_fired",
+                 "_deadline", "_stop", "_thread", "_edge_count")
 
     def __init__(self, label, release_ms, run_press, run_release,
                  is_at_idle=None, min_edges=1, on_state_change=None):
@@ -327,17 +327,58 @@ class BurstTracker:
         self._is_at_idle = is_at_idle
         self._on_state_change = on_state_change
         self._lock = _threading.Lock()
+        self._cond = _threading.Condition(self._lock)
         self._pressed = False        # we're currently inside a burst
         self._press_fired = False    # have we fired the press callback?
-        self._timer = None
         self._edge_count = 0
+        # Deadline (monotonic seconds) at which the current burst counts as
+        # over. `None` = no burst in flight, the waiter idles.
+        self._deadline = None
+        self._stop = False
+        self._thread = _threading.Thread(
+            target=self._wait_loop, name=f"burst-{label}", daemon=True)
+        self._thread.start()
+
+    # ── Der Wartefaden ─────────────────────────────────────────────────────
+    #
+    # EIN Thread je Taster, sein Leben lang. Die erste Fassung legte pro
+    # FLANKE einen `threading.Timer` an — und ein Timer ist ein ganzer
+    # Thread. Genau dafuer ist der Burst-Tracker aber da: eine verrauschte
+    # Leitung (Lichtwellenleiter-Wandler, lange ungeschirmte Strippe) liefert
+    # laut dem Kommentar oben „dozens" Flanken je Druck. Das waren dann
+    # dutzende Thread-Erzeugungen je Tastendruck, mal der Zahl der Taster —
+    # auf einem Pi genau der Zustand aus tally-pi#2: mit reiner Tally-Ausgabe
+    # laeuft es ruhig, mit Tastern geht die Maschine in die Knie.
+    #
+    # Der zweite Grund ist eine Wettlaufsituation, die man im Betrieb als
+    # „der Taster loest mitten im Druecken aus" sieht: Ein Timer, der bereits
+    # abgelaufen ist und in `_on_quiet` vor dem Lock wartet, laesst sich nicht
+    # mehr abbestellen — `cancel()` ist dann wirkungslos, und die Freigabe
+    # feuert, obwohl gerade eine neue Flanke kam. Mit einer Frist statt eines
+    # Timers gibt es das nicht: der Waechter schaut nach dem Aufwachen NOCH
+    # EINMAL auf die Uhr und legt sich wieder hin, wenn die Frist inzwischen
+    # weitergeschoben wurde.
+    def _wait_loop(self):
+        while True:
+            with self._cond:
+                while not self._stop and self._deadline is None:
+                    self._cond.wait()
+                if self._stop:
+                    return
+                rest = self._deadline - time.monotonic()
+                if rest > 0:
+                    # Aufwachen heisst NICHT abgelaufen: eine neue Flanke
+                    # verschiebt die Frist und weckt hier. Deshalb oben herum
+                    # und noch einmal rechnen, statt die Freigabe zu feuern.
+                    # Genau diese zweite Rechnung ist es, die die alte
+                    # Timer-Fassung nicht hatte.
+                    self._cond.wait(rest)
+                    continue
+            self._on_quiet()
 
     def on_edge(self, _event_type):
         fire_press_now = False
-        with self._lock:
-            if self._timer is not None:
-                self._timer.cancel()
-                self._timer = None
+        with self._cond:
             if not self._pressed:
                 self._pressed = True
                 self._edge_count = 0
@@ -347,9 +388,8 @@ class BurstTracker:
             if not self._press_fired and self._edge_count >= self.min_edges:
                 self._press_fired = True
                 fire_press_now = True
-            t = _threading.Timer(self.release_s, self._on_quiet)
-            t.daemon = True
-            self._timer = t
+            self._deadline = time.monotonic() + self.release_s
+            self._cond.notify_all()
         if fire_press_now:
             try:
                 self._run_press()
@@ -358,7 +398,6 @@ class BurstTracker:
             if self._on_state_change is not None:
                 try: self._on_state_change()
                 except Exception: pass
-        t.start()
 
     def _on_quiet(self):
         # Postpone release if the line is still in the pressed state
@@ -368,18 +407,16 @@ class BurstTracker:
                              and not self._is_at_idle())
         except Exception:
             still_pressed = False
-        with self._lock:
+        with self._cond:
             if still_pressed and self._pressed:
-                t = _threading.Timer(self.release_s, self._on_quiet)
-                t.daemon = True
-                self._timer = t
-                t.start()
+                self._deadline = time.monotonic() + self.release_s
+                self._cond.notify_all()
                 return
             count = self._edge_count
             had_press = self._press_fired
             self._pressed = False
             self._press_fired = False
-            self._timer = None
+            self._deadline = None
             self._edge_count = 0
         # Only fire release if we actually fired press. A burst that
         # ended before reaching min_edges was filtered out — no press
@@ -394,12 +431,12 @@ class BurstTracker:
                 except Exception: pass
 
     def cancel(self):
-        with self._lock:
-            if self._timer is not None:
-                self._timer.cancel()
-                self._timer = None
+        with self._cond:
+            self._stop = True
+            self._deadline = None
             self._pressed = False
             self._edge_count = 0
+            self._cond.notify_all()
 
 
 def _edges_for_burst(binding):
