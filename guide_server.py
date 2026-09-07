@@ -824,6 +824,75 @@ def reconfigure_tally_outputs():
     TALLY_OUTPUTS.configure(bcms)
 
 
+# ---------------------------------------------------------------------------
+# Die EINE Uebersetzung zwischen „die Lampe brennt" und „der Pin liegt tief".
+#
+# BEFUND (Defektformen-Sweep, Form `zwei-rechnungen`, gemessen 2026-09-07).
+# Dieselbe Uebersetzung stand an VIER Stellen, drei davon voneinander
+# unabhaengig:
+#
+#   1. Der Auto-Treiber:      `TALLY_OUTPUTS.set(bcm, on_air != active_high)`
+#   2. Die Diagnose (Soll):   `sw_on = sw_low if not active_high else (not sw_low)`
+#   3. Die Diagnose (Ist):    `kernel_on = (pin_level == 0) if not active_high else …`
+#   4. Der Browser, ZWEIMAL:  `action = isHigh ? 'latch-off' : 'latch-on'`
+#      (`setup-guide.html`, einmal auf der Geraetekarte, einmal in der
+#      Diagnose-Tabelle — Zeichen fuer Zeichen dieselbe Zeile, zweimal
+#      abgeschrieben).
+#
+# Was daran nicht nur unschoen war:
+#
+#   * Die beiden Browser-Stellen lasen ihre Polaritaet aus VERSCHIEDENEN
+#     Quellen. Die Geraetekarte nahm `devices[i]` — den ungespeicherten Stand
+#     des Formulars; die Diagnose-Tabelle nahm `devs[i]` aus `/tally-diagnostics`
+#     — den gespeicherten. Wer die Polaritaet umstellte und nicht speicherte,
+#     hatte zwei Knoepfe fuer denselben Pin, die einander entgegengesetzte
+#     Kommandos schickten.
+#   * Der Browser schickte einen PEGEL, kein Anliegen. Fuer eine active-high
+#     Lampe hiess „einschalten" `latch-off`, und genau so steht es seither im
+#     Ereignis-Log (`log_event("tally-out", action=action)`): fuer jede
+#     active-high Lampe protokolliert das Log das Gegenteil dessen, was
+#     passiert ist. Ein Log, das man umdenken muss, ist beim Fehlersuchen
+#     schlimmer als keins.
+#
+# Deshalb: der Browser schickt `lamp-on`/`lamp-off` (das Anliegen), der Kern
+# schlaegt die Polaritaet in der gespeicherten Konfiguration nach und rechnet
+# sie hier um — an dieser einen Stelle.
+# ---------------------------------------------------------------------------
+def tally_lampe_soll_leuchten(trigger, state):
+    """Brennt die Hardware-Lampe in diesem Tally-Zustand?
+
+    `trigger` ist `out_trigger`: "pgm" (nur Live), "pgm_pvw" (Live + Preview)
+    oder "manual" (gar nicht automatisch — das entscheidet der Aufrufer, nicht
+    diese Funktion).
+    """
+    if trigger == "pgm_pvw":
+        return state in ("pgm", "pvw")
+    return state == "pgm"
+
+
+def tally_pin_treibt_tief(active_high, leuchtet):
+    """Muss der Pin auf LOW gezogen werden, damit die Lampe `leuchtet`?
+
+    Das ist genau das Argument, das `TallyOutputs.set(bcm, on)` erwartet:
+    True = Pin auf LOW ziehen. Bei einer Relaisplatine (active-low, der
+    Normalfall) heisst LOW = Lampe an; bei einer direkt angeschlossenen LED
+    (active-high) genau umgekehrt.
+    """
+    return bool(leuchtet) != bool(active_high)
+
+
+def tally_out_polaritaet(cfg, bcm):
+    """`out_active_high` des Geraets, dem dieser Ausgang gehoert.
+
+    Unbekannter Pin -> False (active-low), die sichere Vorgabe: sie ist auch
+    die Vorgabe im Formular und im Schema.
+    """
+    for d in (cfg.get("devices") or []):
+        if d.get("out_gpio") == bcm:
+            return bool(d.get("out_active_high", False))
+    return False
+
+
 def build_tally_diagnostics():
     """Aggregate everything you'd otherwise need 5 SSH calls for, into one
     JSON the UI polls. Per-device: ATEM state, software-wanted value,
@@ -846,7 +915,7 @@ def build_tally_diagnostics():
         sw_low = sw_values.get(bcm) if isinstance(bcm, int) else None
         sw_on  = None
         if sw_low is not None:
-            sw_on = sw_low if not active_high else (not sw_low)
+            sw_on = (sw_low == tally_pin_treibt_tief(active_high, True))
 
         # Actual kernel pin level (independent of software).
         pin_info = pins.get(str(bcm), {}) if isinstance(bcm, int) else {}
@@ -855,7 +924,7 @@ def build_tally_diagnostics():
         if pin_level is not None:
             # active-low: pin LOW (0) means on
             # active-high: pin HIGH (1) means on
-            kernel_on = (pin_level == 0) if not active_high else (pin_level == 1)
+            kernel_on = ((pin_level == 0) == tally_pin_treibt_tief(active_high, True))
 
         consistent = (sw_on == kernel_on) if (sw_on is not None and kernel_on is not None) else None
 
@@ -1855,7 +1924,13 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         self.send_error(404)
 
     def _handle_tally_out_post(self):
-        # /tally-out/<bcm>/(on|off|pulse|latch-on|latch-off|release)
+        # /tally-out/<bcm>/(on|off|pulse|lamp-on|lamp-off|latch-on|latch-off|release)
+        #
+        # `lamp-on`/`lamp-off` sagen das ANLIEGEN („die Lampe soll brennen"),
+        # `latch-on`/`latch-off` den PEGEL („zieh den Pin tief"). Die
+        # Oberflaeche benutzt ausschliesslich das Anliegen; die Pegel-Form
+        # bleibt fuer Companion und alles andere, was den Pin direkt fahren
+        # will. Siehe den Kopf von `tally_pin_treibt_tief`.
         from urllib.parse import urlparse, parse_qs
         p = urlparse(self.path)
         parts = [seg for seg in p.path.split("/") if seg]
@@ -1880,6 +1955,10 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 self._send_json({"ok": False, "error": "bad ms"}, code=400)
                 return
             ok, msg = TALLY_OUTPUTS.pulse(bcm, ms)
+        elif action in ("lamp-on", "lamp-off"):
+            polaritaet = tally_out_polaritaet(load_tally_config(), bcm)
+            ok, msg = TALLY_OUTPUTS.latch(
+                bcm, tally_pin_treibt_tief(polaritaet, action == "lamp-on"))
         elif action == "latch-on":
             ok, msg = TALLY_OUTPUTS.latch(bcm, True)
         elif action == "latch-off":
@@ -2091,15 +2170,11 @@ def start_transition_logger():
                     bcm = d.get("out_gpio")
                     trig = d.get("out_trigger", "pgm")
                     if isinstance(bcm, int) and trig != "manual":
-                        if trig == "pgm_pvw":
-                            on_air = state in ("pgm", "pvw")
-                        else:
-                            on_air = state == "pgm"
-                        # `set()` semantics: True = drive LOW, False = drive HIGH.
-                        # active_high inverts that so the on-air state drives HIGH.
+                        on_air = tally_lampe_soll_leuchten(trig, state)
                         active_high = bool(d.get("out_active_high", False))
-                        TALLY_OUTPUTS.set(bcm, on_air != active_high,
-                                          respect_pulse=True)
+                        TALLY_OUTPUTS.set(
+                            bcm, tally_pin_treibt_tief(active_high, on_air),
+                            respect_pulse=True)
                 for gone in [k for k in last_states if k not in current_ids]:
                     last_states.pop(gone, None)
             except Exception:

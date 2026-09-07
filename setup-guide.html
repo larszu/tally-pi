@@ -1821,15 +1821,17 @@ var qrcode=function(){var t=function(t,r){var e=t,n=g[r],o=null,i=0,a=null,u=[],
           const bcm = devices[i].out_gpio;
           if (bcm == null) return;
           const st = card.querySelector('[data-role=test-out-status]');
-          const isHigh = !!devices[i].out_active_high;
           const isLatched = testBtn.dataset.latched === '1';
-          let action;
-          if (isLatched) {
-            action = 'release';        // → auto-driver takes over again
-          } else {
-            // active-low: "on" drives LOW. active-high: "off" drives HIGH.
-            action = isHigh ? 'latch-off' : 'latch-on';
-          }
+          // Der Browser schickt das ANLIEGEN, nicht den Pegel. Hier stand
+          // `isHigh ? 'latch-off' : 'latch-on'` — dieselbe Zeile wie in der
+          // Diagnose-Tabelle, nur aus einer anderen Quelle gespeist
+          // (`devices[i]` = ungespeichertes Formular gegen `devs[i]` =
+          // gespeicherter Stand). Wer die Polaritaet umstellte und nicht
+          // speicherte, hatte zwei Knoepfe fuer denselben Pin, die einander
+          // entgegengesetzte Kommandos schickten.
+          const action = isLatched
+            ? 'release'                // → auto-driver takes over again
+            : 'lamp-on';
           try {
             const r = await fetch('/tally-out/' + bcm + '/' + action, {method:'POST'});
             const j = await r.json();
@@ -2034,10 +2036,8 @@ var qrcode=function(){var t=function(t,r){var e=t,n=g[r],o=null,i=0,a=null,u=[],
             const i = parseInt(btn.dataset.diagTest, 10);
             const dev = devs[i];
             if (!dev || dev.out_gpio == null) return;
-            const isHigh = !!dev.out_active_high;
-            const action = dev.latched
-              ? 'release'
-              : (isHigh ? 'latch-off' : 'latch-on');
+            // Anliegen statt Pegel — siehe die Geraetekarte weiter oben.
+            const action = dev.latched ? 'release' : 'lamp-on';
             await fetch('/tally-out/' + dev.out_gpio + '/' + action, {method:'POST'});
             // next poll (within ~700ms) will refresh the button visual
           });
