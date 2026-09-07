@@ -8,47 +8,73 @@
      Design tokens — Dark Modern (slate-based palette, Linear/Vercel feel)
      ======================================================================== */
   :root {
+    /* ADR-007 (av-planner-suite) — die Tokens zeigen auf die Marken-Palette
+       der Suite. Die Regelnamen bleiben unveraendert; die Umstellung der
+       ganzen Seite ist dieser Block. Werte und Rollen: `@avplan/ui`,
+       `src/brand.ts` (aus dem Brand Guide 2.0). Die Stufen `--surface-1/2/3`
+       sind aus der Navy-Rampe ABGELEITET — ein Werkzeug braucht mehr
+       Flaechen, als ein Marken-Handbuch vorsieht. */
+
     /* Surfaces */
-    --bg:        #0a0f1a;
-    --bg-2:      #060912;
-    --surface-1: #111827;
-    --surface-2: #1a2032;
-    --surface-3: #232b3d;
-    --overlay:   rgba(15, 23, 42, .72);
+    --bg:        #132040;   /* Deep Navy */
+    --bg-2:      #0E1930;   /* abgeleitet — versenkt */
+    --surface-1: #182948;   /* abgeleitet — Panels */
+    --surface-2: #1D324F;   /* Zumpe Navy — Karten */
+    --surface-3: #24405F;   /* abgeleitet — erhoben */
+    --overlay:   rgba(14, 25, 48, .78);
 
     /* Text */
-    --fg:        #e2e8f0;
-    --fg-muted:  #94a3b8;
-    --fg-faint:  #64748b;
-    --fg-strong: #f1f5f9;
+    --fg:        #E1ECEF;   /* Eisblau — Fliesstext auf Dunkel */
+    --fg-muted:  #8C9CB3;   /* Stahlblau — Meta, Platzhalter */
+    --fg-faint:  #6E7F99;   /* abgeleitet */
+    --fg-strong: #F6F5F0;   /* Off-White — Ueberschriften */
 
     /* Borders */
-    --border:        rgba(148, 163, 184, .14);
-    --border-strong: rgba(148, 163, 184, .22);
-    --border-focus:  rgba(59, 130, 246, .55);
+    --border:        rgba(246, 245, 240, .14);
+    --border-strong: rgba(246, 245, 240, .35);
+    --border-focus:  rgba(214, 64, 46, .75);
 
-    /* Brand + semantic */
-    --accent:        #3b82f6;
-    --accent-hover:  #60a5fa;
-    --accent-glow:   rgba(59, 130, 246, .18);
-    --ok:            #22c55e;
-    --warn:          #f59e0b;
-    --err:           #ef4444;
-    --info:          #06b6d4;
-    --pgm:           #ef4444;
-    --pvw:           #22c55e;
+    /* Akzent: die Aktionsflaeche der Marke — Off-White, darauf Navy (13:1). */
+    --accent:        #F6F5F0;
+    --accent-hover:  #FFFFFF;
+    --accent-text:   #132040;
+    --accent-glow:   rgba(246, 245, 240, .16);
+
+    /* Status: nur Meldungen. Nicht das Signal. */
+    --ok:            #2F7D5C;
+    --warn:          #C8892B;
+    --err:           #B04A3F;
+    --info:          #8C9CB3;
+
+    /* ── DAS SIGNAL ────────────────────────────────────────────────────────
+       `--signal` ist Tally-Rot: Fokusring und Aufnahme-/Live-Zustand. In
+       DIESEM Repo hat es seine woertliche Bedeutung — es ist das
+       Aufnahmelicht, nach dem die Marke ihren Punkt benannt hat.
+
+       `--pgm`/`--pvw` sind Altbestand: in dieser Datei referenziert sie
+       nichts. Die ECHTE Vollbild-Tallyanzeige faerbt sich in
+       `guide_server.py` mit eigenen Werten, und die bleiben unangetastet.
+       Sie sind kein Chrome, sondern eine Lampe: eine Kamerafrau erkennt sie
+       aus zehn Metern im Gegenlicht, und die Wahl der Toene ist dort mit
+       genau dieser Begruendung kommentiert. Eine Oberflaechen-Regel fuer
+       Planungswerkzeuge ist kein Grund, an einem Signalgeber zu drehen —
+       wer das will, entscheidet es dort und mit Blick auf die Buehne. */
+    --signal:        #D6402E;
+    --pgm:           #e11d48;
+    --pvw:           #16a34a;
     --muted:         var(--fg-muted);
 
     /* Pin colors (used in pinout legend) */
     --pin-power:#ef4444; --pin-gnd:#475569; --pin-gpio:#22c55e;
     --pin-i2c:#f59e0b;   --pin-spi:#a78bfa; --pin-uart:#60a5fa; --pin-pwm:#ec4899;
 
-    /* Radii */
-    --r-sm:  6px;
-    --r-md:  10px;
-    --r-lg:  14px;
-    --r-xl:  20px;
-    --r-pill:999px;
+    /* Radien: keine (Guide S. 10, "Was es nicht gibt"). Die Namen bleiben,
+       damit keine Regel umgebaut werden muss. */
+    --r-sm:  0;
+    --r-md:  0;
+    --r-lg:  0;
+    --r-xl:  0;
+    --r-pill:0;
     --radius: var(--r-md);     /* legacy alias */
     --radius-lg: var(--r-lg);  /* legacy alias */
 
@@ -56,19 +82,25 @@
     --space-1:4px; --space-2:8px; --space-3:12px; --space-4:16px;
     --space-5:20px; --space-6:24px; --space-8:32px; --space-10:40px;
 
-    /* Shadows */
-    --shadow-sm: 0 1px 2px rgba(0,0,0,.4);
-    --shadow-md: 0 4px 12px rgba(0,0,0,.35), 0 1px 2px rgba(0,0,0,.4);
-    --shadow-lg: 0 12px 32px rgba(0,0,0,.45), 0 2px 4px rgba(0,0,0,.4);
+    /* Keine Schatten. Struktur entsteht durch Linie und Weissraum. */
+    --shadow-sm: none;
+    --shadow-md: none;
+    --shadow-lg: none;
     --shadow-glow: 0 0 0 3px var(--accent-glow);
 
     /* Type */
-    --font-sans: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    --font-sans: "Public Sans", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
     --font-mono: "JetBrains Mono", "Fira Code", ui-monospace, Consolas, monospace;
     --fs-xs:11px; --fs-sm:12px; --fs-base:14px; --fs-md:15px; --fs-lg:17px;
     --fs-xl:20px; --fs-2xl:24px;
 
-    --tx: 160ms cubic-bezier(.4,0,.2,1);
+    /* Bewegung: schnell, kurz, dann still (Guide S. 11). */
+    --tx: 350ms cubic-bezier(.2,.8,.2,1);
+
+    /* Siehe `select` weiter unten: gezeichnete Kante, kein Farbverlauf. */
+    --chevron:
+      linear-gradient(45deg, transparent 50%, var(--fg-muted) 50%),
+      linear-gradient(135deg, var(--fg-muted) 50%, transparent 50%);
   }
 
   * { box-sizing:border-box; }
@@ -77,10 +109,7 @@
     margin:0;
     font-family:var(--font-sans);
     font-size:var(--fs-base);
-    background:
-      radial-gradient(1200px 600px at 20% -10%, rgba(59,130,246,.06), transparent 60%),
-      radial-gradient(900px 500px at 100% 0%, rgba(168,85,247,.04), transparent 55%),
-      var(--bg);
+    background:var(--bg);
     color:var(--fg);
     line-height:1.55;
     -webkit-font-smoothing:antialiased;
@@ -175,9 +204,8 @@
   .view-tabs button { flex:1; padding:10px 8px; }
   .view-tabs button:hover { background:var(--surface-2); color:var(--fg); border-color:var(--border-strong); }
   .view-tabs button.active {
-    background:linear-gradient(180deg, rgba(59,130,246,.18), rgba(59,130,246,.08));
-    color:#dbeafe; border-color:rgba(59,130,246,.5);
-    box-shadow:inset 0 0 0 1px rgba(59,130,246,.18), 0 0 18px rgba(59,130,246,.12);
+    background:var(--surface-3);
+    color:var(--fg-strong); border-color:var(--border-strong);
   }
   .view-tabs .companion-btn {
     flex:0 0 auto; padding:10px 14px;
@@ -217,9 +245,9 @@
     transition:border-color var(--tx), box-shadow var(--tx);
   }
   .card + .card { margin-top:var(--space-4); }
-  .card.warn { border-color:rgba(245,158,11,.35); background:linear-gradient(180deg, rgba(245,158,11,.06), transparent 60%), var(--surface-2); }
-  .card.err  { border-color:rgba(239,68,68,.35);  background:linear-gradient(180deg, rgba(239,68,68,.06),  transparent 60%), var(--surface-2); }
-  .card.ok   { border-color:rgba(34,197,94,.35);  background:linear-gradient(180deg, rgba(34,197,94,.06),  transparent 60%), var(--surface-2); }
+  .card.warn { border-color:var(--warn); background:var(--surface-1); }
+  .card.err { border-color:var(--err); background:var(--surface-1); }
+  .card.ok { border-color:var(--ok); background:var(--surface-1); }
   .card h3:first-child { margin-top:0; }
 
   /* ========================================================================
@@ -234,13 +262,19 @@
     transition:border-color var(--tx), box-shadow var(--tx), background var(--tx);
   }
   input:hover, select:hover, textarea:hover { border-color:var(--border-strong); }
-  input:focus, select:focus, textarea:focus { outline:none; border-color:var(--accent); box-shadow:var(--shadow-glow); }
+  /* ADR-007: der Tastatur-Fokus ist Tally-Rot, 2 px, 3 px Abstand. */
+  input:focus, select:focus, textarea:focus,
+  button:focus-visible, a:focus-visible, [role="button"]:focus-visible {
+    outline:2px solid var(--signal); outline-offset:3px; }
   input[type=number] { font-variant-numeric:tabular-nums; }
   select {
     appearance:none; -webkit-appearance:none;
-    background-image:
-      linear-gradient(45deg, transparent 50%, var(--fg-muted) 50%),
-      linear-gradient(135deg, var(--fg-muted) 50%, transparent 50%);
+    /* Der einzige Verlauf, den diese Seite kennt — und er ist keiner im
+       Sinne des Handbuchs: zwei 45-Grad-Kanten ZEICHNEN den Pfeil des
+       Auswahlfelds. Ohne ihn hat das Feld keinen Pfeil. Der Waechter in
+       tests/test_brand_tokens.py laesst genau diese eine Stelle zu, damit
+       ihn niemand fuer Dekoration haelt und "aufraeumt". */
+    background-image:var(--chevron);
     background-position:right 14px top 50%, right 9px top 50%;
     background-size:5px 5px, 5px 5px;
     background-repeat:no-repeat;
@@ -263,15 +297,15 @@
   }
   .btn:hover:not(:disabled) { background:#2a3346; border-color:rgba(148,163,184,.32); }
   .btn:active:not(:disabled) { transform:translateY(1px); }
+  .btn.primary::before { content:""; width:6px; height:6px; background:var(--signal); flex:none; }
   .btn:disabled, .btn[disabled] { opacity:.45; cursor:not-allowed; }
   .btn.primary {
-    background:linear-gradient(180deg, #3b82f6, #2563eb);
-    border-color:rgba(59,130,246,.6); color:#fff;
-    box-shadow:0 1px 0 rgba(255,255,255,.08) inset, 0 6px 18px rgba(37,99,235,.25);
+    background:var(--accent);
+    border-color:transparent; color:var(--accent-text);
+    display:inline-flex; align-items:center; gap:7px;
   }
   .btn.primary:hover:not(:disabled) {
-    background:linear-gradient(180deg, #4f8ef7, #2f6ee8);
-    box-shadow:0 1px 0 rgba(255,255,255,.10) inset, 0 8px 22px rgba(37,99,235,.32);
+    background:var(--accent-hover);
   }
   .btn.sec   { background:var(--surface-2); color:var(--fg-muted); }
   .btn.sec:hover:not(:disabled) { background:var(--surface-3); color:var(--fg); }
@@ -308,7 +342,7 @@
      ======================================================================== */
   .legend { display:flex; flex-wrap:wrap; gap:var(--space-3); margin:var(--space-3) 0; font-size:var(--fs-sm); color:var(--fg-muted); }
   .legend span { display:inline-flex; align-items:center; gap:6px; }
-  .dot { width:12px; height:12px; border-radius:3px; display:inline-block; }
+  .dot { width:12px; height:12px; border-radius:0; display:inline-block; }
   .pinheader {
     display:grid; grid-template-columns:auto auto auto auto; gap:4px;
     background:var(--bg-2); padding:var(--space-4);
@@ -376,7 +410,8 @@
     font:600 var(--fs-xs) var(--font-sans); letter-spacing:.02em;
     border:1px solid var(--border); background:var(--surface-2); color:var(--fg-muted);
   }
-  .pill::before { content:""; width:7px; height:7px; border-radius:50%; background:currentColor; }
+  /* Eckig: "keine Kreise ausser dem Punkt" — und der Punkt der Hausschrift IST eckig. */
+  .pill::before { content:""; width:6px; height:6px; border-radius:0; background:currentColor; }
   .pill.pgm  { color:#fca5a5; border-color:rgba(239,68,68,.4);  background:rgba(239,68,68,.10); }
   .pill.pvw  { color:#86efac; border-color:rgba(34,197,94,.4);  background:rgba(34,197,94,.10); }
   .pill.safe { color:#cbd5e1; border-color:var(--border);       background:var(--surface-2); }
@@ -776,7 +811,7 @@ sudo systemctl restart getty@tty1</pre>
     </label>
     <button type="button" id="log-clear-view" class="btn" style="margin-left:8px">Ansicht leeren</button>
     <div id="log-status" class="hint" style="margin-top:6px">—</div>
-    <pre id="log-view" style="max-height:60vh;overflow:auto;background:#0b1020;color:#cbd5e1;padding:8px;border-radius:6px;font-size:12px;line-height:1.35;white-space:pre-wrap;margin-top:8px"></pre>
+    <pre id="log-view" style="max-height:60vh;overflow:auto;background:var(--bg-2);color:var(--fg);padding:8px;border-radius:0;font-size:12px;line-height:1.35;white-space:pre-wrap;margin-top:8px"></pre>
   </div>
 </section>
 
@@ -1197,8 +1232,8 @@ var qrcode=function(){var t=function(t,r){var e=t,n=g[r],o=null,i=0,a=null,u=[],
       a.innerHTML = `
         <div class="head"><span class="gname">ADC ${ch}</span></div>
         <div class="gval" id="na${ch}">—</div>
-        <div style="background:#0b0e13;height:6px;border-radius:3px;overflow:hidden;margin-top:6px">
-          <div id="nab${ch}" style="height:100%;width:0;background:linear-gradient(90deg,#4ade80,#fbbf24,#f87171);transition:width .2s"></div>
+        <div style="background:var(--bg-2);height:6px;border-radius:0;overflow:hidden;margin-top:6px">
+          <div id="nab${ch}" style="height:100%;width:0;background:var(--fg-muted);transition:width .2s"></div>
         </div>`;
       ag.appendChild(a);
       numatoAdcTiles[ch] = a;
