@@ -253,6 +253,91 @@ def validate_binding(b):
             raise ValueError("action.variable must match [A-Za-z0-9_]{1,64}")
 
 
+# ---------------------------------------------------------------------------
+# Ein Pin kann nur EINEM gehoeren — und das weiss keiner der beiden Vertraege.
+#
+# BEFUND (Defektformen-Sweep, Form `vertrag-nur-feldnamen`, gemessen
+# 2026-09-07). Der Pi fuehrt ZWEI Listen ueber dieselben physischen Leitungen:
+#
+#   `tally.json`    Geraete mit `out_gpio` (Lampe) und `in_gpio` (Taster)
+#   `bindings.json` Companion-Bindungen mit `bcm`
+#
+# Beide haben einen ordentlichen Waechter, und beide pruefen ausschliesslich
+# ihre EIGENEN Feldnamen. `validate_tally_config` fuehrt sogar ein `seen_gpio`
+# und lehnt einen doppelt vergebenen Pin ab — aber nur innerhalb der
+# Geraeteliste. `validate_binding` prueft `bcm in BCM_TO_PIN` und sonst
+# nichts: nicht, ob zwei Bindungen auf demselben Pin sitzen, und erst recht
+# nicht, ob der Pin schon eine Tally-Lampe traegt.
+#
+# Was dabei herauskommt, ist kein Datenfehler, sondern ein Geraetefehler:
+# `pi-gpio-watcher` fordert die Leitung als EINGANG an, waehrend der
+# Guide-Server sie als AUSGANG haelt. libgpiod gibt eine Leitung nur einmal
+# heraus; wer zweiter ist, bekommt EBUSY. Je nach Startreihenfolge geht
+# entweder die Lampe nicht an oder der Taster nicht — und keine Seite sagt,
+# warum. Beide Oberflaechen zeigen ihre Zeile als gespeichert und gueltig.
+#
+# NICHT geaendert, mit Absicht: die beiden Listen sind sich auch UNEINIG,
+# welche Pins es gibt. `USABLE_BCMS` laesst 17 Pins zu (ohne I2C, SPI, UART),
+# `BCM_TO_PIN` alle 26. Eine Bindung darf also auf BCM 14 (UART TX) sitzen,
+# ein Tally-Ausgang nicht. Das enger zu ziehen wuerde bestehende, laufende
+# Installationen ungueltig machen — wer SPI abgeschaltet hat, benutzt BCM
+# 7..11 voellig zu Recht. Der Widerspruch steht deshalb hier benannt statt
+# stillschweigend behoben.
+# ---------------------------------------------------------------------------
+def pin_belegung(cfg, bindings):
+    """bcm -> Klartext, wofuer der Pin vergeben ist.
+
+    Eine Stelle, an der beide Listen zusammenkommen. Wer eine dritte Liste
+    ueber dieselben Leitungen anlegt, traegt sie hier ein — sonst faellt die
+    Kollision wieder erst am Geraet auf.
+    """
+    aus = {}
+    for d in (cfg.get("devices") or []):
+        if not isinstance(d, dict):
+            continue
+        name = d.get("name") or d.get("id") or "?"
+        for feld, wofuer in (("out_gpio", "Tally-Ausgang"), ("in_gpio", "Taster")):
+            bcm = d.get(feld)
+            if isinstance(bcm, int):
+                aus.setdefault(bcm, f"{wofuer} von \"{name}\"")
+    for i, b in enumerate(bindings or []):
+        if not isinstance(b, dict) or b.get("source", "pi") != "pi":
+            continue
+        bcm = b.get("bcm")
+        if isinstance(bcm, int):
+            aus.setdefault(bcm, f"Companion-Bindung #{i + 1}")
+    return aus
+
+
+def pruefe_pin_konflikte(cfg, bindings):
+    """Wirft, wenn eine Leitung zweimal vergeben ist.
+
+    Geprueft wird gegen BEIDE Listen zusammen — der Konflikt entsteht
+    zwischen ihnen, und keiner der beiden Waechter kann ihn allein sehen.
+    """
+    belegt = {}
+    def nimm(bcm, wofuer):
+        if not isinstance(bcm, int):
+            return
+        if bcm in belegt:
+            raise ValueError(
+                f"GPIO {bcm} ist doppelt vergeben: {belegt[bcm]} und {wofuer}. "
+                "Eine Leitung kann nur einem gehoeren — sonst bekommt der "
+                "zweite Dienst beim Start EBUSY und faellt still aus.")
+        belegt[bcm] = wofuer
+
+    for d in (cfg.get("devices") or []):
+        if not isinstance(d, dict):
+            continue
+        name = d.get("name") or d.get("id") or "?"
+        nimm(d.get("out_gpio"), f"Tally-Ausgang von \"{name}\"")
+        nimm(d.get("in_gpio"), f"Taster von \"{name}\"")
+    for i, b in enumerate(bindings or []):
+        if not isinstance(b, dict) or b.get("source", "pi") != "pi":
+            continue
+        nimm(b.get("bcm"), f"Companion-Bindung #{i + 1}")
+
+
 def get_ipconfig():
     """Return list of interfaces with their IPv4 addresses."""
     ifaces = []
@@ -1846,6 +1931,10 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                     raise ValueError("expected JSON array")
                 for b in data:
                     validate_binding(b)
+                # Gegen die ANDERE Liste: ein Pin, den eine Tally-Lampe
+                # treibt, kann nicht gleichzeitig ein Taster sein. Siehe
+                # `pruefe_pin_konflikte`.
+                pruefe_pin_konflikte(load_tally_config(), data)
                 save_bindings(data)
                 log_event("bindings", action="save", count=len(data))
                 self._send_json({"ok": True, "count": len(data)})
@@ -1861,6 +1950,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 # kennt. Siehe merge_tally_config.
                 data = merge_tally_config(data, load_tally_config())
                 validate_tally_config(data)
+                pruefe_pin_konflikte(data, load_bindings())
                 save_tally_config(data)
                 reconfigure_tally_outputs()
                 devs = data.get("devices") or []
