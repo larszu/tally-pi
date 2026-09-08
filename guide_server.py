@@ -1158,7 +1158,7 @@ def log_event(kind, **fields):
             # simple size-based rotation
             try:
                 if EVENT_LOG_FILE.exists() and EVENT_LOG_FILE.stat().st_size > EVENT_LOG_MAX:
-                    rotated = EVENT_LOG_FILE.with_suffix(".log.1")
+                    rotated = rotated_log_file()
                     try:
                         if rotated.exists():
                             rotated.unlink()
@@ -1173,14 +1173,44 @@ def log_event(kind, **fields):
         pass
 
 
+def rotated_log_file():
+    """Die vorherige Fassung des Ereignis-Logs. Eine Stelle, zwei Nutzer:
+    `log_event` dreht dorthin, `read_event_log` liest von dort nach."""
+    return EVENT_LOG_FILE.with_suffix(".log.1")
+
+
 def read_event_log(limit=200):
-    """Return most recent <limit> event lines (newest last) as list of dicts."""
-    if not EVENT_LOG_FILE.exists():
+    """Return most recent <limit> event lines (newest last) as list of dicts.
+
+    BEFUND (Defektformen-Sweep, Form `fixture-erreicht-grenze-nicht`, gemessen
+    2026-09-08). Hier stand nur `EVENT_LOG_FILE`. Das ist richtig, solange die
+    Datei nicht rotiert — und genau das ist in keinem Test je passiert: die
+    Rotationsgrenze liegt bei 1 MB, und kein Lauf hat je so viel geschrieben.
+
+    Im Betrieb passiert es sehr wohl. `pi-guide` laeuft als Dienst durch und
+    schreibt bei jedem Tally-Wechsel und jedem ATEM-Buswechsel eine Zeile;
+    1 MB sind rund 9000 davon. In dem Moment, in dem die Datei dreht, hat die
+    NEUE Datei genau eine Zeile — und das Log-Fenster, in dem gerade jemand
+    200 Ereignisse las, zeigt eine. Die anderen 8999 liegen in
+    `events.log.1`, und niemand las sie.
+
+    Der Leser folgt deshalb dem Schreiber: reicht die aktuelle Datei nicht,
+    wird aus der gedrehten nachgelegt.
+    """
+    def zeilen(pfad):
+        if not pfad.exists():
+            return []
+        with open(pfad, "r", encoding="utf-8", errors="replace") as f:
+            return f.readlines()
+
+    if not EVENT_LOG_FILE.exists() and not rotated_log_file().exists():
         return []
     try:
-        # Read last N lines efficiently-ish (log stays <= 1MB).
-        with open(EVENT_LOG_FILE, "r", encoding="utf-8", errors="replace") as f:
-            lines = f.readlines()[-max(1, int(limit)):]
+        n = max(1, int(limit))
+        lines = zeilen(EVENT_LOG_FILE)[-n:]
+        if len(lines) < n:
+            # Aelter zuerst: die gedrehte Datei liegt VOR der aktuellen.
+            lines = zeilen(rotated_log_file())[-(n - len(lines)):] + lines
         out = []
         for ln in lines:
             ln = ln.strip()
