@@ -23,9 +23,18 @@
 # stattdessen in der Lauf-Zusammenfassung, wo sie jemand liest, der sie
 # braucht.
 #
-# DIESE DATEI LIEGT IN MEHREREN REPOS UND IST DORT ZEICHENGLEICH. Wer sie
+# DIESE DATEI LIEGT IN VIER REPOS (Broadcast-intercom, sony-camera-bridge,
+# tally-pi, pi-media-station) UND SOLL DORT ZEICHENGLEICH SEIN. Wer sie
 # aendert, aendert sie ueberall — sonst sehen zwei Projektseiten verschieden
 # aus, ohne dass jemand das entschieden haette.
+#
+# DAS IST EINE ABSICHT UND KEINE GEMESSENE TATSACHE, und der Unterschied
+# gehoert hierhin: kein Lauf kann sie pruefen, weil kein Repo die anderen
+# drei sieht. Die av-planner-suite haelt ihre drei Kopien des
+# Quellsprachen-Klassifizierers mit `lang:parity` zusammen — die liegen dort
+# im selben Baum. Hier gibt es keinen solchen Baum. Wer diese Zeile fuer
+# einen Waechter haelt, irrt sich; sie ist eine Bitte an den naechsten
+# Leser.
 # ---------------------------------------------------------------------------
 import html
 import pathlib
