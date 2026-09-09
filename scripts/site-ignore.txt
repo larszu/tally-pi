@@ -1,0 +1,5 @@
+# Was NICHT auf die Projektseite gehoert — ein Pfad je Zeile, dahinter `#`
+# und der GRUND. Der Grund ist Pflicht; `build-site.py` bricht ohne ihn ab,
+# und ebenso bei einem Eintrag, dessen Datei es nicht mehr gibt.
+
+setup-guide.html  # Die Setup-Oberflaeche des Pi, nicht eine Doku-Seite. Sie holt ihren gesamten Inhalt per fetch von ihrem eigenen Host (/ipconfig, /gpio, /tally-config, /atem, /logs …), den guide_server.py auf Port 8080 bedient. Statisch ausgeliefert bliebe jedes Feld leer: die Seite saehe aus wie das Werkzeug und zeigte nichts an. Sie gehoert auf den Pi, nicht auf github.io.
