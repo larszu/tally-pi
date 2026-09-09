@@ -12,16 +12,31 @@ import tempfile
 import threading
 import time
 from pathlib import Path
+import sys
+
+# Die Pfade liegen in `paths.py` — dieselbe Datei liegt neben diesem Programm,
+# auf dem Pi wie im Arbeitsverzeichnis. Der Pfad-Eintrag davor ist noetig, weil
+# systemd die Programme mit einem anderen Arbeitsverzeichnis startet als dem
+# Verzeichnis, in dem sie liegen.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import paths  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent
-PORT = 8080
+# Der Port. `GUIDE_PORT` gibt es, damit `run-local.py --port` nicht luegt:
+# ein Schalter, der die Zahl nur in der Ausgabe aendert und nicht im Server,
+# waere schlimmer als kein Schalter. Auf dem Pi ist die Variable nicht
+# gesetzt und es bleibt bei 8080 — die systemd-Unit und der Kiosk-Browser
+# merken nichts davon.
+PORT = int(os.environ.get("GUIDE_PORT", "8080"))
 DEBUG_GPIO = Path("/sys/kernel/debug/gpio")
-BINDINGS_FILE = Path("/opt/pi-guide/bindings.json")
-NUMATO_STATE_FILE = Path("/run/pi-guide/numato.json")
-ATEM_STATE_FILE = Path("/run/pi-guide/atem.json")
-INPUT_STATE_FILE = Path("/run/pi-guide/input-state.json")
-TALLY_CONFIG_FILE = Path("/opt/pi-guide/tally.json")
-EVENT_LOG_FILE = Path("/opt/pi-guide/events.log")
+# Die Pfade kommen aus `paths.py` — eine Stelle statt neunzehn. Ohne
+# gesetzte Umgebungsvariablen sind es genau die alten, siehe dort.
+BINDINGS_FILE = paths.BINDINGS_FILE
+NUMATO_STATE_FILE = paths.NUMATO_STATE
+ATEM_STATE_FILE = paths.ATEM_STATE
+INPUT_STATE_FILE = paths.INPUT_STATE
+TALLY_CONFIG_FILE = paths.TALLY_FILE
+EVENT_LOG_FILE = paths.EVENTS_LOG
 EVENT_LOG_MAX = 1_000_000  # bytes before rotation
 EVENT_LOG_LOCK = threading.Lock()
 
@@ -1282,7 +1297,7 @@ def read_event_log(limit=200):
 # angekommen.
 # ---------------------------------------------------------------------------
 
-CUE_FILE = Path("/run/pi-guide/cue.json")
+CUE_FILE = paths.CUE_FILE
 
 #: Dringlichkeiten. Drei, weil es drei Handzeichen aus der Gasse gibt --
 #: „Info", „zum Schluss kommen", „sofort aufhoeren". Mehr Stufen kann niemand
@@ -2187,7 +2202,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                     raise RuntimeError("missing source")
                 if act == "atem_aux" and not plan.get("aux"):
                     raise RuntimeError("missing aux number")
-                sock_path = Path("/run/pi-guide/atem-cmd.sock")
+                sock_path = paths.ATEM_CMD_SOCK
                 if not sock_path.exists():
                     raise RuntimeError("atem-cmd socket not present (atem watcher down?)")
                 s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)

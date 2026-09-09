@@ -6,10 +6,36 @@ import subprocess
 import time
 from pathlib import Path
 
-from luma.core.interface.serial import i2c
-from luma.core.render import canvas
-from luma.oled.device import ssd1306
-from PIL import ImageFont
+import sys
+
+# ── Das OLED: da oder nicht da ──────────────────────────────────────────────
+#
+# `luma` spricht ueber I2C mit einem 128x32-Display am Pi-Header. Auf einem
+# gewoehnlichen Rechner gibt es weder das Paket noch den Bus, und ein harter
+# Import machte dieses Programm dort unstartbar.
+#
+# Es gibt hier NICHTS zu ersetzen: ein Display, das nicht angeschlossen ist,
+# kann man nicht simulieren, und man will es auch nicht — die Anzeige ist der
+# Blick auf ein Geraet, das vor einem steht. Ohne Display sagt das Programm
+# das und beendet sich ordentlich, statt mit einem Stapelabzug abzubrechen.
+try:
+    from luma.core.interface.serial import i2c
+    from luma.core.render import canvas
+    from luma.oled.device import ssd1306
+    from PIL import ImageFont
+    OLED_VERFUEGBAR = True
+    OLED_GRUND = ""
+except Exception as _e:
+    i2c = canvas = ssd1306 = ImageFont = None
+    OLED_VERFUEGBAR = False
+    OLED_GRUND = f"luma/PIL nicht verfuegbar: {_e}"
+
+# Die Pfade liegen in `paths.py` — dieselbe Datei liegt neben diesem Programm,
+# auf dem Pi wie im Arbeitsverzeichnis. Der Pfad-Eintrag davor ist noetig, weil
+# systemd die Programme mit einem anderen Arbeitsverzeichnis startet als dem
+# Verzeichnis, in dem sie liegen.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import paths  # noqa: E402
 
 
 def current_ip() -> str:
@@ -40,7 +66,7 @@ def cpu_temp() -> str:
 
 def gpio_states() -> list:
     try:
-        bindings = json.loads(Path("/opt/pi-guide/bindings.json").read_text())
+        bindings = json.loads(paths.BINDINGS_FILE.read_text())
         bcm_list = sorted(b["bcm"] for b in bindings if b.get("enabled", True) and "bcm" in b)
     except Exception:
         return []
@@ -74,6 +100,14 @@ def uptime() -> str:
 
 
 def main() -> None:
+    if not OLED_VERFUEGBAR:
+        print(f"[pi-status] {OLED_GRUND}", flush=True)
+        print(
+            "[pi-status] Kein OLED an diesem Rechner — die Statusanzeige "
+            "bleibt aus. Auf dem Pi laeuft sie ueber I2C am Header.",
+            flush=True,
+        )
+        return
     serial = i2c(port=1, address=0x3C)
     device = ssd1306(serial, width=128, height=32)
 

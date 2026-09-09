@@ -15,14 +15,23 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
+# Die Pfade liegen in `paths.py` — dieselbe Datei liegt neben diesem Programm,
+# auf dem Pi wie im Arbeitsverzeichnis. Der Pfad-Eintrag davor ist noetig, weil
+# systemd die Programme mit einem anderen Arbeitsverzeichnis startet als dem
+# Verzeichnis, in dem sie liegen.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import paths  # noqa: E402
+
 try:
     import serial
 except ImportError:
     print("pyserial not installed; run: apt install python3-serial", flush=True)
     sys.exit(1)
 
-BINDINGS = Path("/opt/pi-guide/bindings.json")
-STATE_FILE = Path("/run/pi-guide/numato.json")
+# Die Pfade kommen aus `paths.py` — eine Stelle statt neunzehn. Ohne
+# gesetzte Umgebungsvariablen sind es genau die alten, siehe dort.
+BINDINGS = paths.BINDINGS_FILE
+STATE_FILE = paths.NUMATO_STATE
 COMPANION = "http://localhost:8000"
 POLL_INTERVAL = 0.05  # 50 ms
 ADC_POLL_EVERY = 4    # every Nth digital poll (so ADC runs ~5 Hz at 50ms loop / 4)

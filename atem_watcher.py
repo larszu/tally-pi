@@ -14,10 +14,20 @@ import tempfile
 import threading
 import time
 from pathlib import Path
+import sys
 
-STATE_FILE = Path("/run/pi-guide/atem.json")
-CONFIG_FILE = Path("/opt/pi-guide/tally.json")
-CMD_SOCKET = Path("/run/pi-guide/atem-cmd.sock")
+# Die Pfade liegen in `paths.py` — dieselbe Datei liegt neben diesem Programm,
+# auf dem Pi wie im Arbeitsverzeichnis. Der Pfad-Eintrag davor ist noetig, weil
+# systemd die Programme mit einem anderen Arbeitsverzeichnis startet als dem
+# Verzeichnis, in dem sie liegen.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import paths  # noqa: E402
+
+# Die Pfade kommen aus `paths.py` — eine Stelle statt neunzehn. Ohne
+# gesetzte Umgebungsvariablen sind es genau die alten, siehe dort.
+STATE_FILE = paths.ATEM_STATE
+CONFIG_FILE = paths.TALLY_FILE
+CMD_SOCKET = paths.ATEM_CMD_SOCK
 ATEM_PORT = 9910
 RECV_TIMEOUT = 2.0          # socket recv timeout (seconds)
 KEEPALIVE_INTERVAL = 1.0    # send keepalive ping every N seconds

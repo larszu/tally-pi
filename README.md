@@ -61,6 +61,48 @@ PGM 1 / PVW 2). The empty SW/HW columns and the `gpiod not available` note
 in the diagnostics shot are expected: that host has no GPIO hardware. Run
 the script yourself to regenerate them.</sub>
 
+## Run it on your own machine — no Pi
+
+```bash
+python3 run-local.py --demo
+```
+
+That is the whole prerequisite list: Python 3. No Pi, no ATEM, no GPIO
+header, no `sudo`.
+
+It starts **the same programs the Pi runs** — `guide_server.py`,
+`atem_watcher.py`, `gpio_watcher.py` — pointed at a directory under
+`.local-run/` instead of `/opt/pi-guide` and `/run/pi-guide`. There is no
+second code path and no "dev mode" with its own behaviour; the paths come
+from `paths.py`, which reads `PI_GUIDE_CONF` and `PI_GUIDE_STATE` and
+falls back to the Pi locations when they are unset. A running Pi notices
+nothing.
+
+| | |
+|---|---|
+| `--demo` | lay down a **standing** example state (three cameras, PGM 1 / PVW 2) |
+| `--atem 10.0.0.5` | talk to a real switcher on the network |
+| `--port 8081` | serve somewhere else |
+| `--host 127.0.0.1` | this machine only — the default binds all interfaces so a phone on the same network can reach it |
+| `--dir /some/where` | put config and state elsewhere |
+
+**What is missing is missing visibly.** Nothing is faked:
+
+* Without a 40-pin header there are no GPIO inputs. `gpio_watcher` writes
+  `gpio_available: false` **with a reason** into `input-state.json` and
+  keeps running. It does not invent button presses — a camera cut hangs
+  off those inputs, and a watcher that stays silent looks exactly like one
+  that sees nothing.
+* Without an I²C display `pi_status.py` says so and exits cleanly.
+* Without a switcher `atem_watcher` reports *not connected*. `--demo`
+  therefore does not start it at all, and the example state carries
+  `"demo": true` — it never claims a connection it does not have.
+
+`tests/test_lokaler_start.py` boots the server for real and asks it for a
+camera's tally state. A test that only compared two environment variables
+would prove a mapping, not a program: `python -m compileall` was green the
+whole time a hard `import gpiod` made every non-Pi start impossible.
+
 ## Quick install — fresh Pi
 
 Prerequisites: any Raspberry Pi 5 (Pi 4 also works) running either the

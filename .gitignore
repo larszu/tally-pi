@@ -21,3 +21,7 @@ Thumbs.db
 # Die gebaute Projektseite (scripts/build-site.py). Sie entsteht in CI neu;
 # eine eingecheckte Kopie waere ein zweiter Stand derselben Doku.
 _site/
+
+# Der lokale Start legt Konfiguration und Zustand hier ab (run-local.py).
+# Das ist Laufzeit eines einzelnen Rechners und gehoert nicht ins Repo.
+.local-run/
