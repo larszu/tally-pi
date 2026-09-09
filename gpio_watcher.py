@@ -18,14 +18,50 @@ import urllib.request
 from datetime import timedelta
 from pathlib import Path
 
-import gpiod
-from gpiod.line import Bias, Direction, Edge
+# ── libgpiod: da oder nicht da, und das wird GESAGT ─────────────────────────
+#
+# Ein harter `import gpiod` machte dieses Programm auf jedem Rechner ohne
+# 40-poligen Stecker unstartbar — mit einem `ModuleNotFoundError` als
+# Begruendung, also mit der Meldung eines fehlenden Pakets statt der Wahrheit
+# („dieser Rechner hat keine GPIO-Leitungen").
+#
+# Es wird NICHTS VORGETAEUSCHT. Kein Mock, der Tastendruecke erfindet: eine
+# Eingabe, die es nicht gibt, darf nicht so aussehen, als gaebe es sie —
+# davon haengt in diesem Programm eine Kamera-Umschaltung ab. Ohne libgpiod
+# laeuft der Watcher weiter, meldet einmal deutlich, dass die Eingaenge tot
+# sind, und schreibt genau das auch in `input-state.json`. Die Oberflaeche
+# zeigt es dann an, statt leere Spalten ohne Grund zu haben.
+try:
+    import gpiod
+    from gpiod.line import Bias, Direction, Edge
+    GPIO_VERFUEGBAR = True
+    GPIO_GRUND = ""
+except Exception as _e:  # ImportError, und auf Fremdsystemen auch OSError
+    gpiod = None
+    GPIO_VERFUEGBAR = False
+    GPIO_GRUND = f"libgpiod nicht verfuegbar: {_e}"
 
-BINDINGS = Path("/opt/pi-guide/bindings.json")
-TALLY_CONFIG = Path("/opt/pi-guide/tally.json")
-EVENT_LOG_FILE = Path("/opt/pi-guide/events.log")
-ATEM_CMD_SOCKET = Path("/run/pi-guide/atem-cmd.sock")
-INPUT_STATE_FILE = Path("/run/pi-guide/input-state.json")
+    class _Fehlt:
+        """Platzhalter fuer die Aufzaehlungen, damit der Modul-Rumpf laedt."""
+        def __getattr__(self, name):
+            raise RuntimeError(GPIO_GRUND)
+
+    Bias = Direction = Edge = _Fehlt()
+
+# Die Pfade liegen in `paths.py` — dieselbe Datei liegt neben diesem Programm,
+# auf dem Pi wie im Arbeitsverzeichnis. Der Pfad-Eintrag davor ist noetig, weil
+# systemd die Programme mit einem anderen Arbeitsverzeichnis startet als dem
+# Verzeichnis, in dem sie liegen.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import paths  # noqa: E402
+
+# Die Pfade kommen aus `paths.py` — eine Stelle statt neunzehn. Ohne
+# gesetzte Umgebungsvariablen sind es genau die alten, siehe dort.
+BINDINGS = paths.BINDINGS_FILE
+TALLY_CONFIG = paths.TALLY_FILE
+EVENT_LOG_FILE = paths.EVENTS_LOG
+ATEM_CMD_SOCKET = paths.ATEM_CMD_SOCK
+INPUT_STATE_FILE = paths.INPUT_STATE
 CHIP = "/dev/gpiochip0"
 COMPANION = "http://localhost:8000"
 CONSUMER = "pi-gpio-watcher"
@@ -647,7 +683,41 @@ def watch_loop():
             pass
 
 
+def ohne_hardware():
+    """
+    Weiterlaufen, ohne etwas zu behaupten.
+
+    Der Zustand wird geschrieben, nicht verschwiegen: `input-state.json`
+    traegt `gpio_available: false` samt Grund, und die Oberflaeche kann es
+    zeigen. Ein Watcher, der einfach nichts schreibt, ist von einem Watcher,
+    der nichts SIEHT, nicht zu unterscheiden — und das ist genau die
+    Verwechslung, die man vor einer Sendung nicht braucht.
+    """
+    log(GPIO_GRUND)
+    log(
+        "Eingaenge sind auf diesem Rechner inaktiv. Das ist kein Fehler, "
+        "sondern die Lage: es gibt keine GPIO-Leitungen."
+    )
+    log_event("watcher", action="start", chip=CHIP, gpio_available=False,
+              reason=GPIO_GRUND)
+    while True:
+        try:
+            paths.ensure_dirs()
+            INPUT_STATE_FILE.write_text(json.dumps({
+                "gpio_available": False,
+                "reason": GPIO_GRUND,
+                "inputs": {},
+                "ts": time.time(),
+            }))
+        except OSError:
+            pass
+        time.sleep(2)
+
+
 def main():
+    if not GPIO_VERFUEGBAR:
+        ohne_hardware()
+        return
     log(f"pi-gpio-watcher starting (chip={CHIP})")
     log_event("watcher", action="start", chip=CHIP)
     while True:
