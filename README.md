@@ -17,6 +17,21 @@ web UI. No build step, no cloud, no framework.
 
 </div>
 
+## The web page
+
+Every push to the default branch builds this repo's page from
+`.github/workflows/pages.yml` and publishes it:
+
+**https://larszu.github.io/tally-pi/**
+
+The workflow **asks the Pages API before it configures anything.** With no
+Pages site it still builds — that is a real check — and skips only the
+publishing step, with a warning and the one missing step in the run summary.
+A run that must stay red for a click nobody made teaches people to ignore red.
+
+Measured 2026-09-09: **published** — the `deploy` job ran and succeeded.
+
+---
 ## What it does
 
 Turn a Pi with a 40-pin header, an HDMI screen and (optionally) an I²C OLED
