@@ -198,7 +198,18 @@ class DerZustandUeberlebtDenNeustartNicht(unittest.TestCase):
         # Ein Cue von gestern Abend, der nach dem Booten wieder auf dem Schirm
         # steht, ist genau die Luege, gegen die Bedarf 86 die Tally-Seite
         # abgedichtet hat.
-        self.assertTrue(str(gs.CUE_FILE).startswith("/run/"))
+        #
+        # Auf dem Pi haelt das ein tmpfs: `/run` ist nach dem Booten leer.
+        # macOS und Windows haben keinen solchen Ort an fester Stelle (siehe
+        # `paths.py`), und ein erfundener waere schlimmer als keiner. Was auf
+        # allen drei Plattformen gilt und hier geprueft wird: der Cue liegt im
+        # ZUSTANDS-Verzeichnis und nicht bei der Konfiguration — sonst
+        # ueberlebte er ueberall, auch auf dem Pi.
+        import paths
+        self.assertEqual(Path(gs.CUE_FILE).parent, Path(paths.STATE_DIR))
+        self.assertNotEqual(Path(paths.STATE_DIR), Path(paths.CONF_DIR))
+        if sys.platform.startswith("linux"):
+            self.assertTrue(str(gs.CUE_FILE).startswith("/run/"))
 
     def test_ein_fehlender_zustand_ist_kein_fehler(self):
         # `load_cue` faellt auf {} zurueck; `cue_view({})` ist „nichts

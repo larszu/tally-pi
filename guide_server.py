@@ -5,6 +5,7 @@ import http.server
 import json
 import os
 import re
+import shutil
 import socket
 import socketserver
 import subprocess
@@ -20,6 +21,7 @@ import sys
 # Verzeichnis, in dem sie liegen.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import paths  # noqa: E402
+import cmd_channel  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent
 # Der Port. `GUIDE_PORT` gibt es, damit `run-local.py --port` nicht luegt:
@@ -353,27 +355,128 @@ def pruefe_pin_konflikte(cfg, bindings):
         nimm(b.get("bcm"), f"Companion-Bindung #{i + 1}")
 
 
+# ---------------------------------------------------------------------------
+# Netzwerk-Anzeige — drei Wege zu derselben Frage.
+#
+# WOFUER DIE ANZEIGE DA IST: Der Pi steht ohne Bildschirm im Rack, und die
+# Oberflaeche beantwortet „unter welcher Adresse erreiche ich das Ding vom
+# Handy aus?". Am Schreibtisch ist die Frage dieselbe — nur `ip` gibt es
+# dort nicht: das Kommando ist Linux-eigen (iproute2). Auf dem Mac hiess die
+# Antwort deshalb bis 2026-09-12 `[Errno 2] No such file or directory: 'ip'`
+# und unter Windows genauso. Eine Fehlermeldung an der Stelle, wo eine
+# Adresse stehen soll, ist keine Auskunft.
+#
+# WAS NICHT GETAN WIRD: `ipconfig` unter Windows auslesen. Dessen Ausgabe ist
+# uebersetzt („Drahtlos-LAN-Adapter WLAN"), und ein Parser, der an einer
+# deutschen Windows-Installation etwas anderes sieht als an einer englischen,
+# ist schlimmer als keiner. Wo kein verlaessliches Kommando da ist, fragt der
+# Server die Socket-Schnittstelle — die kennt keine Sprache.
+# ---------------------------------------------------------------------------
+
+def _ifaces_ip_kommando():
+    """Linux: `ip -4 -j addr show` — Schnittstellennamen inklusive."""
+    out = subprocess.run(
+        ["ip", "-4", "-j", "addr", "show"],
+        capture_output=True, text=True, timeout=3,
+    )
+    ifaces = []
+    for i in json.loads(out.stdout):
+        name = i.get("ifname")
+        if name == "lo":
+            continue
+        addrs = [a.get("local") for a in i.get("addr_info", []) if a.get("local")]
+        ifaces.append({"name": name, "addresses": addrs,
+                       "state": i.get("operstate", "UNKNOWN")})
+    return ifaces
+
+
+def _ifaces_ifconfig(text=None):
+    """macOS/BSD: `ifconfig -a`. Die Ausgabe ist nicht uebersetzt.
+
+    `text` gibt es fuer den Test: dieser Zweig laeuft nur auf einem Mac, und
+    ein Parser, der nur dort pruefbar ist, wird genau dann falsch, wenn
+    niemand hinsieht. `tests/test_plattformen.py` schickt echte
+    `ifconfig -a`-Ausgabe hindurch — auf jeder Plattform.
+    """
+    if text is None:
+        text = subprocess.run(["ifconfig", "-a"], capture_output=True,
+                              text=True, timeout=3).stdout
+    ifaces, aktuell = [], None
+    for zeile in text.splitlines():
+        if zeile and not zeile[0].isspace():
+            name = zeile.split(":", 1)[0].strip()
+            up = "UP" in zeile.split("<", 1)[-1].split(">", 1)[0].split(",")
+            aktuell = {"name": name, "addresses": [],
+                       "state": "UP" if up else "DOWN"}
+            if name != "lo0":
+                ifaces.append(aktuell)
+            else:
+                aktuell = None
+        elif aktuell is not None:
+            teile = zeile.split()
+            if teile and teile[0] == "inet" and len(teile) > 1:
+                aktuell["addresses"].append(teile[1])
+    return [i for i in ifaces if i["addresses"]]
+
+
+def _ifaces_ueber_sockets():
+    """Ueberall sonst (Windows): die Adressen, die das System selbst nennt.
+
+    Ohne Schnittstellennamen — die gibt keine portable Schnittstelle her.
+    Das steht als `note` dabei, statt einen Namen zu erfinden.
+    """
+    adressen = []
+
+    def nimm(a):
+        if a and not a.startswith("127.") and a not in adressen:
+            adressen.append(a)
+
+    try:
+        for res in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET):
+            nimm(res[4][0])
+    except OSError:
+        pass
+    # Die Adresse, ueber die der Rechner ins LAN spricht. Kein Paket geht
+    # raus — `connect` auf UDP waehlt nur die Route. Sie fehlt oben, wenn
+    # der Hostname nicht aufloest, und genau die will der Nutzer sehen.
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        s.connect(("10.255.255.255", 1))
+        nimm(s.getsockname()[0])
+    except OSError:
+        pass
+    finally:
+        s.close()
+    if not adressen:
+        return []
+    return [{"name": "(diese Maschine)", "addresses": adressen, "state": "UP",
+             "note": "Schnittstellennamen nennt dieses Betriebssystem nicht "
+                     "ohne Zusatzpaket — die Adressen stimmen."}]
+
+
 def get_ipconfig():
     """Return list of interfaces with their IPv4 addresses."""
-    ifaces = []
-    try:
-        out = subprocess.run(
-            ["ip", "-4", "-j", "addr", "show"],
-            capture_output=True, text=True, timeout=3,
-        )
-        data = json.loads(out.stdout)
-        for i in data:
-            name = i.get("ifname")
-            if name == "lo":
-                continue
-            addrs = [a.get("local") for a in i.get("addr_info", []) if a.get("local")]
-            state = i.get("operstate", "UNKNOWN")
-            ifaces.append({"name": name, "addresses": addrs, "state": state})
-    except Exception as e:
-        ifaces.append({"error": str(e)})
-    # Hostname info
-    hostname = socket.gethostname()
-    return {"hostname": hostname, "interfaces": ifaces}
+    if sys.platform.startswith("linux"):
+        wege = (_ifaces_ip_kommando, _ifaces_ueber_sockets)
+    elif sys.platform == "darwin":
+        wege = (_ifaces_ifconfig, _ifaces_ueber_sockets)
+    else:
+        wege = (_ifaces_ueber_sockets,)
+
+    ifaces, fehler = [], []
+    for weg in wege:
+        try:
+            ifaces = weg()
+        except Exception as e:
+            fehler.append(f"{weg.__name__}: {e}")
+            continue
+        if ifaces:
+            break
+    if not ifaces:
+        # Auch das ist eine Auskunft: keine Adresse gefunden, und woran es lag.
+        ifaces = [{"error": "; ".join(fehler) or "keine IPv4-Adresse gefunden"}]
+    return {"hostname": socket.gethostname(), "interfaces": ifaces,
+            "platform": sys.platform}
 
 
 def get_numato_state():
@@ -1065,7 +1168,29 @@ def build_tally_diagnostics():
 WATCHER_UNIT = "pi-gpio-watcher.service"
 
 
+def systemd_vorhanden():
+    """Gibt es hier ueberhaupt einen Dienstverwalter, den man fragen kann?
+
+    Auf dem Pi ja. Auf einem Mac und unter Windows nein — und dann ist die
+    Frage „laeuft die Unit?" nicht falsch beantwortet, sondern gar nicht
+    gestellt. Vorher stand in der Oberflaeche `error: [Errno 2] ... 'systemctl'`
+    an der Stelle, wo „aktiv" oder „inaktiv" steht; das liest sich wie ein
+    kaputter Dienst und ist doch nur ein anderes Betriebssystem.
+    """
+    return sys.platform.startswith("linux") and shutil.which("systemctl") is not None
+
+
 def watcher_status():
+    if not systemd_vorhanden():
+        return {
+            "active": False, "enabled": False,
+            "active_state": "kein systemd", "enabled_state": "kein systemd",
+            "unsupported": True,
+            "reason": f"{sys.platform} hat kein systemd — der GPIO-Watcher "
+                      f"laeuft hier als gewoehnlicher Prozess (run-local.py "
+                      f"startet ihn mit).",
+        }
+
     def _run(args):
         try:
             r = subprocess.run(["systemctl", *args, WATCHER_UNIT],
@@ -1090,6 +1215,11 @@ def watcher_set(action):
         cmd = ["systemctl", "disable", "--now", WATCHER_UNIT]
     else:
         raise ValueError("action must be 'enable' or 'disable'")
+    if not systemd_vorhanden():
+        raise RuntimeError(
+            f"kein systemd auf {sys.platform} — diese Umschaltung gibt es nur "
+            f"auf dem Pi. Lokal bestimmt `run-local.py --no-gpio`, ob der "
+            f"Watcher laeuft.")
     r = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
     if r.returncode != 0:
         raise RuntimeError(r.stderr.strip() or r.stdout.strip() or f"exit {r.returncode}")
@@ -2202,27 +2332,16 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                     raise RuntimeError("missing source")
                 if act == "atem_aux" and not plan.get("aux"):
                     raise RuntimeError("missing aux number")
-                sock_path = paths.ATEM_CMD_SOCK
-                if not sock_path.exists():
-                    raise RuntimeError("atem-cmd socket not present (atem watcher down?)")
-                s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-                s.settimeout(2.0)
-                try:
-                    s.connect(str(sock_path))
-                    if act == "atem_aux":
-                        cmd = {"cmd": "set_aux", "aux": plan["aux"], "source": plan["source"]}
-                    else:
-                        sub = "set_program" if act == "atem_pgm" else "set_preview"
-                        cmd = {"cmd": sub, "me": plan["me"], "source": plan["source"]}
-                    s.sendall((json.dumps(cmd) + "\n").encode("utf-8"))
-                    resp = s.recv(4096).decode("utf-8", errors="replace").strip()
-                    if resp:
-                        j = json.loads(resp.split("\n", 1)[0])
-                        if not j.get("ok"):
-                            raise RuntimeError(j.get("error", "atem cmd rejected"))
-                finally:
-                    try: s.close()
-                    except Exception: pass
+                # Der Weg zum Watcher steht in `cmd_channel` — Unix-Socket
+                # auf Linux und macOS, Loopback-Port unter Windows. Hier
+                # interessiert nur: der Befehl geht durch, oder er scheitert
+                # mit einem Grund, der gleich im Protokoll steht.
+                if act == "atem_aux":
+                    cmd = {"cmd": "set_aux", "aux": plan["aux"], "source": plan["source"]}
+                else:
+                    sub = "set_program" if act == "atem_pgm" else "set_preview"
+                    cmd = {"cmd": sub, "me": plan["me"], "source": plan["source"]}
+                cmd_channel.sende(cmd)
             elif act == "companion":
                 sub = plan["action"].split("_", 1)[1]
                 url = f"http://localhost:8000/api/location/{plan['page']}/{plan['row']}/{plan['column']}/{sub}"
@@ -2325,7 +2444,24 @@ if __name__ == "__main__":
     # Bind address: default to all interfaces so admins can reach it from
     # the LAN. Set GUIDE_HOST=127.0.0.1 in the systemd unit to lock it down.
     host = os.environ.get("GUIDE_HOST", "0.0.0.0")
-    socketserver.ThreadingTCPServer.allow_reuse_address = True
+
+    # SO_REUSEADDR bedeutet auf den beiden Familien NICHT dasselbe, und der
+    # Unterschied ist genau der, der hier zaehlt:
+    #
+    #   POSIX    erlaubt das Binden, waehrend ein alter Socket noch in
+    #            TIME_WAIT haengt. Ohne das scheitert jeder Neustart des
+    #            Dienstes fuer eine Minute — deshalb steht es hier.
+    #   Windows  erlaubt ZWEI Prozessen denselben Port. Welcher die Anfragen
+    #            bekommt, ist nicht vorhersagbar. Ein zweiter versehentlich
+    #            gestarteter `run-local.py` wuerde die Oberflaeche dann
+    #            abwechselnd bedienen, und niemand saehe, warum die Seite
+    #            manchmal veraltete Werte zeigt.
+    #
+    # Also: an, wo es hilft; aus, wo es schadet. Unter Windows meldet das
+    # Binden dann ehrlich „Port belegt", und `run-local.py` faengt genau das
+    # vorher schon ab und sagt es in einem Satz.
+    socketserver.ThreadingTCPServer.allow_reuse_address = (
+        not sys.platform.startswith("win"))
     try:
         reconfigure_tally_outputs()
     except Exception as e:
@@ -2333,7 +2469,18 @@ if __name__ == "__main__":
     start_transition_logger()
     log_event("guide", action="start", host=host, port=PORT)
     # Threading server so SSE streams do not block other requests.
-    with socketserver.ThreadingTCPServer((host, PORT), Handler) as httpd:
+    try:
+        httpd = socketserver.ThreadingTCPServer((host, PORT), Handler)
+    except OSError as e:
+        # Die haeufigste Lage beim lokalen Start: der Port ist schon belegt.
+        # Ein Stapelabzug mit `errno 98` beantwortet die Frage „was ist los?"
+        # nicht; ein Satz mit dem naechsten Schritt schon.
+        print(f"[guide] Port {PORT} laesst sich nicht belegen: {e}", flush=True)
+        print(f"[guide] Laeuft schon ein Tally-Pi auf {host}:{PORT}? "
+              f"Sonst mit einem anderen Port starten "
+              f"(`run-local.py --port {PORT + 1}`).", flush=True)
+        sys.exit(1)
+    with httpd:
         httpd.daemon_threads = True
         print(f"Serving guide on http://{host}:{PORT}/")
         httpd.serve_forever()

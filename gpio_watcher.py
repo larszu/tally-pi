@@ -10,7 +10,6 @@ Two input sources, merged at load time:
 """
 import json
 import os
-import socket as _socket
 import sys
 import time
 import urllib.parse
@@ -54,13 +53,13 @@ except Exception as _e:  # ImportError, und auf Fremdsystemen auch OSError
 # Verzeichnis, in dem sie liegen.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import paths  # noqa: E402
+import cmd_channel  # noqa: E402
 
 # Die Pfade kommen aus `paths.py` — eine Stelle statt neunzehn. Ohne
 # gesetzte Umgebungsvariablen sind es genau die alten, siehe dort.
 BINDINGS = paths.BINDINGS_FILE
 TALLY_CONFIG = paths.TALLY_FILE
 EVENT_LOG_FILE = paths.EVENTS_LOG
-ATEM_CMD_SOCKET = paths.ATEM_CMD_SOCK
 INPUT_STATE_FILE = paths.INPUT_STATE
 CHIP = "/dev/gpiochip0"
 COMPANION = "http://localhost:8000"
@@ -200,25 +199,13 @@ def http_post(url, data=b""):
 
 
 def atem_cmd(cmd: dict) -> None:
-    """Send one JSON command line to the atem_watcher's unix socket."""
-    if not ATEM_CMD_SOCKET.exists():
-        raise RuntimeError(f"{ATEM_CMD_SOCKET} not present (atem watcher down?)")
-    s = _socket.socket(_socket.AF_UNIX, _socket.SOCK_STREAM)
-    s.settimeout(2.0)
-    try:
-        s.connect(str(ATEM_CMD_SOCKET))
-        s.sendall((json.dumps(cmd) + "\n").encode("utf-8"))
-        resp = s.recv(4096).decode("utf-8", errors="replace").strip()
-        if resp:
-            try:
-                j = json.loads(resp.split("\n", 1)[0])
-                if not j.get("ok"):
-                    raise RuntimeError(j.get("error", "atem cmd rejected"))
-            except json.JSONDecodeError:
-                pass
-    finally:
-        try: s.close()
-        except Exception: pass
+    """Send one JSON command line to the atem_watcher.
+
+    Der Weg dorthin steht in `cmd_channel`: Unix-Socket auf Linux und
+    macOS, Loopback-Port unter Windows. Hier ist es in beiden Faellen ein
+    Aufruf, der entweder durchgeht oder mit einem Grund scheitert.
+    """
+    cmd_channel.sende(cmd)
 
 
 def run_action(binding, event_type, _edge_count=None):
@@ -499,10 +486,7 @@ def _publish_input_state(trackers):
                 "ts": time.time(),
             }
     try:
-        INPUT_STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
-        tmp = INPUT_STATE_FILE.with_suffix(".tmp")
-        tmp.write_text(json.dumps(state))
-        os.replace(tmp, INPUT_STATE_FILE)
+        paths.atomic_write_json(INPUT_STATE_FILE, state)
     except Exception:
         pass
 
@@ -703,12 +687,12 @@ def ohne_hardware():
     while True:
         try:
             paths.ensure_dirs()
-            INPUT_STATE_FILE.write_text(json.dumps({
+            paths.atomic_write_json(INPUT_STATE_FILE, {
                 "gpio_available": False,
                 "reason": GPIO_GRUND,
                 "inputs": {},
                 "ts": time.time(),
-            }))
+            })
         except OSError:
             pass
         time.sleep(2)

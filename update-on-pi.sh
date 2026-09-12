@@ -11,6 +11,14 @@ install -d /opt/pi-guide
 # Drop timestamped backups left by earlier installer versions.
 rm -f /opt/pi-guide/*.bak.* 2>/dev/null || true
 install -m 644 setup-guide.html    /opt/pi-guide/
+# Die beiden Module, die neben den Programmen liegen muessen: `paths.py`
+# (wo die Dateien liegen) und `cmd_channel.py` (wie die Programme
+# miteinander reden). Sie standen hier nicht, solange sie sich nie
+# aenderten -- ein Update haette dann eine neue `atem_watcher.py` neben ein
+# altes Modul gelegt, und der Dienst waere beim Import gestorben. Geprueft
+# wird das in `tests/test_lokaler_start.py`.
+install -m 644 paths.py            /opt/pi-guide/
+install -m 644 cmd_channel.py      /opt/pi-guide/
 install -m 755 guide_server.py     /opt/pi-guide/
 install -m 755 gpio_watcher.py     /opt/pi-guide/
 install -m 755 numato_watcher.py   /opt/pi-guide/

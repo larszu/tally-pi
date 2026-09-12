@@ -16,24 +16,31 @@ why the diagnostics shot shows empty SW/HW columns and a "gpiod not
 available" note. That is the honest output for a machine without a 40-pin
 header, not a broken build.
 
-Note that guide_server reads its config from the absolute paths
-/opt/pi-guide/{tally,bindings}.json and /run/pi-guide/atem.json, so this
-script writes there. It refuses to clobber an existing /opt/pi-guide —
-never run it on a Pi that is actually in service.
+Since 2026-09-12 this writes into a throwaway directory of its own and
+points guide_server at it via PI_GUIDE_CONF / PI_GUIDE_STATE (see
+`paths.py`). It used to seed /opt/pi-guide and /run/pi-guide directly,
+which meant it needed root, could overwrite a real installation, and did
+not work at all on macOS or Windows — the places where /opt and /run are
+either root-owned or absent. A running Pi is now untouched by it, and so
+is your own local config under .local-run/.
 """
 import json
 import os
-import shutil
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 OUT = ROOT / "docs" / "img"
-STATE_DIR = Path("/run/pi-guide")
-CONF_DIR = Path("/opt/pi-guide")
-PORT = 8080
+# Ein eigenes Verzeichnis, nicht die Installation: die Bilder entstehen aus
+# einem erfundenen Zustand, und der hat neben einer echten Konfiguration
+# nichts zu suchen.
+BASIS = Path(tempfile.gettempdir()) / "tally-pi-screenshots"
+CONF_DIR = BASIS / "conf"
+STATE_DIR = BASIS / "state"
+PORT = int(os.environ.get("GUIDE_PORT", "8080"))
 BASE = f"http://127.0.0.1:{PORT}"
 
 DEMO_DEVICES = {
@@ -65,15 +72,23 @@ DEMO_ATEM = {
 
 
 def seed():
-    if CONF_DIR.exists() and (CONF_DIR / "tally.json").exists():
-        existing = json.loads((CONF_DIR / "tally.json").read_text() or "{}")
-        if existing.get("devices") and existing != DEMO_DEVICES:
-            sys.exit(f"{CONF_DIR}/tally.json holds a real config — refusing to overwrite it.")
     CONF_DIR.mkdir(parents=True, exist_ok=True)
     STATE_DIR.mkdir(parents=True, exist_ok=True)
-    (CONF_DIR / "tally.json").write_text(json.dumps(DEMO_DEVICES, indent=2))
-    (CONF_DIR / "bindings.json").write_text("[]")
-    (STATE_DIR / "atem.json").write_text(json.dumps(DEMO_ATEM))
+    (CONF_DIR / "tally.json").write_text(json.dumps(DEMO_DEVICES, indent=2),
+                                         encoding="utf-8")
+    (CONF_DIR / "bindings.json").write_text("[]", encoding="utf-8")
+    (STATE_DIR / "atem.json").write_text(json.dumps(DEMO_ATEM), encoding="utf-8")
+
+
+def umgebung():
+    """Die Umgebung fuer den Server — dieselben zwei Variablen wie lokal."""
+    e = dict(os.environ)
+    e["PI_GUIDE_CONF"] = str(CONF_DIR)
+    e["PI_GUIDE_STATE"] = str(STATE_DIR)
+    e["GUIDE_HOST"] = "127.0.0.1"
+    e["GUIDE_PORT"] = str(PORT)
+    e["PYTHONUNBUFFERED"] = "1"
+    return e
 
 
 def page_clip(pg, selector, index=0, pad=10):
@@ -142,6 +157,7 @@ def shoot():
 def main():
     seed()
     server = subprocess.Popen([sys.executable, str(ROOT / "guide_server.py")],
+                              env=umgebung(), cwd=str(ROOT),
                               stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
     try:
         for _ in range(40):
@@ -163,6 +179,4 @@ def main():
 
 
 if __name__ == "__main__":
-    if shutil.which("python3") is None:
-        sys.exit("python3 required")
     main()
