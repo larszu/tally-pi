@@ -101,13 +101,14 @@ install -d /opt/pi-guide /opt/pi-status
 # used at runtime and accumulate over time.
 rm -f /opt/pi-guide/*.bak.* /opt/pi-status/*.bak.* 2>/dev/null || true
 install -m 644 setup-guide.html    /opt/pi-guide/
-# `paths.py` liegt neben JEDEM Programm, das es importiert -- also auch in
-# /opt/pi-status/. Zwei Kopien einer Datei sind sonst nichts, was man will;
+# `paths.py` und `cmd_channel.py` liegen neben JEDEM Programm, das sie
+# importiert -- `paths.py` also auch in /opt/pi-status/. Zwei Kopien einer Datei sind sonst nichts, was man will;
 # hier sind es zwei Installationsorte derselben Quelle, und der Alternative
 # (ein Paket auf dem PYTHONPATH) steht entgegen, dass die Programme als
 # flache Dateien deployt werden und systemd sie einzeln startet.
 install -m 644 paths.py            /opt/pi-guide/
 install -m 644 paths.py            /opt/pi-status/
+install -m 644 cmd_channel.py      /opt/pi-guide/
 install -m 755 guide_server.py     /opt/pi-guide/
 install -m 755 gpio_watcher.py     /opt/pi-guide/
 install -m 755 numato_watcher.py   /opt/pi-guide/

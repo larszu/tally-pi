@@ -22,11 +22,25 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import paths  # noqa: E402
 
+# ── pyserial: da oder nicht da, und das wird GESAGT ────────────────────────
+#
+# Bis 2026-09-12 stand hier ein `sys.exit(1)` BEIM IMPORT, mit dem Rat
+# `apt install python3-serial`. Auf dem Pi ist der Rat richtig; auf einem Mac
+# und unter Windows gibt es kein apt, und der Abbruch beim Import machte das
+# Programm dort auch fuer einen Blick von aussen unerreichbar — selbst ein
+# Test konnte es nicht laden, um zu sehen, ob es faellt.
+#
+# Es wird nichts vorgetaeuscht: ohne pyserial gibt es keine Numato-Platine,
+# und das Programm sagt es und laeuft nicht weiter. Es sagt es nur dort, wo
+# jemand es liest (beim Start), mit einem Rat, der zur Plattform passt.
 try:
     import serial
-except ImportError:
-    print("pyserial not installed; run: apt install python3-serial", flush=True)
-    sys.exit(1)
+    SERIAL_VERFUEGBAR = True
+    SERIAL_GRUND = ""
+except ImportError as _e:
+    serial = None
+    SERIAL_VERFUEGBAR = False
+    SERIAL_GRUND = f"pyserial nicht verfuegbar: {_e}"
 
 # Die Pfade kommen aus `paths.py` — eine Stelle statt neunzehn. Ohne
 # gesetzte Umgebungsvariablen sind es genau die alten, siehe dort.
@@ -45,8 +59,7 @@ def log(msg):
 
 def write_state(state):
     try:
-        STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
-        STATE_FILE.write_text(json.dumps(state))
+        paths.atomic_write_json(STATE_FILE, state)
     except Exception as e:
         log(f"state write error: {e}")
 
@@ -214,7 +227,33 @@ def session(device):
             pass
 
 
+def rat_zur_plattform() -> str:
+    if sys.platform.startswith("linux"):
+        return "apt install python3-serial"
+    return "pip install pyserial"
+
+
 def main():
+    if not SERIAL_VERFUEGBAR:
+        log(SERIAL_GRUND)
+        log(f"Ohne pyserial wird keine Numato-Platine gesucht. Nachruesten: "
+            f"{rat_zur_plattform()}")
+        write_state({"connected": False, "device": None,
+                     "error": SERIAL_GRUND, "ts": time.time()})
+        return 1
+    if not sys.platform.startswith("linux"):
+        # Die Geraetesuche kennt `/dev/numato0` und `/dev/ttyACM*`. Unter
+        # Windows heissen serielle Anschluesse `COM3`, auf dem Mac
+        # `/dev/cu.usbmodem*`. Das ist nachruestbar, aber nicht ohne die
+        # Platine zu pruefen — und etwas zu suchen, wo man nicht suchen kann,
+        # waere eine leere Anzeige ohne Grund. Also steht der Grund da.
+        log(f"numato-watcher: die Geraetesuche gibt es bisher nur auf Linux "
+            f"({sys.platform} nennt serielle Anschluesse anders). Die "
+            f"Numato-Platine haengt am Pi; dort laeuft dieser Dienst.")
+        write_state({"connected": False, "device": None,
+                     "error": f"Geraetesuche auf {sys.platform} nicht "
+                              f"unterstuetzt", "ts": time.time()})
+        return 1
     log("numato-watcher starting (hot-plug enabled)")
     while True:
         try:
@@ -237,4 +276,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main() or 0)

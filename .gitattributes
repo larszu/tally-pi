@@ -6,3 +6,9 @@
 *.conf text eol=lf
 *.html text eol=lf
 *.md text eol=lf
+*.command text eol=lf
+# Die EINZIGE Ausnahme, und sie ist keine Vorliebe: `cmd.exe` bricht eine
+# Batch-Datei mit reinen LF-Enden mitten in einem `if (...)`-Block ab, ohne
+# zu sagen warum. Der Starter, den jemand unter Windows doppelklickt, muss
+# CRLF haben.
+*.bat text eol=crlf
