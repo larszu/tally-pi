@@ -1,5 +1,3 @@
-<div align="center">
-
 # tally-pi
 
 **ATEM tally lamps, browser tally and GPIO trigger buttons — on a Raspberry Pi.**
@@ -13,9 +11,31 @@ web UI. No build step, no cloud, no framework.
 ![platform](https://img.shields.io/badge/platform-Raspberry%20Pi%204%20%2F%205-c51a4a)
 ![python](https://img.shields.io/badge/python-stdlib%20only-3776ab)
 
+<div align="center">
 <img src="docs/img/setup-ui.png" alt="tally-pi setup UI, Tally tab" width="820">
-
 </div>
+
+## Try it in your browser — the whole application, no Pi
+
+**https://larszu.github.io/tally-pi/demo/**
+
+That link is not a screenshot tour. It is `setup-guide.html` — the same file
+the Pi serves — with the device cards, the tally diagnostics table, the
+browser tally pages and the cue display, all live. Switch the mixer state in
+the header bar and watch the lamps follow; open a tally page on your phone
+and switch again, it turns red with the desk.
+
+**Nothing there is faked, and nothing there is real hardware.** GitHub Pages
+runs no Python, so the answers the UI would get from `guide_server.py` are
+computed **by `guide_server.py` itself**, at build time, over three scenarios
+— see `scripts/build-demo.py`. The one question that matters, *is this camera
+live?*, is answered by `tally_state_for_device()`, the same function the Pi
+uses; the browser only looks its answer up. There is no second implementation
+to drift.
+
+Where hardware is missing, the demo says so in the application's own words
+("gpiod not available", "kein systemd") instead of inventing pin levels, and
+a banner on every page says that nothing is being switched.
 
 ## The web page
 
