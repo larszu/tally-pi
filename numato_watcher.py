@@ -1,230 +1,83 @@
 #!/usr/bin/env python3
-"""Numato 32-CH USB GPIO watcher with hot-plug support.
+"""
+Der Numato-Watcher — GPIO ueber ein USB-Board, auf Linux, macOS und Windows.
 
-Findet das Geraet auf Linux, macOS UND Windows, pollt alle 32 digitalen
-Kanaele + ADCs, feuert Companion-Aktionen auf Flanken und schreibt den
-Zustand nach `paths.NUMATO_STATE`.
+─── WOZU ───────────────────────────────────────────────────────────────────
 
-─── WAS GEMELDET WURDE (Nutzer, 2026-09-15) ────────────────────────────────
+Auf dem Pi sind die Tally-Ein- und -Ausgaenge der 40-polige Stecker
+(`gpio_watcher.py` liest Taster, `guide_server.py` treibt Lampen ueber
+libgpiod). Ein Mac oder Windows-Rechner hat diesen Stecker nicht — aber einen
+USB-Anschluss und daran ein Numato-USB-GPIO-Board. Dieser Dienst macht daraus
+DIESELBEN Funktionen:
 
-„tally pi muss auch auf windows und mac laufen und dort als gpio interface
-einen numato gpio usb benutzen koennen."
+  * Taster lesen  → Flanke → ATEM-Befehl (ueber den ATEM-Befehlskanal) oder
+                    Companion-Druck (HTTP). Die Rechnung ist `tally_actions`,
+                    Wort fuer Wort dieselbe wie beim Pi-Watcher.
+  * Tally-Lampen  → der Guide-Server schickt „Kanal X an/aus" ueber den
+                    Numato-Befehlskanal (`cmd_channel.NUMATO`), dieser Dienst
+                    setzt den Ausgang.
 
-─── WARUM DAS VORHER NICHT GING ────────────────────────────────────────────
+─── EIN BOARD, EIN BESITZER ────────────────────────────────────────────────
 
-Die Geraetesuche war LINUX-ONLY, und zwar an zwei Stellen zugleich:
+Ein serieller Anschluss laesst sich nur von EINEM Prozess oeffnen. Am Pi
+teilen sich Ein- und Ausgaenge die Leitungen ueber den Kernel (libgpiod gibt
+jede Leitung getrennt heraus); an einem USB-Board geht das nicht — nur einer
+haelt den Port. Deshalb besitzt DIESER Dienst das Board und tut beides:
+er pollt die Eingaenge UND setzt die Ausgaenge, beides durch dieselbe
+serielle Leitung, serialisiert ueber ein Schloss. Der Guide-Server treibt die
+Lampen nicht selbst, sondern schickt sie hierher — genau wie er ATEM-Befehle
+an den ATEM-Watcher schickt.
 
-    #: Der udev-Symlink dieses Repos (`99-numato.rules`). Nur auf Linux, und
-#: dort die verlaessliche Zuordnung — deshalb wird er zuerst versucht.
-PREFERRED_DEVICES = ["/dev/numato0", "/dev/numato1"]
-#: Numato Lab. Sortiert die Reihenfolge, schliesst nichts aus — siehe Kopf.
-NUMATO_VID = 0x2A19   # udev-Symlink
-    candidates = sorted(glob.glob("/dev/ttyACM*"))          # CDC-ACM
+─── WAS FEHLT, FEHLT SICHTBAR ──────────────────────────────────────────────
 
-`/dev/numato0` legt eine udev-Regel an (`99-numato.rules` in diesem Repo) —
-udev gibt es nur unter Linux. `/dev/ttyACM*` ist der Linux-Name fuer ein
-CDC-ACM-Geraet; dieselbe Hardware heisst
+Ohne pyserial oder ohne angestecktes Board taeuscht dieser Dienst nichts vor.
+Er STIRBT ABER NICHT — sonst risse er unter `run-local.py` den ganzen lokalen
+Start mit sich (der beendet sich, wenn ein Kind mit Fehler endet). Er laeuft
+weiter, meldet in `numato.json` `connected: false` samt Grund, und die
+Oberflaeche zeigt das an. Sobald ein Board auftaucht, greift er es beim
+naechsten Durchlauf.
 
-    Windows   COM3, COM7, …
-    macOS     /dev/cu.usbmodem14201, …
-
-Auf beiden fand `find_device()` also NICHTS, und zwar lautlos: die Funktion
-gab `None` zurueck, die Schleife wartete auf ein Geraet, und der Zustand
-sagte „kein Numato gefunden" — was stimmte und den Grund verschwieg. Wer
-das Modul an einen Mac steckte, bekam dieselbe Meldung wie jemand ohne
-Modul.
-
-DAS IST DER EINZIGE GPIO-WEG AUSSERHALB DES PI. `gpio_watcher.py` braucht
-`gpiod` und `/dev/gpiochip0`; beides gibt es auf einem Schreibtischrechner
-nicht. Ein USB-Modul ist dort nicht die zweite Wahl, sondern die einzige.
-
-─── WIE JETZT GESUCHT WIRD ─────────────────────────────────────────────────
-
-Ueber `serial.tools.list_ports` — das ist pyserials eigene Aufzaehlung und
-kennt alle drei Systeme. Der udev-Symlink bleibt vorne dran, weil er auf
-einem eingerichteten Pi die verlaessliche Zuordnung ist; danach wird jeder
-aufgezaehlte Port GEPROBT (`ver\r`), nicht geraten.
-
-Die Hersteller-Kennung (VID 0x2A19, Numato Lab) sortiert nur die
-Reihenfolge — sie schliesst nichts aus. Numato baut mehrere Serien, und ein
-Modul mit anderer Kennung, das auf `ver` antwortet, ist ein Modul, das auf
-`ver` antwortet. Umgekehrt waere eine reine VID-Pruefung genau die Sorte
-Filter, die bei neuer Hardware still nichts mehr findet.
+Die Kanalnummern kommen aus denselben Feldern wie am Pi: `out_gpio` eines
+Geraets ist am Numato die AUSGANGS-Kanalnummer, `in_gpio` die EINGANGS-
+Kanalnummer (0..31). Dieselbe Zahl, die am Pi eine BCM-Leitung meint.
 """
 import json
-import os
-import re
 import sys
+import threading
 import time
-import urllib.parse
 import urllib.request
 from pathlib import Path
 
-# Die Pfade liegen in `paths.py` — dieselbe Datei liegt neben diesem Programm,
-# auf dem Pi wie im Arbeitsverzeichnis. Der Pfad-Eintrag davor ist noetig, weil
-# systemd die Programme mit einem anderen Arbeitsverzeichnis startet als dem
-# Verzeichnis, in dem sie liegen.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import paths  # noqa: E402
+import cmd_channel  # noqa: E402
+import tally_actions  # noqa: E402
+import numato_io  # noqa: E402
+from gpio_watcher import BurstTracker  # noqa: E402  (reine Threading-Logik, kein gpiod)
 
-# ── pyserial: da oder nicht da, und das wird GESAGT ────────────────────────
-#
-# Bis 2026-09-12 stand hier ein `sys.exit(1)` BEIM IMPORT, mit dem Rat
-# `apt install python3-serial`. Auf dem Pi ist der Rat richtig; auf einem Mac
-# und unter Windows gibt es kein apt, und der Abbruch beim Import machte das
-# Programm dort auch fuer einen Blick von aussen unerreichbar — selbst ein
-# Test konnte es nicht laden, um zu sehen, ob es faellt.
-#
-# Es wird nichts vorgetaeuscht: ohne pyserial gibt es keine Numato-Platine,
-# und das Programm sagt es und laeuft nicht weiter. Es sagt es nur dort, wo
-# jemand es liest (beim Start), mit einem Rat, der zur Plattform passt.
-#
-# `serial.tools.list_ports` KOMMT SEIT 2026-09-15 MIT (Nutzer: „tally pi muss
-# auch auf windows und mac laufen und dort als gpio interface einen numato
-# gpio usb benutzen koennen"). Es ist pyserials eigene Aufzaehlung und kennt
-# alle drei Systeme — ohne sie war die Geraetesuche hier Linux-only.
-try:
-    import serial
-    from serial.tools import list_ports
-    SERIAL_VERFUEGBAR = True
-    SERIAL_GRUND = ""
-except ImportError as _e:  # pragma: no cover — haengt an der Installation
-    serial = None
-    list_ports = None
-    SERIAL_VERFUEGBAR = False
-    SERIAL_GRUND = f"pyserial nicht verfuegbar: {_e}"
-
-# Die Pfade kommen aus `paths.py` — eine Stelle statt neunzehn. Ohne
-# gesetzte Umgebungsvariablen sind es genau die alten, siehe dort.
 BINDINGS = paths.BINDINGS_FILE
+TALLY_CONFIG = paths.TALLY_FILE
 STATE_FILE = paths.NUMATO_STATE
+EVENT_LOG_FILE = paths.EVENTS_LOG
 COMPANION = "http://localhost:8000"
-POLL_INTERVAL = 0.05  # 50 ms
-ADC_POLL_EVERY = 4    # every Nth digital poll (so ADC runs ~5 Hz at 50ms loop / 4)
-#: Der udev-Symlink dieses Repos (`99-numato.rules`). Nur auf Linux, und
-#: dort die verlaessliche Zuordnung — deshalb wird er zuerst versucht.
-PREFERRED_DEVICES = ["/dev/numato0", "/dev/numato1"]
-#: Numato Lab. Sortiert die Reihenfolge, schliesst nichts aus — siehe Kopf.
-NUMATO_VID = 0x2A19
-BAUD = 19200
+POLL_INTERVAL = 0.05   # 50 ms
+ADC_POLL_EVERY = 4     # jeder N-te Poll liest ADC (~5 Hz bei 50 ms / 4)
 
 
 def log(msg):
     print(msg, flush=True)
 
 
-def write_state(state):
+def log_event(kind, **fields):
+    """Eine JSON-Zeile ans gemeinsame Ereignislog (dieselbe Datei wie sonst)."""
+    rec = {"ts": time.time(), "kind": kind, "src": "numato-watcher"}
+    rec.update(fields)
     try:
-        paths.atomic_write_json(STATE_FILE, state)
-    except Exception as e:
-        log(f"state write error: {e}")
-
-
-def load_bindings():
-    if not BINDINGS.exists():
-        return []
-    try:
-        data = json.loads(BINDINGS.read_text())
-        return [b for b in data if isinstance(b, dict) and b.get("source") == "numato"]
-    except Exception as e:
-        log(f"bindings parse error: {e}")
-        return []
-
-
-def bindings_mtime():
-    try:
-        return BINDINGS.stat().st_mtime
-    except FileNotFoundError:
-        return 0.0
-
-
-def kandidaten():
-    """Alle Ports, die ein Numato sein KOENNTEN — beste Vermutung zuerst.
-
-    Die Reihenfolge ist die ganze Klugheit dieser Funktion, denn geprobt wird
-    ohnehin jeder Eintrag:
-
-      1. der udev-Symlink (Linux, eingerichteter Pi) — eindeutig,
-      2. Ports mit der Hersteller-Kennung von Numato Lab,
-      3. alles Uebrige, was `list_ports` aufzaehlt.
-
-    Punkt 3 ist kein Fuellmaterial: `list_ports` meldet auf manchen Systemen
-    keine VID (etwa hinter einem USB-Hub mit eigenem Treiber), und ein Modul,
-    das auf `ver` antwortet, ist ein Modul. Was hier NICHT passiert, ist
-    Raten nach Namensmuster — `probe_numato` entscheidet.
-    """
-    reihe = []
-    for p in PREFERRED_DEVICES:
-        if os.path.exists(p):
-            reihe.append(p)
-
-    passend, uebrig = [], []
-    try:
-        for port in list_ports.comports():  # noqa: F821 — in `main` geprueft
-            if port.device in reihe:
-                continue
-            (passend if port.vid == NUMATO_VID else uebrig).append(port.device)
-    except Exception as e:  # pragma: no cover — systemabhaengig
-        log(f"port enumeration failed: {e}")
-
-    return reihe + sorted(passend) + sorted(uebrig)
-
-
-def find_device():
-    """Return path to the first plausible Numato device, or None.
-
-    Der Symlink wird nicht geprobt: er existiert nur, wenn die udev-Regel
-    dieses Repos ihn angelegt hat, und die trifft auf die Kennung. Alles
-    andere wird geprobt — auch unter Windows, wo `COM7` genauso gut ein
-    Bluetooth-Adapter sein kann.
-    """
-    for p in kandidaten():
-        if p in PREFERRED_DEVICES:
-            return p
-        if probe_numato(p):
-            return p
-    return None
-
-
-def probe_numato(path):
-    """Open and send `ver\r`; accept anything that responds."""
-    try:
-        with serial.Serial(path, BAUD, timeout=0.3) as s:
-            s.reset_input_buffer()
-            s.write(b"ver\r")
-            time.sleep(0.15)
-            data = s.read(128)
-            return len(data) > 0
+        EVENT_LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
+        with open(EVENT_LOG_FILE, "a", encoding="utf-8") as f:
+            f.write(json.dumps(rec, ensure_ascii=False) + "\n")
     except Exception:
-        return False
-
-
-def cmd(s, line, wait=0.05):
-    """Send one command, return the response payload (stripped of echo)."""
-    s.reset_input_buffer()
-    s.write((line + "\r").encode())
-    time.sleep(wait)
-    raw = s.read(512).decode(errors="replace")
-    # strip echo and the trailing '>' prompt
-    out = raw.replace(line, "").replace(">", "").strip("\r\n >")
-    return out
-
-
-def read_all_digital(s):
-    """Return tuple of 32 ints (0/1) using `gpio readall`. 8-digit hex little-end."""
-    out = cmd(s, "gpio readall")
-    # Numato returns 8 hex chars (32 bits), MSB = GPIO31, LSB = GPIO0 per docs.
-    m = re.search(r"[0-9a-fA-F]{8}", out)
-    if not m:
-        return None
-    val = int(m.group(0), 16)
-    return tuple((val >> i) & 1 for i in range(32))
-
-
-def read_adc(s, ch):
-    out = cmd(s, f"adc read {ch}")
-    m = re.search(r"\d+", out)
-    return int(m.group(0)) if m else None
+        pass
 
 
 def http_post(url, data=b""):
@@ -233,137 +86,459 @@ def http_post(url, data=b""):
         return r.status
 
 
-def run_action(binding, event_type):
-    trig = binding.get("trigger_edge", "falling")
-    if trig != "both" and trig != event_type:
-        return
-    a = binding.get("action") or {}
-    kind = a.get("kind")
+def atem_cmd(cmd):
+    """ATEM-Befehl an den ATEM-Watcher — derselbe Kanal wie beim Pi-Watcher."""
+    cmd_channel.sende(cmd)
+
+
+def _load_json(path):
+    if not path.exists():
+        return None
     try:
-        if kind == "press":
-            url = f"{COMPANION}/api/location/{a['page']}/{a['row']}/{a['column']}/press"
-            http_post(url)
-            log(f"numato CH{binding['channel']} {event_type} -> press")
-        elif kind == "down_up":
-            sub = "down" if event_type == "falling" else "up"
-            url = f"{COMPANION}/api/location/{a['page']}/{a['row']}/{a['column']}/{sub}"
-            http_post(url)
-            log(f"numato CH{binding['channel']} {event_type} -> {sub}")
-        elif kind == "variable":
-            name = urllib.parse.quote(a["variable"])
-            val = str(a.get("value", "1"))
-            url = f"{COMPANION}/api/custom-variable/{name}/value"
-            http_post(url, val.encode())
-            log(f"numato CH{binding['channel']} {event_type} -> var {a['variable']}={val}")
+        return json.loads(path.read_text())
     except Exception as e:
-        log(f"action error on numato CH{binding.get('channel')}: {e}")
+        log(f"{path.name} parse error: {e}")
+        return None
 
 
-def session(device):
-    log(f"opening {device}")
-    s = serial.Serial(device, BAUD, timeout=0.3)
-    try:
-        # handshake
-        cmd(s, "ver", wait=0.2)
-        last_state = read_all_digital(s)
-        if last_state is None:
-            log(f"{device}: no valid response, not a Numato?")
+def load_config():
+    """(Eingangs-Bindungen, Ausgangs-Kanaele) aus tally.json + bindings.json.
+
+    Eingaenge: `tally.json`-Geraete mit `in_gpio` (via `tally_actions`, Quelle
+    "numato" -> Schluessel "channel") und Alt-Bindungen aus `bindings.json`
+    mit `source == "numato"` (Companion). Ausgaenge: `out_gpio` der Geraete.
+    """
+    input_bindings = []
+    seen = set()
+
+    tally = _load_json(TALLY_CONFIG) or {}
+    for dev in (tally.get("devices") or []):
+        if not isinstance(dev, dict):
+            continue
+        b = tally_actions.device_to_binding(dev, source="numato")
+        if b is None:
+            continue
+        input_bindings.append(b)
+        seen.add(b["channel"])
+
+    legacy = _load_json(BINDINGS) or []
+    for b in legacy if isinstance(legacy, list) else []:
+        if not isinstance(b, dict) or b.get("source") != "numato":
+            continue
+        ch = b.get("channel")
+        if not isinstance(ch, int) or ch in seen:
+            continue
+        b = dict(b)
+        b.setdefault("trigger_edge", "falling")
+        b.setdefault("enabled", True)
+        b.setdefault("hold_release_ms", 0)
+        b.setdefault("burst_min_edges", 1)
+        b.setdefault("_label", f"numato CH{ch}")
+        input_bindings.append(b)
+        seen.add(ch)
+
+    output_channels = sorted({
+        d.get("out_gpio") for d in (tally.get("devices") or [])
+        if isinstance(d, dict) and isinstance(d.get("out_gpio"), int)
+    })
+    return input_bindings, output_channels
+
+
+def config_mtime():
+    total = 0.0
+    for p in (BINDINGS, TALLY_CONFIG):
+        try:
+            total += p.stat().st_mtime
+        except FileNotFoundError:
+            pass
+    return total
+
+
+class NumatoManager:
+    """Haelt das Board und ist der einzige, der es anspricht.
+
+    Ein Schloss serialisiert alles auf der seriellen Leitung: das Pollen der
+    Eingaenge (Hauptfaden) und das Setzen der Ausgaenge (Befehlsfaden). Der
+    Befehlsfaden lebt ueber Wiederverbindungen hinweg; nur `self.board`
+    wechselt.
+    """
+
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.board = None
+        self.device = None
+        self.session = 0            # zaehlt bei jedem erfolgreichen Anstecken hoch
+        self.output_channels = []
+        self.output_values = {}     # channel -> bool (zuletzt geschrieben)
+        self.last_error = None
+
+    # ── Board an-/abmelden ───────────────────────────────────────────────────
+    def attach(self, board, device, output_channels, input_channels):
+        with self.lock:
+            self.board = board
+            self.device = device
+            self.session += 1
+            self.output_channels = list(output_channels)
+            self.output_values = {}
+            self.last_error = None
+            self._configure_locked(output_channels, input_channels)
+
+    def detach(self, error=None):
+        with self.lock:
+            self.board = None
+            self.device = None
+            self.output_values = {}
+            if error:
+                self.last_error = error
+
+    def _configure_locked(self, output_channels, input_channels):
+        """iomask/iodir setzen und die Ausgaenge auf AUS. Schloss haelt Aufrufer."""
+        if self.board is None:
             return
+        try:
+            # Breite lernen (setzt board.breite) und dann Richtung festlegen:
+            # 0 = Ausgang, 1 = Eingang. iomask ffff… = alle Bits anfassen.
+            self.board.read_all()
+            breite = self.board.breite or 32
+            alle = (1 << breite) - 1
+            iodir = alle
+            for ch in output_channels:
+                if 0 <= ch < breite:
+                    iodir &= ~(1 << ch)
+            self.board.set_iomask(alle)
+            self.board.set_iodir(iodir)
+            # Ausgaenge in einen bekannten Zustand: alle aus.
+            for ch in output_channels:
+                self.board.clear_channel(ch)
+                self.output_values[ch] = False
+            log(f"numato configured: outputs={list(output_channels)} "
+                f"inputs={list(input_channels)} width={breite}")
+        except Exception as e:
+            self.last_error = f"configure failed: {e}"
+            log(f"numato {self.last_error}")
+
+    def reconfigure_outputs(self, output_channels, input_channels):
+        """Nach einer Konfig-Aenderung Richtung neu setzen (Board bleibt offen)."""
+        with self.lock:
+            self.output_channels = list(output_channels)
+            self._configure_locked(output_channels, input_channels)
+
+    # ── Ausgaenge (vom Guide-Server ueber den Befehlskanal) ───────────────────
+    def set_output(self, channel, on):
+        """Einen Ausgangskanal setzen. Schreibt seriell NUR bei echter
+        Aenderung — so darf der Guide-Server bedenkenlos oft senden, und nach
+        einem Neustart dieses Dienstes (leerer Cache) schreibt der erste
+        Befehl wieder wirklich."""
+        with self.lock:
+            if self.board is None:
+                return False, "kein Numato-Board verbunden"
+            if not isinstance(channel, int):
+                return False, "channel muss eine Zahl sein"
+            if self.output_values.get(channel) == bool(on):
+                return True, "unveraendert"
+            try:
+                if on:
+                    self.board.set_channel(channel)
+                else:
+                    self.board.clear_channel(channel)
+                self.output_values[channel] = bool(on)
+                return True, "ok"
+            except Exception as e:
+                self.last_error = f"set_output failed: {e}"
+                return False, str(e)
+
+    def handle_cmd(self, cmd):
+        """Einen Befehl vom Numato-Kanal beantworten (dict -> dict)."""
+        art = cmd.get("cmd")
+        if art in ("set", "clear"):
+            on = bool(cmd.get("on")) if art == "set" else False
+            if art == "set" and "on" not in cmd:
+                on = True
+            ok, msg = self.set_output(cmd.get("channel"), on)
+            # Bei Misserfolg gehoert der Grund unter `error` — so schlaegt er
+            # ueber `cmd_channel.sende` beim Guide-Server als echter Grund
+            # durch, statt als das nichtssagende „cmd rejected".
+            antwort = {"ok": ok, "session": self.session}
+            antwort["message" if ok else "error"] = msg
+            return antwort
+        if art == "ping":
+            with self.lock:
+                return {"ok": self.board is not None, "session": self.session,
+                        "device": self.device}
+        return {"ok": False, "error": f"unbekannter Befehl {art!r}"}
+
+    # ── Eingaenge (Hauptfaden pollt) ─────────────────────────────────────────
+    def read_all(self):
+        with self.lock:
+            if self.board is None:
+                return None
+            try:
+                return self.board.read_all()
+            except Exception as e:
+                self.last_error = f"readall failed: {e}"
+                return None
+
+
+def _edges_for_burst(binding):
+    trig = binding.get("trigger_edge", "falling")
+    if trig == "rising":
+        return "rising", "falling"
+    return "falling", "rising"
+
+
+def _run_action(binding, etype, edge_count=None):
+    tally_actions.run_action(
+        binding, etype,
+        log=log, log_event=log_event,
+        atem_cmd=atem_cmd, http_post=http_post, companion=COMPANION,
+        edge_count=edge_count,
+        log_fields={"channel": binding.get("channel")},
+    )
+
+
+def _build_trackers(bindings, letzter_stand):
+    """{channel: BurstTracker} fuer Bindungen mit hold_release_ms > 0.
+
+    `letzter_stand` ist eine Funktion channel -> aktueller Pegel (0/1) aus dem
+    letzten Poll — der Tracker fragt sie, ob die Leitung noch gedrueckt ist.
+    """
+    trackers = {}
+    for b in bindings:
+        ch = b.get("channel")
+        hold_ms = int(b.get("hold_release_ms", 0) or 0)
+        if not isinstance(ch, int) or hold_ms <= 0:
+            continue
+        press_e, release_e = _edges_for_burst(b)
+
+        def make_press(binding=b, e=press_e):
+            return lambda: _run_action(binding, e)
+
+        def make_release(binding=b, e=release_e):
+            def cb(count):
+                _run_action(binding, e, edge_count=count)
+            return cb
+
+        # Ruhepegel: pull-up -> Ruhe = HIGH (1), gedrueckt = LOW (0).
+        bias = b.get("bias", "pull-up")
+
+        def make_idle(c=ch, bias_=bias):
+            ruhe = 1 if bias_ != "pull-down" else 0
+            def check():
+                try:
+                    return letzter_stand(c) == ruhe
+                except Exception:
+                    return True  # fail-open -> Freigabe feuert
+            return check
+
+        trackers[ch] = BurstTracker(
+            label=b.get("_label") or f"numato CH{ch}",
+            release_ms=hold_ms,
+            run_press=make_press(),
+            run_release=make_release(),
+            is_at_idle=make_idle(),
+            min_edges=int(b.get("burst_min_edges") or 1),
+        )
+    return trackers
+
+
+def _dispatch(binding, etype, trackers):
+    t = trackers.get(int(binding["channel"]))
+    if t is not None:
+        t.on_edge(etype)
+    else:
+        _run_action(binding, etype)
+
+
+def _command_server(manager):
+    """Ein Faden, der Ausgabe-Befehle vom Guide-Server annimmt — dauerhaft.
+
+    Er ueberlebt Wiederverbindungen des Boards; `manager` haelt das jeweils
+    aktuelle Board. Faellt das Zuhoeren aus, meldet er es und versucht es
+    spaeter erneut.
+    """
+    while True:
+        try:
+            srv = cmd_channel.NUMATO.listen()
+        except Exception as e:
+            log(f"numato cmd listener bind failed "
+                f"({cmd_channel.NUMATO.beschreibung()}): {e}")
+            time.sleep(2)
+            continue
+        log(f"numato cmd listener on {cmd_channel.NUMATO.beschreibung()}")
+        try:
+            while True:
+                try:
+                    conn, _ = srv.accept()
+                except OSError:
+                    break
+                with conn:
+                    try:
+                        conn.settimeout(2.0)
+                        roh = conn.recv(4096).decode("utf-8", errors="replace")
+                        zeile = roh.split("\n", 1)[0].strip()
+                        cmd = json.loads(zeile) if zeile else {}
+                        antwort = manager.handle_cmd(cmd) if isinstance(cmd, dict) \
+                            else {"ok": False, "error": "kein Objekt"}
+                    except Exception as e:
+                        antwort = {"ok": False, "error": str(e)}
+                    try:
+                        conn.sendall((json.dumps(antwort) + "\n").encode("utf-8"))
+                    except OSError:
+                        pass
+        finally:
+            try:
+                srv.close()
+            except OSError:
+                pass
+
+
+def _write_disconnected(reason):
+    try:
+        paths.ensure_dirs()
+        paths.atomic_write_json(STATE_FILE, {
+            "connected": False, "device": None,
+            "error": reason, "ts": time.time(),
+        })
+    except OSError:
+        pass
+
+
+def run():
+    """Board suchen, halten, pollen — und nie sterben."""
+    manager = NumatoManager()
+    t = threading.Thread(target=_command_server, args=(manager,),
+                         name="numato-cmd", daemon=True)
+    t.start()
+
+    if not numato_io.PYSERIAL_DA:
+        # Kein pyserial: es gibt kein Board zu suchen. Sagen und
+        # weiterlaufen — der Befehlsfaden nimmt trotzdem an (und antwortet
+        # ehrlich „kein Board"), damit der Guide-Server einen Grund bekommt.
+        log(numato_io.PYSERIAL_GRUND)
+        log("Ohne pyserial kein Numato. Nachruesten: pip install pyserial "
+            "(auf dem Pi: apt install python3-serial).")
+        while True:
+            _write_disconnected(numato_io.PYSERIAL_GRUND)
+            time.sleep(2)
+
+    letzter_stand = {"bits": 0}
+
+    def pegel(channel):
+        return (letzter_stand["bits"] >> channel) & 1
+
+    while True:
+        device = numato_io.finde_geraet()
+        board = None
+        if device is not None:
+            try:
+                board = numato_io.oeffne(device)
+            except Exception as e:
+                log(f"numato open {device} failed: {e}")
+                board = None
+        if board is None:
+            _write_disconnected("kein Numato-Board gefunden")
+            time.sleep(2)
+            continue
+
+        log(f"numato board on {device}")
+        bindings, outputs = load_config()
+        enabled = [b for b in bindings if b.get("enabled", True)]
+        inputs = [b["channel"] for b in enabled if isinstance(b.get("channel"), int)]
+        manager.attach(board, device, outputs, inputs)
+        trackers = _build_trackers(enabled, pegel)
+        if trackers:
+            log(f"numato burst trackers on channels {sorted(trackers)}")
+        by_channel = {b["channel"]: b for b in enabled
+                      if isinstance(b.get("channel"), int)}
+
+        last_bits = manager.read_all()
+        if last_bits is None:
+            manager.detach("readall failed at start")
+            time.sleep(2)
+            continue
+        letzter_stand["bits"] = last_bits
+        last_mtime = config_mtime()
         adc = [None] * 32
         tick = 0
-        last_mtime = bindings_mtime()
-        bindings = load_bindings()
-
-        while True:
-            cur = read_all_digital(s)
-            if cur is None:
-                log("readall failed, reconnecting")
-                return
-            for bcm_ch in range(32):
-                if cur[bcm_ch] != last_state[bcm_ch]:
-                    etype = "rising" if cur[bcm_ch] == 1 else "falling"
-                    for b in bindings:
-                        if b.get("channel") == bcm_ch and b.get("enabled", True):
-                            run_action(b, etype)
-            last_state = cur
-
-            if tick % ADC_POLL_EVERY == 0:
-                # poll a subset per loop to avoid saturating serial
-                base = (tick // ADC_POLL_EVERY) % 8
-                for k in range(4):
-                    ch = base * 4 + k
-                    if ch < 32:
-                        v = read_adc(s, ch)
-                        if v is not None:
-                            adc[ch] = v
-
-            write_state({
-                "connected": True,
-                "device": device,
-                "digital": list(cur),
-                "adc": adc,
-                "ts": time.time(),
-            })
-
-            if bindings_mtime() != last_mtime:
-                last_mtime = bindings_mtime()
-                bindings = load_bindings()
-                log(f"bindings reloaded ({len(bindings)} active)")
-
-            tick += 1
-            time.sleep(POLL_INTERVAL)
-    finally:
         try:
-            s.close()
-        except Exception:
-            pass
+            while True:
+                cur = manager.read_all()
+                if cur is None:
+                    log("numato readall failed — reconnecting")
+                    break
+                letzter_stand["bits"] = cur
+                changed = cur ^ last_bits
+                if changed:
+                    for ch, b in by_channel.items():
+                        if (changed >> ch) & 1:
+                            etype = "rising" if (cur >> ch) & 1 else "falling"
+                            _dispatch(b, etype, trackers)
+                last_bits = cur
 
+                if tick % ADC_POLL_EVERY == 0:
+                    base = (tick // ADC_POLL_EVERY) % 8
+                    for k in range(4):
+                        ch = base * 4 + k
+                        if ch < 32:
+                            with manager.lock:
+                                if manager.board is None:
+                                    break
+                                try:
+                                    v = manager.board.read_adc(ch)
+                                except Exception:
+                                    v = None
+                            if v is not None:
+                                adc[ch] = v
 
-def rat_zur_plattform() -> str:
-    if sys.platform.startswith("linux"):
-        return "apt install python3-serial"
-    return "pip install pyserial"
+                with manager.lock:
+                    outvals = dict(manager.output_values)
+                    sess = manager.session
+                    err = manager.last_error
+                paths.atomic_write_json(STATE_FILE, {
+                    "connected": True,
+                    "device": device,
+                    "session": sess,
+                    "digital": [(cur >> i) & 1 for i in range(32)],
+                    "outputs": {str(k): v for k, v in outvals.items()},
+                    "adc": adc,
+                    "error": err,
+                    "ts": time.time(),
+                })
+
+                if config_mtime() != last_mtime:
+                    last_mtime = config_mtime()
+                    bindings, outputs = load_config()
+                    enabled = [b for b in bindings if b.get("enabled", True)]
+                    inputs = [b["channel"] for b in enabled
+                              if isinstance(b.get("channel"), int)]
+                    for tr in trackers.values():
+                        tr.cancel()
+                    trackers = _build_trackers(enabled, pegel)
+                    by_channel = {b["channel"]: b for b in enabled
+                                  if isinstance(b.get("channel"), int)}
+                    manager.reconfigure_outputs(outputs, inputs)
+                    log("numato config reloaded")
+
+                tick += 1
+                time.sleep(POLL_INTERVAL)
+        except KeyboardInterrupt:
+            for tr in trackers.values():
+                tr.cancel()
+            sys.exit(0)
+        finally:
+            for tr in trackers.values():
+                tr.cancel()
+        manager.detach("board lost")
+        _write_disconnected("Verbindung zum Numato verloren")
+        time.sleep(2)
 
 
 def main():
-    if not SERIAL_VERFUEGBAR:
-        log(SERIAL_GRUND)
-        log(f"Ohne pyserial wird keine Numato-Platine gesucht. Nachruesten: "
-            f"{rat_zur_plattform()}")
-        write_state({"connected": False, "device": None,
-                     "error": SERIAL_GRUND, "ts": time.time()})
-        return 1
-    # HIER STAND EIN RIEGEL FUER ALLES AUSSER LINUX, und er war ehrlich: „die
-    # Geraetesuche gibt es bisher nur auf Linux … das ist nachruestbar".
-    # Nachgeruestet am 2026-09-15 — `kandidaten()` zaehlt jetzt ueber
-    # `serial.tools.list_ports` auf, und das kennt `COM3` wie
-    # `/dev/cu.usbmodem*` wie `/dev/ttyACM*`. Der Riegel ist damit kein
-    # Schutz mehr, sondern haette genau das verhindert, wofuer er
-    # angekuendigt war.
-        return 1
-    log("numato-watcher starting (hot-plug enabled)")
-    while True:
-        try:
-            dev = find_device()
-            if not dev:
-                write_state({"connected": False, "device": None, "ts": time.time()})
-                time.sleep(2)
-                continue
-            if not probe_numato(dev):
-                write_state({"connected": False, "device": dev, "error": "probe failed"})
-                time.sleep(2)
-                continue
-            session(dev)
-        except KeyboardInterrupt:
-            sys.exit(0)
-        except Exception as e:
-            log(f"session error: {e}")
-            write_state({"connected": False, "device": None, "error": str(e)})
-            time.sleep(2)
+    try:
+        run()
+    except KeyboardInterrupt:
+        sys.exit(0)
 
 
 if __name__ == "__main__":
-    # Der Rueckgabewert von `main` ist der Exit-Code: fehlt pyserial, endet
-    # das Programm mit 1 und `run-local.py` meldet es. Ein `main()` ohne
-    # `sys.exit` haette den Abbruch verschluckt und 0 zurueckgegeben.
-    sys.exit(main() or 0)
+    main()

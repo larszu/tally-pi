@@ -131,9 +131,29 @@ LAGEN = [
 # Das Raster fuer die Zustandstabelle. Es deckt ab, was ein Besucher an einer
 # Geraetekarte verstellen kann; alles darueber hinaus beantwortet die
 # Vorfuehrung mit „unknown" und sagt es — raten waere hier das Schlimmste.
-EINGANG_BIS = 16
+# Eingang auf 1..8 verkleinert, seit jede SCHALTLAGE (unten) eine eigene
+# Tabelle bekommt: das deckt die Beispiel-Kameras und Playback ab und haelt
+# `daten.json` bei vielen Schaltlagen klein. ME bleibt 1..4 — die Stichprobe
+# in `tests/test_projektseite.py` braucht ein Raster dieser Groesse.
+EINGANG_BIS = 8
 ME_BIS = 4
 AUX_VARIANTEN = [[], [1], [2], [1, 2]]
+
+# ── Die schaltbaren Lagen: „echte Funktion" auf der Projektseite ────────────
+#
+# WAS GEMELDET WURDE (Nutzer, 2026-09-16): „Die GitHub page soll die echte
+# Funktion haben." GitHub Pages fuehrt kein Python aus und spricht keinen
+# Mischer an — aber es kann den ganzen ZUSTANDSRAUM vorberechnet mitbringen.
+# Fuer jede Auswahl aus PGM, PVW und AUX 1 rechnet `guide_server` hier beim
+# Bauen eine vollstaendige Lage aus; im Browser schaltet der Besucher zwischen
+# ihnen um und sieht die echte Oberflaeche reagieren — Tally-Lampen,
+# Browser-Tally, Diagnose. Nichts wird in JavaScript entschieden: es wird die
+# passende vorberechnete Lage herausgesucht, genau wie bei den drei benannten
+# Lagen. Das ist die echte Funktion, so weit ein statischer Server sie tragen
+# kann.
+SCHALT_PGM = [1, 2, 3]           # welche Kamera auf Sendung
+SCHALT_PVW = [1, 2, 3]           # welche in der Vorschau
+SCHALT_AUX1 = [0, 3, 5]          # AUX 1: aus, Kamera 3, Playback (0 = aus)
 
 
 def schluessel(inp, me, aux):
@@ -201,6 +221,48 @@ def lage_bauen(lage):
             "/service/pi-gpio-watcher": gs.watcher_status(),
         },
         "zustaende": zustandstabelle(atem),
+    }
+
+
+def schaltlage_bauen(pgm, pvw, aux1):
+    """Eine Lage aus einer PGM/PVW/AUX-Auswahl — vom echten Programm gerechnet.
+
+    Baut den ATEM-Zustand, den diese Auswahl bedeutet, und laesst ihn von
+    `lage_bauen` (also von `guide_server`) auswerten. Der Schluessel
+    `<pgm>|<pvw>|<aux1>` ist genau der, den `web/demo.js` aus den drei
+    Auswahlfeldern zusammensetzt.
+    """
+    name = {1: "Kamera 1", 2: "Kamera 2", 3: "Kamera 3"}
+    aux_text = "aus" if not aux1 else EINGAENGE.get(str(aux1), f"Eingang {aux1}")
+    atem = {"connected": True, "demo": True,
+            "pgm": {"0": pgm}, "pvw": {"0": pvw},
+            "aux": ({"1": aux1} if aux1 else {}), "inputs": EINGAENGE}
+    lage = {
+        "id": f"sel-{pgm}-{pvw}-{aux1}",
+        "titel": f"PGM {pgm} / PVW {pvw} / AUX1 {aux_text}",
+        "erklaerung": (f"{name.get(pgm, pgm)} auf Sendung, {name.get(pvw, pvw)} "
+                       f"in der Vorschau, AUX 1: {aux_text}. Vom echten "
+                       f"guide_server gerechnet — nichts wird geschaltet."),
+        "atem": atem,
+    }
+    return lage_bauen(lage)
+
+
+def schaltraum_bauen():
+    """Der ganze schaltbare Zustandsraum als {schluessel: lage}."""
+    lagen = {}
+    for pgm in SCHALT_PGM:
+        for pvw in SCHALT_PVW:
+            for aux1 in SCHALT_AUX1:
+                l = schaltlage_bauen(pgm, pvw, aux1)
+                lagen[f"{pgm}|{pvw}|{aux1}"] = l
+    return {
+        "pgm": SCHALT_PGM,
+        "pvw": SCHALT_PVW,
+        "aux1": SCHALT_AUX1,
+        "eingaenge": EINGAENGE,
+        "start": f"{SCHALT_PGM[0]}|{SCHALT_PVW[1]}|{SCHALT_AUX1[0]}",
+        "lagen": lagen,
     }
 
 
@@ -345,10 +407,13 @@ def main() -> int:
     schreibe_konfiguration()
 
     lagen = [lage_bauen(l) for l in LAGEN]
+    schaltraum = schaltraum_bauen()
 
     daten = {
         "gebaut_am": time.strftime("%Y-%m-%d %H:%M UTC", time.gmtime()),
         "lagen": lagen,
+        # Der schaltbare Zustandsraum — die „echte Funktion" der Projektseite.
+        "auswahl": schaltraum,
         "cue_zustaende": cue_tabelle(),
         "cue": {"ttl_s": gs.CUE_DEFAULT_TTL_S, "max_zeichen": gs.CUE_MAX_CHARS,
                 "arten": list(gs.CUE_KINDS)},
@@ -420,6 +485,9 @@ def main() -> int:
     print(f"Vorfuehrung gebaut nach {ZIEL}")
     print(f"  Verweis auf der Startseite: {'gesetzt' if gesetzt else 'keine Startseite gefunden'}")
     print(f"  Lagen:          {', '.join(l['id'] for l in lagen)}")
+    print(f"  Schaltraum:     {len(schaltraum['lagen'])} Lagen "
+          f"(PGM {SCHALT_PGM} x PVW {SCHALT_PVW} x AUX1 {SCHALT_AUX1}) — "
+          f"gerechnet von guide_server")
     print(f"  Zustandstabelle: {len(lagen[0]['zustaende'])} Kombinationen je Lage, "
           f"gerechnet von guide_server.tally_state_for_device")
     print(f"  Seiten:         Oberflaeche, {seiten} Tally-Seite(n), Cue-Anzeige, Cue-Regie")

@@ -8,31 +8,17 @@ einen numato gpio usb benutzen koennen."
 
 ─── WAS VORHER GEMESSEN WURDE ──────────────────────────────────────────────
 
-Die Geraetesuche war LINUX-ONLY, an zwei Stellen zugleich:
+Die Geraetesuche war LINUX-ONLY (`/dev/numato0` per udev, `/dev/ttyACM*` per
+glob). Auf Windows (`COM3`) und macOS (`/dev/cu.usbmodem…`) fand sie nichts,
+und zwar lautlos. Jetzt sucht `numato_io` ueber `serial.tools.list_ports`,
+das alle drei Systeme kennt.
 
-    PREFERRED_DEVICES = ["/dev/numato0", "/dev/numato1"]   # udev-Symlink
-    candidates = sorted(glob.glob("/dev/ttyACM*"))          # CDC-ACM
-
-`/dev/numato0` legt eine udev-Regel an — udev gibt es nur unter Linux.
-`/dev/ttyACM*` ist der Linux-Name fuer ein CDC-ACM-Geraet; dieselbe Hardware
-heisst unter Windows `COM3` und auf einem Mac `/dev/cu.usbmodem14201`.
-
-Auf beiden fand `find_device()` also nichts, und zwar LAUTLOS: sie gab
-`None` zurueck, und der Zustand sagte „kein Numato gefunden" — was stimmte
-und den Grund verschwieg. Wer das Modul an einen Mac steckte, bekam
-dieselbe Meldung wie jemand ohne Modul.
-
-Das ist nicht irgendein Weg, sondern DER EINZIGE: `gpio_watcher.py` braucht
-`gpiod` und `/dev/gpiochip0`, beides gibt es auf einem Schreibtischrechner
-nicht.
-
-─── WAS DIESER LAUF PRUEFT ─────────────────────────────────────────────────
-
-Die Aufzaehlung wird gegen eine gefaelschte `list_ports.comports()`
-gefahren — echte Hardware gibt es in CI nicht, und darum geht es auch
-nicht: gefragt ist, ob die REIHENFOLGE stimmt und ob ein Windows- bzw.
-macOS-Name ueberhaupt in der Liste landet. Dass ein Modul dann antwortet,
-entscheidet `probe_numato` am echten Port.
+DIESE TESTS ZOGEN MIT DER LOGIK UM: die Geraetesuche liegt seit der
+Zusammenfuehrung in `numato_io` (`finde_geraete`/`finde_geraet`), nicht mehr
+im Watcher. Geprueft wird gegen eine gefaelschte `list_ports.comports()` —
+echte Hardware gibt es in CI nicht; gefragt ist, ob die REIHENFOLGE stimmt
+und ob ein Windows-/macOS-Name ueberhaupt in der Liste landet. Ob ein Modul
+dann antwortet, entscheidet `probe` am echten Port.
 """
 
 import sys
@@ -44,6 +30,8 @@ from unittest import mock
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
+import numato_io  # noqa: E402
+
 
 def _port(device, vid=None):
     return SimpleNamespace(device=device, vid=vid)
@@ -51,149 +39,117 @@ def _port(device, vid=None):
 
 class NumatoGeraetesuche(unittest.TestCase):
     def setUp(self):
-        # KEIN `skipTest`, wenn pyserial fehlt — und das ist der Punkt.
-        # Frueher beendete `numato_watcher` sich beim IMPORT, wenn pyserial
-        # nicht da war; die Tests hier uebersprangen sich deshalb und waren
-        # gruen, ohne etwas gemessen zu haben. Seit der Abbruch in `main()`
-        # steht, laesst sich die Geraetesuche pruefen, wo immer Python laeuft
-        # — sie ist reine Aufzaehlungs-Logik und braucht keine Bibliothek,
-        # nur die gefaelschte `list_ports` unten.
-        import numato_watcher
-        self.nw = numato_watcher
+        # KEIN `skipTest`, wenn pyserial fehlt: die Aufzaehlungs-Logik in
+        # `numato_io` braucht die Bibliothek nicht, nur die gefaelschte
+        # `list_ports` unten. `numato_io` bricht beim Import nicht ab.
+        self.io = numato_io
+
+    def _mocks(self, ports, exists=None):
+        """list_ports.comports -> ports; os.path.exists -> exists; glob leer.
+
+        `glob` wird geleert, damit auf einem Linux-Laeufer kein echtes
+        `/dev/ttyACM*` in die Liste sickert.
+        """
+        existiert = (lambda p: False) if exists is None else exists
+        lp = mock.MagicMock()
+        lp.comports.return_value = ports
+        return (mock.patch.object(self.io, "list_ports", lp),
+                mock.patch.object(self.io.os.path, "exists", side_effect=existiert),
+                mock.patch.object(self.io.glob, "glob", return_value=[]))
+
+    def _finde(self, ports, exists=None):
+        a, b, c = self._mocks(ports, exists)
+        with a, b, c:
+            return self.io.finde_geraete()
 
     # ── Windows ───────────────────────────────────────────────────────────
     def test_windows_com_port_steht_in_der_liste(self):
-        """`COM3` ist ein Kandidat — vorher fiel er durch jedes Muster."""
-        with mock.patch.object(self.nw, "list_ports") as lp, \
-             mock.patch.object(self.nw.os.path, "exists", return_value=False):
-            lp.comports.return_value = [_port("COM3"), _port("COM7")]
-            self.assertEqual(self.nw.kandidaten(), ["COM3", "COM7"])
+        self.assertEqual(self._finde([_port("COM3"), _port("COM7")]),
+                         ["COM3", "COM7"])
 
     def test_windows_numato_vid_kommt_zuerst(self):
-        """Die Hersteller-Kennung sortiert, sie schliesst nicht aus."""
-        with mock.patch.object(self.nw, "list_ports") as lp, \
-             mock.patch.object(self.nw.os.path, "exists", return_value=False):
-            lp.comports.return_value = [
-                _port("COM3"),
-                _port("COM9", vid=self.nw.NUMATO_VID),
-                _port("COM7"),
-            ]
-            self.assertEqual(self.nw.kandidaten(), ["COM9", "COM3", "COM7"])
+        ports = [_port("COM3"), _port("COM9", vid=self.io.NUMATO_VID), _port("COM7")]
+        self.assertEqual(self._finde(ports), ["COM9", "COM3", "COM7"])
 
     # ── macOS ─────────────────────────────────────────────────────────────
     def test_macos_usbmodem_steht_in_der_liste(self):
-        with mock.patch.object(self.nw, "list_ports") as lp, \
-             mock.patch.object(self.nw.os.path, "exists", return_value=False):
-            lp.comports.return_value = [_port("/dev/cu.usbmodem14201")]
-            self.assertEqual(self.nw.kandidaten(), ["/dev/cu.usbmodem14201"])
+        self.assertEqual(self._finde([_port("/dev/cu.usbmodem14201")]),
+                         ["/dev/cu.usbmodem14201"])
 
-    # ── Linux: der udev-Symlink bleibt vorn ───────────────────────────────
+    # ── Linux: der udev-Symlink bleibt vorn ────────────────────────────────
     def test_udev_symlink_schlaegt_alles(self):
-        """Auf einem eingerichteten Pi ist er die verlaessliche Zuordnung."""
-        def existiert(p):
-            return p == "/dev/numato0"
-
-        with mock.patch.object(self.nw, "list_ports") as lp, \
-             mock.patch.object(self.nw.os.path, "exists", side_effect=existiert):
-            lp.comports.return_value = [_port("/dev/ttyACM0", vid=self.nw.NUMATO_VID)]
-            self.assertEqual(
-                self.nw.kandidaten(), ["/dev/numato0", "/dev/ttyACM0"]
-            )
+        exists = lambda p: p == "/dev/numato0"
+        self.assertEqual(
+            self._finde([_port("/dev/ttyACM0", vid=self.io.NUMATO_VID)], exists),
+            ["/dev/numato0", "/dev/ttyACM0"])
 
     def test_symlink_wird_nicht_doppelt_gelistet(self):
-        """Zaehlt `list_ports` ihn mit auf, steht er trotzdem nur einmal da."""
-        def existiert(p):
-            return p == "/dev/numato0"
+        exists = lambda p: p == "/dev/numato0"
+        self.assertEqual(self._finde([_port("/dev/numato0")], exists),
+                         ["/dev/numato0"])
 
-        with mock.patch.object(self.nw, "list_ports") as lp, \
-             mock.patch.object(self.nw.os.path, "exists", side_effect=existiert):
-            lp.comports.return_value = [_port("/dev/numato0")]
-            self.assertEqual(self.nw.kandidaten(), ["/dev/numato0"])
+    def test_aufzaehlung_darf_werfen_ohne_den_lauf_zu_beenden(self):
+        exists = lambda p: p == "/dev/numato0"
+        lp = mock.MagicMock()
+        lp.comports.side_effect = OSError("kein Zugriff")
+        with mock.patch.object(self.io, "list_ports", lp), \
+             mock.patch.object(self.io.os.path, "exists", side_effect=exists), \
+             mock.patch.object(self.io.glob, "glob", return_value=[]):
+            self.assertEqual(self.io.finde_geraete(), ["/dev/numato0"])
 
-    # ── Der Symlink wird NICHT geprobt, alles andere schon ────────────────
+    # ── finde_geraet(): Symlink ohne Probe, alles andere mit ────────────────
     def test_symlink_ohne_probe__fremder_port_mit_probe(self):
-        def existiert(p):
-            return p == "/dev/numato0"
-
-        with mock.patch.object(self.nw, "list_ports") as lp, \
-             mock.patch.object(self.nw.os.path, "exists", side_effect=existiert), \
-             mock.patch.object(self.nw, "probe_numato") as probe:
-            lp.comports.return_value = [_port("COM3")]
+        exists = lambda p: p == "/dev/numato0"
+        a, b, c = self._mocks([_port("COM3")], exists)
+        with a, b, c, mock.patch.object(self.io, "probe") as probe:
             probe.return_value = False
-            self.assertEqual(self.nw.find_device(), "/dev/numato0")
+            self.assertEqual(self.io.finde_geraet(), "/dev/numato0")
             probe.assert_not_called()
 
     def test_ein_port_der_antwortet_wird_genommen(self):
-        with mock.patch.object(self.nw, "list_ports") as lp, \
-             mock.patch.object(self.nw.os.path, "exists", return_value=False), \
-             mock.patch.object(self.nw, "probe_numato") as probe:
-            lp.comports.return_value = [_port("COM3"), _port("COM7")]
-            probe.side_effect = lambda p: p == "COM7"
-            self.assertEqual(self.nw.find_device(), "COM7")
+        a, b, c = self._mocks([_port("COM3"), _port("COM7")])
+        with a, b, c, mock.patch.object(self.io, "probe",
+                                        side_effect=lambda p: p == "COM7"):
+            self.assertEqual(self.io.finde_geraet(), "COM7")
 
     def test_kein_geraet_ist_None_und_kein_Absturz(self):
-        with mock.patch.object(self.nw, "list_ports") as lp, \
-             mock.patch.object(self.nw.os.path, "exists", return_value=False), \
-             mock.patch.object(self.nw, "probe_numato", return_value=False):
-            lp.comports.return_value = []
-            self.assertIsNone(self.nw.find_device())
-
-    def test_aufzaehlung_darf_werfen_ohne_den_lauf_zu_beenden(self):
-        """Auf manchen Systemen wirft `comports()`. Das ist kein Grund
-        aufzuhoeren — der udev-Symlink kann trotzdem da sein."""
-        def existiert(p):
-            return p == "/dev/numato0"
-
-        with mock.patch.object(self.nw, "list_ports") as lp, \
-             mock.patch.object(self.nw.os.path, "exists", side_effect=existiert):
-            lp.comports.side_effect = OSError("kein Zugriff")
-            self.assertEqual(self.nw.kandidaten(), ["/dev/numato0"])
+        a, b, c = self._mocks([])
+        with a, b, c, mock.patch.object(self.io, "probe", return_value=False):
+            self.assertIsNone(self.io.finde_geraet())
 
 
 class RunLocalKenntDenNumato(unittest.TestCase):
-    """Der Watcher muss auch GESTARTET werden koennen.
+    """Der Watcher muss auch GESTARTET werden — und er wird es, automatisch.
 
-    Bis 2026-09-15 stand `numato_watcher.py` in `run-local.py` nirgends: die
-    Geraetesuche haette funktionieren koennen, und es haette trotzdem
-    niemand etwas davon gehabt.
+    Nach der Zusammenfuehrung startet `run-local.py` den Numato-Watcher von
+    selbst (ausser `--no-gpio`), nicht mehr nur auf `--numato`. Der Schalter
+    bleibt anerkannt, damit vertraute Aufrufe nicht abbrechen.
     """
 
-    def test_schalter_und_start_stehen_drin(self):
+    def test_start_steht_drin(self):
         quelle = (ROOT / "run-local.py").read_text(encoding="utf-8")
-        self.assertIn('"--numato"', quelle)
         self.assertIn('starte("numato_watcher.py")', quelle)
+        self.assertIn('"--numato"', quelle)
 
     def test_die_starter_reichen_die_schalter_durch(self):
-        """`--numato` muss durch die Doppelklick-Starter durchkommen.
-
-        Hier stand zuerst eine eigene `run_windows.bat`. Die gab es schon —
-        `start-local.bat` und `start-local.command` tun genau dasselbe, und
-        zwei Starter fuer dieselbe Aufgabe sind kein Komfort, sondern zwei
-        Stellen, an denen jemand spaeter die eine anfasst. Sie ist wieder
-        weg; geprueft wird, dass die vorhandenen durchreichen.
-        """
         for name in ("start-local.bat", "start-local.command"):
             starter = ROOT / name
             self.assertTrue(starter.exists(), f"{name} fehlt")
             text = starter.read_text(encoding="utf-8", errors="replace")
-            # `%*` bzw. `"$@"` — ohne das kaeme `--numato` nie an.
             self.assertTrue("%*" in text or '"$@"' in text,
                             f"{name} reicht die Schalter nicht durch")
             self.assertIn("run-local.py", text)
-        # `py -3` zuerst: `python` kann auf den Store-Alias zeigen, und der
-        # oeffnet nur den Store.
         self.assertIn("py -3", (ROOT / "start-local.bat").read_text(
             encoding="utf-8", errors="replace"))
 
-    def test_ohne_pyserial_sagt_der_start_es_vorher(self):
-        """Nicht als Zeile im Protokoll eines Prozesses, der sofort endet.
-
-        `numato_watcher` beendet sich ohne pyserial mit Code 1. Das ist
-        richtig — nur sieht es niemand, weil `run-local.py` den Prozess im
-        Hintergrund startet. Deshalb prueft der Start selbst.
-        """
-        quelle = (ROOT / "run-local.py").read_text(encoding="utf-8")
-        self.assertIn("--numato braucht pyserial", quelle)
+    def test_ohne_pyserial_wird_der_grund_ehrlich_gemeldet(self):
+        # Frueher pruefte `run-local.py` pyserial vor dem Start und warnte.
+        # Jetzt startet der Watcher automatisch und meldet den Grund SELBST —
+        # ohne pyserial stirbt er nicht, sondern schreibt ihn nach
+        # `numato.json` (und die Oberflaeche zeigt ihn). Geprueft wird also
+        # der ehrliche Weg an der Stelle, an der er jetzt liegt.
+        quelle = (ROOT / "numato_watcher.py").read_text(encoding="utf-8")
+        self.assertIn("PYSERIAL_DA", quelle)
         self.assertIn("pip install pyserial", quelle)
 
 

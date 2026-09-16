@@ -2,7 +2,7 @@
 <html lang="de">
 <head>
 <meta charset="UTF-8">
-<title>Companion Pi – GPIO Setup Guide</title>
+<title>Lars Zumpe Medienproduktion · Companion Pi</title>
 <style>
   /* ========================================================================
      Design tokens — Dark Modern (slate-based palette, Linear/Vercel feel)
@@ -161,6 +161,14 @@
   }
   #topbar header h1 { font-size:var(--fs-lg); }
   #topbar header .sub { font-size:var(--fs-xs); margin-top:2px; }
+  /* Marke Lars Zumpe Medienproduktion — die Anwendung gibt sich als ihre zu
+     erkennen. Ein Text-Schriftzug (kein Bild): Off-White auf Navy, gesperrt
+     und leise, Identitaet statt Zierrat. Farben und Kanten stellt schon die
+     Palette (Brand Guide 2.0 / ADR-007); dies macht den Namen sichtbar. */
+  #topbar header .marke {
+    font-size:var(--fs-xs); letter-spacing:.14em; text-transform:uppercase;
+    color:var(--fg-strong); font-weight:700; margin-bottom:3px;
+  }
 
   #topbar-mini {
     display:flex; align-items:center; gap:var(--space-2);
@@ -569,6 +577,7 @@
   </div>
   <div id="topbar-full">
     <header>
+      <div class="marke">Lars Zumpe Medienproduktion</div>
       <h1>Companion Pi · GPIO Setup</h1>
       <div class="sub">Raspberry Pi 5 · Bitfocus Companion · <span id="hostinfo">companionpi</span></div>
       <div class="sub" id="ipinfo" style="margin-top:2px">IP: …</div>

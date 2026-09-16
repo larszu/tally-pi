@@ -109,6 +109,11 @@ install -m 644 setup-guide.html    /opt/pi-guide/
 install -m 644 paths.py            /opt/pi-guide/
 install -m 644 paths.py            /opt/pi-status/
 install -m 644 cmd_channel.py      /opt/pi-guide/
+# `tally_actions.py` (Flanke -> ATEM/Companion, gemeinsam mit dem Numato-Watcher)
+# und `numato_io.py` (der Draht zum USB-Board) liegen wie paths/cmd_channel
+# neben den Programmen, die sie importieren.
+install -m 644 tally_actions.py    /opt/pi-guide/
+install -m 644 numato_io.py        /opt/pi-guide/
 install -m 755 guide_server.py     /opt/pi-guide/
 install -m 755 gpio_watcher.py     /opt/pi-guide/
 install -m 755 numato_watcher.py   /opt/pi-guide/

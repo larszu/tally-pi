@@ -21,14 +21,16 @@ web UI. No build step, no cloud, no framework.
 
 That link is not a screenshot tour. It is `setup-guide.html` — the same file
 the Pi serves — with the device cards, the tally diagnostics table, the
-browser tally pages and the cue display, all live. Switch the mixer state in
-the header bar and watch the lamps follow; open a tally page on your phone
-and switch again, it turns red with the desk.
+browser tally pages and the cue display, all live. **Operate it yourself:**
+in the header bar, set PGM / PVW / AUX 1 with the *Selbst schalten* pickers
+and watch the lamps, the diagnostics and the browser-tally pages follow —
+open a tally page on your phone and switch again, it turns red with the desk.
 
 **Nothing there is faked, and nothing there is real hardware.** GitHub Pages
 runs no Python, so the answers the UI would get from `guide_server.py` are
-computed **by `guide_server.py` itself**, at build time, over three scenarios
-— see `scripts/build-demo.py`. The one question that matters, *is this camera
+computed **by `guide_server.py` itself**, at build time, across the whole
+PGM×PVW×AUX switch space (plus three named scenarios) — see
+`scripts/build-demo.py`. The one question that matters, *is this camera
 live?*, is answered by `tally_state_for_device()`, the same function the Pi
 uses; the browser only looks its answer up. There is no second implementation
 to drift.
@@ -110,10 +112,44 @@ you and keeps the window open if something goes wrong.
 That is the whole prerequisite list: Python 3.9 or newer. No Pi, no ATEM,
 no GPIO header, no `sudo`, no admin rights.
 
-On **Windows** the interpreter is usually called `py`, not `python3`, and a
-Windows without the Store alias has no `python` on the PATH at all — what
-sits there opens the Store instead of running anything. `start-local.bat`
-finds it and passes every switch through, `--numato` included.
+### Don't want to install Python? Download a ready-made build
+
+Every `v*` tag builds a standalone program for **macOS** and **Windows** and
+attaches it to the [Releases](../../releases) page — no Python needed. Unzip
+`tally-pi-local-<system>-<version>.zip` and run `tally-pi-local` inside; it
+opens the same interface as above. It bundles the same `guide_server.py`,
+`atem_watcher.py` and `gpio_watcher.py` — it is PyInstaller packaging the
+source you see here, not a different program (recipe: `tally-pi-local.spec`,
+build script: `scripts/build-local.py`, workflow: `.github/workflows/release.yml`).
+
+On macOS the binary is only ad-hoc-signed (there is no paid Apple certificate),
+so the first launch needs a **right-click → Open** to get past Gatekeeper.
+
+### Real GPIO on Mac/Windows: a Numato USB adapter
+
+A desktop has no 40-pin header — but plug in a **[Numato Lab USB GPIO
+module](https://numato.com/product-category/digital/gpio/)** (8/16/32/64
+channels) and the trigger buttons and hardware tally lamps work natively,
+the same as on the Pi. `numato_watcher.py` owns the board over USB serial
+(`numato_io.py` speaks the `gpio set/clear/readall` command set) and does
+both directions: it reads the input channels and fires the same ATEM /
+Companion actions as the Pi header, and it drives the output channels for the
+tally lamps — the guide server sends those over a local command channel
+(`cmd_channel.NUMATO`), because one serial port can only belong to one process.
+
+- A device's **`in_gpio`** / **`out_gpio`** number is read as a **Numato
+  channel** (0..31) when running off a board, instead of a Pi BCM pin. The
+  same config number, a different wire.
+- No board plugged in? Nothing is faked: `numato.json` carries
+  `connected: false` with the reason, and the interface shows it — exactly as
+  the Pi header reports `gpio_available: false`.
+- Force a backend with `TALLY_GPIO_BACKEND=pi|numato` (default `auto`: the Pi
+  header when libgpiod is present, the Numato board otherwise). Needs
+  `pyserial`; the ready-made builds already bundle it.
+
+Only the OLED status display stays Pi-only (it needs I2C). Everything else —
+tally UI, ATEM control, trigger buttons, tally lamps — runs natively on all
+three.
 
 It starts **the same programs the Pi runs** — `guide_server.py`,
 `atem_watcher.py`, `gpio_watcher.py` — pointed at a directory under
@@ -123,13 +159,14 @@ from `paths.py`, which reads `PI_GUIDE_CONF` and `PI_GUIDE_STATE` and
 falls back to per-platform defaults when they are unset. A running Pi
 notices nothing.
 
-**Three things differ off the Pi, and all three live in one file each:**
+**What differs off the Pi lives in one file each:**
 
 | | Linux / Pi | macOS | Windows |
 |---|---|---|---|
 | config default (`paths.py`) | `/opt/pi-guide` | `~/Library/Application Support/tally-pi/conf` | `%LOCALAPPDATA%\tally-pi\conf` |
 | state default (`paths.py`) | `/run/pi-guide` (tmpfs) | `…/state` | `…\state` |
-| ATEM command channel (`cmd_channel.py`) | unix socket | unix socket | loopback TCP port, number in `atem-cmd.port` |
+| command channels (`cmd_channel.py`) | unix socket | unix socket | loopback TCP port, number in `*-cmd.port` |
+| GPIO source | 40-pin header (libgpiod) | Numato USB board (`numato_watcher.py`) | Numato USB board (`numato_watcher.py`) |
 
 Windows has no `AF_UNIX` in Python, so the channel that carries
 `set_aux` / `set_program` / `set_preview` to `atem_watcher` moves to a
@@ -150,7 +187,6 @@ faked to hide that; it is written down in `paths.py`.
 | `--atem 10.0.0.5` | talk to a real switcher on the network |
 | `--port 8081` | serve somewhere else |
 | `--host 127.0.0.1` | this machine only — the default binds all interfaces so a phone on the same network can reach it |
-| `--numato` | GPIO over a **Numato USB module** — the only GPIO path off the Pi |
 | `--dir /some/where` | put config and state elsewhere |
 | `--open` | open the interface in your default browser |
 
@@ -166,20 +202,6 @@ the network.
   keeps running. It does not invent button presses — a camera cut hangs
   off those inputs, and a watcher that stays silent looks exactly like one
   that sees nothing.
-
-  **`--numato` is the way to have real GPIO anyway**, on Windows, macOS and
-  Linux alike. `gpio_watcher` needs `gpiod` and `/dev/gpiochip0`; a Numato
-  32-channel USB module hangs off a serial port, so off the Pi it is not
-  the second choice but the only one. The watcher enumerates ports through
-  pyserial — the udev symlink `/dev/numato0` first where it exists, then
-  ports carrying Numato Lab's vendor id, then everything else — and
-  **probes** each candidate with `ver\r` rather than guessing from its
-  name. `COM3` on Windows is as likely to be a Bluetooth bridge.
-
-  It only runs when asked, and that is deliberate: the watcher holds a
-  serial port open and polls it twenty times a second. Starting it
-  unasked would mean writing `ver\r` into every enumerated port on the
-  machine — modems, debug headers, whatever else is plugged in.
 * Without an I²C display `pi_status.py` says so and exits cleanly.
 * Without a switcher `atem_watcher` reports *not connected*. `--demo`
   therefore does not start it at all, and the example state carries
@@ -385,10 +407,12 @@ be a second truth about the same evening, and nobody would maintain it.
 | File | Role |
 |---|---|
 | `setup-guide.html` | Single-page setup-guide UI (served on `:8080`): Status, Tally, Hilfe. Vanilla HTML/CSS/JS — no build step, no framework. |
-| `guide_server.py` | Python-stdlib HTTP server. Endpoints: `/ipconfig` `/gpio` `/numato` `/atem` `/bindings` `/tally-config` `/tally-out/<bcm>/(on\|off\|pulse\|latch-on\|latch-off\|release)` `/tally-diagnostics` `/input-test` `/service/pi-gpio-watcher` `/logs` + `/logs/stream` (SSE) + `/tally/{state,stream,<id>}` `/cue` + `/cue/{display,state,stream,clear}`. Owns GPIO outputs via libgpiod 2.x. |
+| `guide_server.py` | Python-stdlib HTTP server. Endpoints: `/ipconfig` `/gpio` `/numato` `/atem` `/bindings` `/tally-config` `/tally-out/<bcm>/(on\|off\|pulse\|latch-on\|latch-off\|release)` `/tally-diagnostics` `/input-test` `/service/pi-gpio-watcher` `/logs` + `/logs/stream` (SSE) + `/tally/{state,stream,<id>}` `/cue` + `/cue/{display,state,stream,clear}`. Drives tally-lamp outputs via libgpiod 2.x (Pi header) or, off the Pi, by sending them to `numato_watcher` over `cmd_channel.NUMATO`. Backend chosen by `TALLY_GPIO_BACKEND` (auto). |
 | `gpio_watcher.py` | libgpiod input watcher. Merges `tally.json` devices (with `in_gpio` set) and legacy `bindings.json`. Burst tracker for noisy inputs. Fires ATEM CAuS/CPgI/CPvI via the atem-watcher socket, or Companion HTTP API calls. |
 | `atem_watcher.py` | Hand-rolled ATEM UDP client (no `pyatem` dep). Writes state to `/run/pi-guide/atem.json`. Listens on `/run/pi-guide/atem-cmd.sock` for JSON commands: `set_aux`, `set_program`, `set_preview`. |
-| `numato_watcher.py` | Hot-plug watcher for Numato 32-CH USB GPIO modules. Enumerates serial ports through pyserial, so it finds the module on Linux, macOS and Windows alike; the udev symlink is preferred where it exists. |
+| `numato_watcher.py` | Owns a Numato USB GPIO board (cross-platform, via `numato_io.py` + pyserial). Reads input channels → same ATEM/Companion actions as the Pi header (shared `tally_actions.py`), and drives output channels for tally lamps on commands from the guide server (`cmd_channel.NUMATO`). Never exits without a board — reports `connected: false`. This is the GPIO source on Mac/Windows. |
+| `numato_io.py` | The wire to a Numato board: cross-platform port discovery (`serial.tools.list_ports`, COM / `cu.usbmodem` / `ttyACM`) and the `ver` / `gpio readall` / `writeall` / `set` / `clear` / `iodir` / `iomask` / `adc` command set. |
+| `tally_actions.py` | One shared translation "this edge → this ATEM/Companion action", used by both `gpio_watcher.py` and `numato_watcher.py` so the two GPIO sources never drift apart. |
 | `pi_status.py` | OLED status cycler (luma.oled). Disabled by default; enable manually if an OLED is connected. |
 | `pi-*.service` | systemd units for the watchers + the guide server + pi-status. |
 | `99-numato.rules` | udev rule → stable `/dev/numato0` symlink for any Numato board. |

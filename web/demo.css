@@ -41,6 +41,17 @@
 .demo-erklaerung { opacity: .9; font-style: italic; }
 .demo-link { color: #cdbcff; }
 
+/* Selbst schalten — die PGM/PVW/AUX-Auswahl. Im selben violetten Band-Ton
+   wie die Knoepfe; ein Auswahlfeld ist hier ein Bedienelement, kein
+   Marken-Chrome, deshalb bleibt es beim Band-Violett. */
+.demo-feld { display: inline-flex; align-items: center; gap: 4px; opacity: .95; }
+.demo-auswahl {
+  background: rgba(255,255,255,.10); color: #f4f0ff;
+  border: 1px solid #7c5cc4; border-radius: 6px;
+  padding: 3px 6px; font: inherit; font-size: 12px; cursor: pointer;
+}
+.demo-auswahl option { color: #1b1b1b; }
+
 /* ── Die Farbflaechen-Seiten ───────────────────────────────────────────────
  *
  * Tally- und Cue-Seite SIND eine Flaeche in einer Farbe — quer durch ein

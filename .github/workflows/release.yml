@@ -1,0 +1,139 @@
+name: Release
+
+# Baut bei jedem Tag `v*` ein fertiges, doppelklickbares Tally-Pi fuer macOS
+# und Windows und haengt es an ein GitHub-Release — dasselbe Muster wie beim
+# cable-planner (dort electron-builder), hier PyInstaller nach dem Rezept
+# `tally-pi-local.spec`. Ergebnis je System: ein `.zip`, das ohne installiertes
+# Python auskommt.
+#
+# WAS HIER NICHT GEBAUT WIRD, UND WARUM. Kein Linux-Build: auf dem Pi laeuft
+# Tally-Pi aus dem Quellbaum (bootstrap.sh / update-on-pi.sh), und wer es auf
+# einem Linux-Desktop nur ansehen will, hat dort ueblicherweise Python — das
+# doppelklickbare Programm loest ein Problem, das Mac- und Windows-Nutzer haben.
+# Wer spaeter doch einen Linux-Build will, nimmt macos/windows unten als
+# Vorlage; `scripts/build-local.py` kennt `linux` bereits.
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false      # ein rotes Windows soll nicht das fertige macOS verbergen
+      matrix:
+        include:
+          - os: windows-latest
+            name: windows
+          - os: macos-latest
+            name: macos
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          # 3.11 wie im uebrigen CI dieses Repos. PyInstaller packt genau
+          # diesen Interpreter mit ins Bundle — der Nutzer braucht keinen.
+          python-version: '3.11'
+
+      - name: PyInstaller und pyserial installieren
+        # pyserial muss beim Bauen da sein, damit PyInstaller es mit ins
+        # Bundle nimmt — ohne pyserial faende das fertige Programm kein
+        # Numato-USB-Board (die einzige GPIO-Quelle auf Mac/Windows).
+        run: python -m pip install --upgrade pyinstaller pyserial
+
+      - name: Version aus dem Tag ableiten
+        # Der Dateiname traegt die Version. Bei einem Tag-Push kommt sie aus
+        # dem Tag (`refs/tags/v1.2.3` -> `1.2.3`); bei einem Handstart ueber
+        # workflow_dispatch gibt es keinen Tag, dann "dev".
+        id: version
+        shell: bash
+        run: |
+          set -eu
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            echo "wert=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+          else
+            echo "wert=dev" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Bauen und packen
+        # Ein Skript, kein Schritt-Wust: derselbe Bau laeuft auf dem eigenen
+        # Rechner mit `python3 scripts/build-local.py <version>` und scheitert
+        # dort an derselben Stelle wie hier. `shell: bash` auch unter Windows
+        # (Git-Bash ist da), damit die Zeile auf beiden Systemen gleich ist.
+        shell: bash
+        run: python scripts/build-local.py "${{ steps.version.outputs.wert }}"
+
+      - name: Inhalt von release/ zeigen
+        # Macht im Log sichtbar, wenn kein Zip entstanden ist — der stille
+        # Fehlschlag, der beim cable-planner ein halbes Release erzeugt hat.
+        shell: bash
+        run: ls -lh release/ || true
+
+      - name: Artefakt hochladen
+        uses: actions/upload-artifact@v6
+        with:
+          name: tally-pi-local-${{ matrix.name }}
+          path: release/*.zip
+          # Laut scheitern, wenn nichts da ist. 'ignore' liesse den Job still
+          # gruen durchlaufen und das Release kaeme ohne dieses System heraus.
+          if-no-files-found: error
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - name: Alle Artefakte holen
+        uses: actions/download-artifact@v7
+        with:
+          path: artifacts
+
+      - name: Release-Vollstaendigkeit pruefen
+        # Beide Systeme muessen da sein. `release` haengt an `needs: build`;
+        # bricht ein Build-Job ab, wuerde sonst der andere allein als Release
+        # herauskommen — und die Release-Seite saehe vollstaendig aus. Ein
+        # halbes Release ist schlimmer als keines: erst den fehlenden Build
+        # reparieren, dann den Tag neu setzen.
+        shell: bash
+        run: |
+          set -eu
+          echo "--- heruntergeladene Artefakte ---"
+          find artifacts -type f | sort
+          echo "----------------------------------"
+          fehlt=0
+          pruefe() {
+            anzahl="$(find artifacts -type f -name "$1" | wc -l | tr -d ' ')"
+            if [ "$anzahl" -ge 1 ]; then
+              echo "ok   $1 ($anzahl)"
+            else
+              echo "FEHLT $1 -- $2"
+              fehlt=1
+            fi
+          }
+          pruefe '*macos*.zip'   'macOS-Programm (macos-Job)'
+          pruefe '*windows*.zip' 'Windows-Programm (windows-Job)'
+          if [ "$fehlt" -ne 0 ]; then
+            echo
+            echo "Ein System fehlt. Erst den Build-Job reparieren, dann den Tag"
+            echo "neu setzen — kein halbes Release veroeffentlichen."
+            exit 1
+          fi
+
+      - name: GitHub-Release anlegen
+        uses: softprops/action-gh-release@v3
+        with:
+          files: artifacts/**/*.zip
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
