@@ -64,6 +64,19 @@ jobs:
       - name: Seite bauen
         run: python3 scripts/build-site.py "Tally Pi" | tee seiten-bericht.txt
 
+      # Und dann die ANWENDUNG dazu. `build-demo.py` laesst die echten
+      # Funktionen aus `guide_server.py` rechnen und legt deren Antworten
+      # neben die echte `setup-guide.html` -- auf Pages laeuft kein Python,
+      # also rechnet es hier, einmal, beim Bauen.
+      #
+      # Der Schritt bricht den Lauf ABSICHTLICH ab, wenn die Oberflaeche
+      # einen Weg abfragt, den die Vorfuehrung nicht beantwortet. Eine Seite,
+      # die aussieht wie das Werkzeug und an einer Stelle leer bleibt, ist
+      # schlimmer als keine -- und ohne Abbruch faellt genau das erst einem
+      # Besucher auf.
+      - name: Anwendung fuer die Seite bauen
+        run: python3 scripts/build-demo.py | tee -a seiten-bericht.txt
+
       # Der Bericht des Bauers gehoert in die Lauf-Zusammenfassung und nicht
       # nur ins Protokoll: dort steht, welche relativen Links ins Leere
       # zeigen. Sie brechen den Lauf bewusst NICHT ab — ein README zeigt

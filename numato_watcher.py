@@ -67,36 +67,32 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import paths  # noqa: E402
 
-# ── pyserial: hart gebraucht, aber ERST BEIM LAUFEN ──────────────────────
+# ── pyserial: da oder nicht da, und das wird GESAGT ────────────────────────
 #
-# Hier stand ein `sys.exit(1)` direkt beim Import. Das ist gut gemeint —
-# ohne pyserial kann dieses Programm nichts — und macht das Modul
-# UNIMPORTIERBAR. Wer es importiert, um die Geraetesuche zu pruefen, bekommt
-# kein Ergebnis, sondern einen beendeten Prozess; die Tests dazu
-# uebersprangen sich und waren damit gruen, ohne etwas zu messen.
+# Bis 2026-09-12 stand hier ein `sys.exit(1)` BEIM IMPORT, mit dem Rat
+# `apt install python3-serial`. Auf dem Pi ist der Rat richtig; auf einem Mac
+# und unter Windows gibt es kein apt, und der Abbruch beim Import machte das
+# Programm dort auch fuer einen Blick von aussen unerreichbar — selbst ein
+# Test konnte es nicht laden, um zu sehen, ob es faellt.
 #
-# Der Abbruch gehoert dorthin, wo er wirkt: in `main()`. Ein Programm, das
-# ohne seine Abhaengigkeit nicht LAEUFT, muss deswegen nicht ohne sie
-# unlesbar sein.
+# Es wird nichts vorgetaeuscht: ohne pyserial gibt es keine Numato-Platine,
+# und das Programm sagt es und laeuft nicht weiter. Es sagt es nur dort, wo
+# jemand es liest (beim Start), mit einem Rat, der zur Plattform passt.
+#
+# `serial.tools.list_ports` KOMMT SEIT 2026-09-15 MIT (Nutzer: „tally pi muss
+# auch auf windows und mac laufen und dort als gpio interface einen numato
+# gpio usb benutzen koennen"). Es ist pyserials eigene Aufzaehlung und kennt
+# alle drei Systeme — ohne sie war die Geraetesuche hier Linux-only.
 try:
     import serial
     from serial.tools import list_ports
-except ImportError:  # pragma: no cover — haengt an der Installation
+    SERIAL_VERFUEGBAR = True
+    SERIAL_GRUND = ""
+except ImportError as _e:  # pragma: no cover — haengt an der Installation
     serial = None
     list_ports = None
-
-
-def pyserial_rat():
-    """Der Rat muss zum System passen.
-
-    Hier stand nur `apt install python3-serial` — auf einem Mac und unter
-    Windows ist das ein Befehl, den es nicht gibt, und der Nutzer steht mit
-    einer Fehlermeldung da, die ihm nichts sagt. Auf genau diesen beiden
-    Systemen ist dieses Programm aber der EINZIGE GPIO-Weg.
-    """
-    if sys.platform.startswith("linux"):
-        return "apt install python3-serial  (oder: pip install pyserial)"
-    return "pip install pyserial"
+    SERIAL_VERFUEGBAR = False
+    SERIAL_GRUND = f"pyserial nicht verfuegbar: {_e}"
 
 # Die Pfade kommen aus `paths.py` — eine Stelle statt neunzehn. Ohne
 # gesetzte Umgebungsvariablen sind es genau die alten, siehe dort.
@@ -119,8 +115,7 @@ def log(msg):
 
 def write_state(state):
     try:
-        STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
-        STATE_FILE.write_text(json.dumps(state))
+        paths.atomic_write_json(STATE_FILE, state)
     except Exception as e:
         log(f"state write error: {e}")
 
@@ -324,9 +319,27 @@ def session(device):
             pass
 
 
+def rat_zur_plattform() -> str:
+    if sys.platform.startswith("linux"):
+        return "apt install python3-serial"
+    return "pip install pyserial"
+
+
 def main():
-    if serial is None or list_ports is None:
-        log(f"pyserial not installed; run: {pyserial_rat()}")
+    if not SERIAL_VERFUEGBAR:
+        log(SERIAL_GRUND)
+        log(f"Ohne pyserial wird keine Numato-Platine gesucht. Nachruesten: "
+            f"{rat_zur_plattform()}")
+        write_state({"connected": False, "device": None,
+                     "error": SERIAL_GRUND, "ts": time.time()})
+        return 1
+    # HIER STAND EIN RIEGEL FUER ALLES AUSSER LINUX, und er war ehrlich: „die
+    # Geraetesuche gibt es bisher nur auf Linux … das ist nachruestbar".
+    # Nachgeruestet am 2026-09-15 — `kandidaten()` zaehlt jetzt ueber
+    # `serial.tools.list_ports` auf, und das kennt `COM3` wie
+    # `/dev/cu.usbmodem*` wie `/dev/ttyACM*`. Der Riegel ist damit kein
+    # Schutz mehr, sondern haette genau das verhindert, wofuer er
+    # angekuendigt war.
         return 1
     log("numato-watcher starting (hot-plug enabled)")
     while True:

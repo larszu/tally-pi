@@ -2,4 +2,4 @@
 # und der GRUND. Der Grund ist Pflicht; `build-site.py` bricht ohne ihn ab,
 # und ebenso bei einem Eintrag, dessen Datei es nicht mehr gibt.
 
-setup-guide.html  # Die Setup-Oberflaeche des Pi, nicht eine Doku-Seite. Sie holt ihren gesamten Inhalt per fetch von ihrem eigenen Host (/ipconfig, /gpio, /tally-config, /atem, /logs …), den guide_server.py auf Port 8080 bedient. Statisch ausgeliefert bliebe jedes Feld leer: die Seite saehe aus wie das Werkzeug und zeigte nichts an. Sie gehoert auf den Pi, nicht auf github.io.
+setup-guide.html  # Nicht als nackte Datei an den Wurzelpfad: sie holt ihren gesamten Inhalt per fetch von ihrem Host (/ipconfig, /gpio, /tally-config, /atem, /logs ...) und bliebe dort leer. Auf der Seite liegt sie seit 2026-09-12 trotzdem -- unter /demo/, zusammen mit den Antworten, die scripts/build-demo.py von den echten guide_server-Funktionen ausrechnen laesst. Dort ist sie die Anwendung; hier waere sie eine Attrappe.

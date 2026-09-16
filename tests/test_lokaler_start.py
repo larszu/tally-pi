@@ -33,10 +33,12 @@ import unittest
 import urllib.error
 import urllib.request
 from pathlib import Path
-from tempfile import TemporaryDirectory
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from hilfe import temp_verzeichnis as TemporaryDirectory  # noqa: E402
 
 import paths  # noqa: E402
 
@@ -54,28 +56,45 @@ class PfadeSindUmlenkbar(unittest.TestCase):
     """Ohne das gaebe es keinen lokalen Start — `/opt` und `/run` gehoeren root."""
 
     def test_vorgabe_ist_der_pi(self):
-        # Die Vorgabe MUSS bleiben, was auf dem Pi installiert ist: die
-        # systemd-Units setzen nichts, und ein verschobener Vorgabewert
+        # Die Vorgabe MUSS auf Linux bleiben, was auf dem Pi installiert ist:
+        # die systemd-Units setzen nichts, und ein verschobener Vorgabewert
         # wuerde jede laufende Installation ins Leere zeigen lassen.
+        #
+        # Auf macOS und Windows gibt es diese Pfade nicht (siehe
+        # `tests/test_plattformen.py`) — dort ist die Vorgabe ein Ort im
+        # Profil des angemeldeten Nutzers, und geprueft wird, dass sie mit
+        # `paths.default_dirs` fuer DIESE Plattform uebereinstimmt.
         umgebung = {k: v for k, v in os.environ.items()
                     if k not in ("PI_GUIDE_CONF", "PI_GUIDE_STATE")}
         raus = subprocess.run(
             [sys.executable, "-c",
              "import paths;print(paths.CONF_DIR);print(paths.STATE_DIR)"],
             cwd=str(ROOT), env=umgebung, capture_output=True, text=True, check=True)
-        self.assertEqual(raus.stdout.split(), ["/opt/pi-guide", "/run/pi-guide"])
+        gelesen = raus.stdout.split("\n")[:2]
+        gelesen = [z.strip() for z in gelesen]
+        if sys.platform.startswith("linux"):
+            self.assertEqual(gelesen, ["/opt/pi-guide", "/run/pi-guide"])
+        else:
+            self.assertEqual([Path(z) for z in gelesen],
+                             [Path(d) for d in paths.default_dirs()])
 
     def test_umgebung_lenkt_um(self):
-        umgebung = dict(os.environ)
-        umgebung["PI_GUIDE_CONF"] = "/tmp/pruef-conf"
-        umgebung["PI_GUIDE_STATE"] = "/tmp/pruef-state"
-        raus = subprocess.run(
-            [sys.executable, "-c",
-             "import paths;print(paths.TALLY_FILE);print(paths.ATEM_STATE)"],
-            cwd=str(ROOT), env=umgebung, capture_output=True, text=True, check=True)
-        self.assertEqual(
-            raus.stdout.split(),
-            ["/tmp/pruef-conf/tally.json", "/tmp/pruef-state/atem.json"])
+        # Zwei Pfade, die es auf jeder der drei Plattformen gibt — ein
+        # fest eingetragenes `/tmp/...` waere unter Windows `C:\tmp\...`
+        # und der Vergleich haette dort nur den Test geprueft.
+        with TemporaryDirectory() as tmp:
+            conf = Path(tmp) / "pruef-conf"
+            state = Path(tmp) / "pruef-state"
+            umgebung = dict(os.environ)
+            umgebung["PI_GUIDE_CONF"] = str(conf)
+            umgebung["PI_GUIDE_STATE"] = str(state)
+            raus = subprocess.run(
+                [sys.executable, "-c",
+                 "import paths;print(paths.TALLY_FILE);print(paths.ATEM_STATE)"],
+                cwd=str(ROOT), env=umgebung, capture_output=True, text=True,
+                check=True)
+            gelesen = [Path(z.strip()) for z in raus.stdout.split("\n")[:2]]
+            self.assertEqual(gelesen, [conf / "tally.json", state / "atem.json"])
 
     def test_kein_absoluter_pi_pfad_ist_uebriggeblieben(self):
         # Die Gegenprobe zur Umlenkung: ein einziger stehengebliebener
@@ -93,6 +112,77 @@ class PfadeSindUmlenkbar(unittest.TestCase):
                 if '"/opt/pi-guide' in zeile or '"/run/pi-guide' in zeile:
                     uebrig.append(f"{datei.name}:{zeile_nr}")
         self.assertEqual(uebrig, [], f"absolute Pi-Pfade ausserhalb paths.py: {uebrig}")
+
+
+class DieInstallerNehmenAllesMit(unittest.TestCase):
+    """Ein Programm ohne sein Modul ist auf dem Pi ein toter Dienst.
+
+    DER FALL, DER DAS AUSGELOEST HAT (2026-09-12): Der Befehlskanal zog aus
+    drei Programmen in `cmd_channel.py` um. `bootstrap.sh` und
+    `update-on-pi.sh` kopieren eine Liste von Dateien nach `/opt/pi-guide` —
+    eine Liste, die das neue Modul nicht kannte. Ein `update-on-pi.sh` haette
+    dann eine neue `atem_watcher.py` neben ein fehlendes `cmd_channel.py`
+    gelegt, und der Dienst waere beim Start mit `ModuleNotFoundError`
+    gestorben. Auf einem Geraet, das im Rack steht und keinen Bildschirm hat.
+
+    `update-on-pi.sh` kopierte ausserdem `paths.py` gar nicht — solange sich
+    die Datei nie aenderte, fiel das nicht auf.
+
+    Geprueft wird deshalb nicht eine Namensliste, sondern die Beziehung: was
+    ein installiertes Programm importiert, muss im selben Zielverzeichnis
+    landen.
+    """
+
+    LOKALE_MODULE = {d.stem for d in ROOT.glob("*.py")}
+
+    def _installiert(self, skript):
+        """{Zielverzeichnis: {Dateiname, …}} aus den `install`-Zeilen."""
+        ziele = {}
+        for zeile in (ROOT / skript).read_text(encoding="utf-8").split("\n"):
+            zeile = zeile.strip()
+            if not zeile.startswith("install ") or zeile.startswith("install -d"):
+                continue
+            teile = zeile.split()
+            if len(teile) < 2:
+                continue
+            quelle, ziel = teile[-2], teile[-1]
+            if quelle.endswith(".py"):
+                ziele.setdefault(ziel.rstrip("/"), set()).add(quelle)
+        return ziele
+
+    def _importe(self, datei):
+        """Die lokalen Module, die diese Datei importiert (rekursiv)."""
+        import ast
+        gefunden, offen = set(), [datei]
+        while offen:
+            aktuell = offen.pop()
+            baum = ast.parse((ROOT / aktuell).read_text(encoding="utf-8"))
+            for knoten in ast.walk(baum):
+                namen = []
+                if isinstance(knoten, ast.Import):
+                    namen = [a.name.split(".")[0] for a in knoten.names]
+                elif isinstance(knoten, ast.ImportFrom) and knoten.module:
+                    namen = [knoten.module.split(".")[0]]
+                for n in namen:
+                    if n in self.LOKALE_MODULE and f"{n}.py" not in gefunden:
+                        gefunden.add(f"{n}.py")
+                        offen.append(f"{n}.py")
+        return gefunden
+
+    def _pruefe(self, skript):
+        for ziel, dateien in self._installiert(skript).items():
+            for datei in sorted(dateien):
+                for gebraucht in sorted(self._importe(datei)):
+                    self.assertIn(
+                        gebraucht, dateien,
+                        f"{skript}: {datei} landet in {ziel}/ und importiert "
+                        f"{gebraucht} — das wird dort nicht installiert")
+
+    def test_bootstrap(self):
+        self._pruefe("bootstrap.sh")
+
+    def test_update_auf_dem_pi(self):
+        self._pruefe("update-on-pi.sh")
 
 
 class HardwareDarfFehlen(unittest.TestCase):

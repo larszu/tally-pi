@@ -53,6 +53,24 @@ if "gpiod" not in sys.modules:
 from gpio_watcher import BurstTracker  # noqa: E402
 
 
+def warte_bis(bedingung, frist=5.0):
+    """Auf ein erwartetes Ereignis warten, statt eine Dauer zu raten.
+
+    WARUM (2026-09-12): `time.sleep(0.25)` und danach „die Freigabe muss da
+    sein" ist eine Wette darauf, dass der Rechner in diesem Moment Zeit hat.
+    Auf dem Entwicklungsrechner geht sie immer auf, auf einem ausgelasteten
+    CI-Laeufer nicht — und ein Test, der mal rot und mal gruen ist, bringt
+    einem das Wegsehen bei. Gewartet wird bis zum Ereignis, laengstens `frist`
+    Sekunden; die Zusicherung danach bleibt dieselbe.
+    """
+    ende = time.time() + frist
+    while time.time() < ende:
+        if bedingung():
+            return True
+        time.sleep(0.01)
+    return False
+
+
 class TrackerFall:
     """Ein Tracker samt Protokoll seiner Rueckrufe."""
 
@@ -136,13 +154,18 @@ class BurstTrackerVerhalten(unittest.TestCase):
     """Was der Tracker leisten soll — unveraendert durch den Umbau."""
 
     def test_ein_druck_je_burst_und_eine_freigabe_mit_zaehler(self):
-        fall = TrackerFall(release_ms=30)
+        # Frist gross gegen die Luecke, aus demselben Grund wie in
+        # `test_frist_verschieben_verhindert_fruehe_freigabe`: waehrend des
+        # Bursts darf nichts freigeben, und ob das haelt, haengt sonst daran,
+        # wie puenktlich `time.sleep(0.002)` zurueckkommt.
+        fall = TrackerFall(release_ms=300)
         self.addCleanup(fall.close)
         for _ in range(12):
             fall.tracker.on_edge("falling")
             time.sleep(0.002)
         self.assertEqual(fall.presses, 1, "Druck feuert genau einmal je Burst")
-        time.sleep(0.2)
+        self.assertTrue(warte_bis(lambda: fall.releases),
+                        "nach der Frist muss die Freigabe kommen")
         self.assertEqual(fall.releases, [12],
                          "Freigabe feuert einmal und meldet die Flankenzahl")
 
@@ -164,7 +187,16 @@ class BurstTrackerVerhalten(unittest.TestCase):
         # beenden. Das ist der Fall, den die alte Timer-Fassung verlieren
         # konnte: der abgelaufene Timer wartete schon vor dem Lock, und
         # `cancel()` kam zu spaet.
-        fall = TrackerFall(release_ms=80)
+        #
+        # 400 ms Frist bei 50 ms Luecke, und nicht 80 bei 50: geprueft wird,
+        # dass eine Luecke UNTER der Frist den Burst nicht beendet — dafuer
+        # ist das Verhaeltnis der beiden Zahlen die Aussage, nicht ihr
+        # Betrag. Mit 80 zu 50 blieben 30 ms Luft, und ein ausgelasteter
+        # CI-Laeufer (macOS, 2026-09-12) braucht die manchmal allein fuer
+        # `time.sleep`: dann lag eine Luecke ueber der Frist, der Tracker gab
+        # voellig richtig frei, und der Test meldete einen Fehler, den es
+        # nicht gab.
+        fall = TrackerFall(release_ms=400)
         self.addCleanup(fall.close)
         for _ in range(6):
             fall.tracker.on_edge("falling")
@@ -172,7 +204,8 @@ class BurstTrackerVerhalten(unittest.TestCase):
         self.assertEqual(fall.presses, 1)
         self.assertEqual(fall.releases, [],
                          "solange Flanken nachkommen, gibt es keine Freigabe")
-        time.sleep(0.25)
+        self.assertTrue(warte_bis(lambda: fall.releases),
+                        "nach der Frist muss die Freigabe kommen")
         self.assertEqual(fall.releases, [6])
 
     def test_gehaltene_leitung_verschiebt_die_freigabe(self):
@@ -185,8 +218,9 @@ class BurstTrackerVerhalten(unittest.TestCase):
         time.sleep(0.2)
         self.assertEqual(fall.releases, [], "gehaltene Leitung gibt nicht frei")
         gehalten["wert"] = False
-        time.sleep(0.2)
-        self.assertEqual(len(fall.releases), 1, "losgelassen wird freigegeben")
+        self.assertTrue(warte_bis(lambda: fall.releases),
+                        "losgelassen wird freigegeben")
+        self.assertEqual(len(fall.releases), 1, "und genau einmal")
 
     def test_zwei_bursts_sind_zwei_druecke(self):
         fall = TrackerFall(release_ms=30)

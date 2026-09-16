@@ -163,15 +163,38 @@ class RunLocalKenntDenNumato(unittest.TestCase):
         self.assertIn('"--numato"', quelle)
         self.assertIn('starte("numato_watcher.py")', quelle)
 
-    def test_der_windows_starter_reicht_die_schalter_durch(self):
-        bat = ROOT / "run_windows.bat"
-        self.assertTrue(bat.exists(), "run_windows.bat fehlt")
-        text = bat.read_text(encoding="utf-8", errors="replace")
-        # Ohne Dienst-Modus haengt der Aufrufer (Suite) an einem `pause`.
-        self.assertIn("--server", text)
-        self.assertIn("run-local.py", text)
-        # `py` zuerst: `python` kann auf den Store-Alias zeigen.
-        self.assertIn("where py", text)
+    def test_die_starter_reichen_die_schalter_durch(self):
+        """`--numato` muss durch die Doppelklick-Starter durchkommen.
+
+        Hier stand zuerst eine eigene `run_windows.bat`. Die gab es schon —
+        `start-local.bat` und `start-local.command` tun genau dasselbe, und
+        zwei Starter fuer dieselbe Aufgabe sind kein Komfort, sondern zwei
+        Stellen, an denen jemand spaeter die eine anfasst. Sie ist wieder
+        weg; geprueft wird, dass die vorhandenen durchreichen.
+        """
+        for name in ("start-local.bat", "start-local.command"):
+            starter = ROOT / name
+            self.assertTrue(starter.exists(), f"{name} fehlt")
+            text = starter.read_text(encoding="utf-8", errors="replace")
+            # `%*` bzw. `"$@"` — ohne das kaeme `--numato` nie an.
+            self.assertTrue("%*" in text or '"$@"' in text,
+                            f"{name} reicht die Schalter nicht durch")
+            self.assertIn("run-local.py", text)
+        # `py -3` zuerst: `python` kann auf den Store-Alias zeigen, und der
+        # oeffnet nur den Store.
+        self.assertIn("py -3", (ROOT / "start-local.bat").read_text(
+            encoding="utf-8", errors="replace"))
+
+    def test_ohne_pyserial_sagt_der_start_es_vorher(self):
+        """Nicht als Zeile im Protokoll eines Prozesses, der sofort endet.
+
+        `numato_watcher` beendet sich ohne pyserial mit Code 1. Das ist
+        richtig — nur sieht es niemand, weil `run-local.py` den Prozess im
+        Hintergrund startet. Deshalb prueft der Start selbst.
+        """
+        quelle = (ROOT / "run-local.py").read_text(encoding="utf-8")
+        self.assertIn("--numato braucht pyserial", quelle)
+        self.assertIn("pip install pyserial", quelle)
 
 
 if __name__ == "__main__":

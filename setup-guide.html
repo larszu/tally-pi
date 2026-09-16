@@ -1338,6 +1338,13 @@ var qrcode=function(){var t=function(t,r){var e=t,n=g[r],o=null,i=0,a=null,u=[],
     const expandedIds = new Set();
 
     function baseUrl(){
+      // `window.__tallyBase` setzt NUR die Vorfuehrung auf der Projektseite
+      // (scripts/build-demo.py). Dort liegt die Anwendung unter einem
+      // Unterpfad wie `/tally-pi/demo/`, und `location.origin` zeigte auf
+      // den Wurzelpfad der github.io-Adresse — die QR-Codes und Links
+      // fuehrten dann ins Leere. Auf dem Pi ist die Variable nicht gesetzt
+      // und es bleibt Zeile fuer Zeile beim Alten.
+      if (window.__tallyBase) return window.__tallyBase;
       // If accessed via localhost/127.x, substitute the Pi's LAN IP so QR codes work on phones.
       const h = location.hostname;
       const isLocal = (h === 'localhost' || h === '127.0.0.1' || h.startsWith('127.') || h === '::1');

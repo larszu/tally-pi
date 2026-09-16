@@ -1,5 +1,3 @@
-<div align="center">
-
 # tally-pi
 
 **ATEM tally lamps, browser tally and GPIO trigger buttons — on a Raspberry Pi.**
@@ -13,9 +11,31 @@ web UI. No build step, no cloud, no framework.
 ![platform](https://img.shields.io/badge/platform-Raspberry%20Pi%204%20%2F%205-c51a4a)
 ![python](https://img.shields.io/badge/python-stdlib%20only-3776ab)
 
+<div align="center">
 <img src="docs/img/setup-ui.png" alt="tally-pi setup UI, Tally tab" width="820">
-
 </div>
+
+## Try it in your browser — the whole application, no Pi
+
+**https://larszu.github.io/tally-pi/demo/**
+
+That link is not a screenshot tour. It is `setup-guide.html` — the same file
+the Pi serves — with the device cards, the tally diagnostics table, the
+browser tally pages and the cue display, all live. Switch the mixer state in
+the header bar and watch the lamps follow; open a tally page on your phone
+and switch again, it turns red with the desk.
+
+**Nothing there is faked, and nothing there is real hardware.** GitHub Pages
+runs no Python, so the answers the UI would get from `guide_server.py` are
+computed **by `guide_server.py` itself**, at build time, over three scenarios
+— see `scripts/build-demo.py`. The one question that matters, *is this camera
+live?*, is answered by `tally_state_for_device()`, the same function the Pi
+uses; the browser only looks its answer up. There is no second implementation
+to drift.
+
+Where hardware is missing, the demo says so in the application's own words
+("gpiod not available", "kein systemd") instead of inventing pin levels, and
+a banner on every page says that nothing is being switched.
 
 ## The web page
 
@@ -76,30 +96,53 @@ PGM 1 / PVW 2). The empty SW/HW columns and the `gpiod not available` note
 in the diagnostics shot are expected: that host has no GPIO hardware. Run
 the script yourself to regenerate them.</sub>
 
-## Run it on your own machine — no Pi
+## Run it on your own machine — Linux, macOS, Windows, no Pi
 
 ```bash
 python3 run-local.py --demo      # Linux, macOS
-run_windows.bat --demo           # Windows
+py -3 run-local.py --demo        # Windows
 ```
 
-That is the whole prerequisite list: Python 3. No Pi, no ATEM, no GPIO
-header, no `sudo`.
+Or double-click **`start-local.command`** (macOS) / **`start-local.bat`**
+(Windows). Both land in the same program; the `.bat` also finds Python for
+you and keeps the window open if something goes wrong.
+
+That is the whole prerequisite list: Python 3.9 or newer. No Pi, no ATEM,
+no GPIO header, no `sudo`, no admin rights.
 
 On **Windows** the interpreter is usually called `py`, not `python3`, and a
-Windows without the Store alias has no `python` on the PATH at all.
-`run_windows.bat` finds it, installs `pyserial` if it is missing and passes
-every switch through. `run_windows.bat --server` is the same thing without
-a browser and without the closing `pause` — that is the form a caller such
-as the AV Planner Suite needs.
+Windows without the Store alias has no `python` on the PATH at all — what
+sits there opens the Store instead of running anything. `start-local.bat`
+finds it and passes every switch through, `--numato` included.
 
 It starts **the same programs the Pi runs** — `guide_server.py`,
 `atem_watcher.py`, `gpio_watcher.py` — pointed at a directory under
 `.local-run/` instead of `/opt/pi-guide` and `/run/pi-guide`. There is no
 second code path and no "dev mode" with its own behaviour; the paths come
 from `paths.py`, which reads `PI_GUIDE_CONF` and `PI_GUIDE_STATE` and
-falls back to the Pi locations when they are unset. A running Pi notices
-nothing.
+falls back to per-platform defaults when they are unset. A running Pi
+notices nothing.
+
+**Three things differ off the Pi, and all three live in one file each:**
+
+| | Linux / Pi | macOS | Windows |
+|---|---|---|---|
+| config default (`paths.py`) | `/opt/pi-guide` | `~/Library/Application Support/tally-pi/conf` | `%LOCALAPPDATA%\tally-pi\conf` |
+| state default (`paths.py`) | `/run/pi-guide` (tmpfs) | `…/state` | `…\state` |
+| ATEM command channel (`cmd_channel.py`) | unix socket | unix socket | loopback TCP port, number in `atem-cmd.port` |
+
+Windows has no `AF_UNIX` in Python, so the channel that carries
+`set_aux` / `set_program` / `set_preview` to `atem_watcher` moves to a
+port on `127.0.0.1` — bound to loopback, so it is exactly as local as the
+socket it replaces. The wire format is identical; `nc -U
+/run/pi-guide/atem-cmd.sock` still works on the Pi. `PI_GUIDE_CMD_TCP=1`
+forces that path everywhere, which is how CI exercises the Windows
+channel on Linux too.
+
+One honest difference: `/run` on the Pi is a tmpfs, so runtime state (the
+cue in particular) is gone after a reboot. macOS and Windows have no such
+place at a fixed path, so there the state file survives. Nothing is
+faked to hide that; it is written down in `paths.py`.
 
 | | |
 |---|---|
@@ -109,6 +152,12 @@ nothing.
 | `--host 127.0.0.1` | this machine only — the default binds all interfaces so a phone on the same network can reach it |
 | `--numato` | GPIO over a **Numato USB module** — the only GPIO path off the Pi |
 | `--dir /some/where` | put config and state elsewhere |
+| `--open` | open the interface in your default browser |
+
+On macOS and Windows the first start raises a firewall prompt: allow it and
+a phone on the same network can open the tally page, deny it and only this
+machine can. `--host 127.0.0.1` skips the question by never listening on
+the network.
 
 **What is missing is missing visibly.** Nothing is faked:
 
@@ -140,6 +189,16 @@ nothing.
 camera's tally state. A test that only compared two environment variables
 would prove a mapping, not a program: `python -m compileall` was green the
 whole time a hard `import gpiod` made every non-Pi start impossible.
+
+`tests/test_plattformen.py` asks the same question again — and the
+`verify` workflow runs it on **ubuntu, macOS and Windows**, not just
+Linux. It boots `run-local.py` on each, checks the interface answers and
+computes a tally state, that a busy port is reported before anything
+starts, and that the port is free again after shutdown (on Windows the
+child processes are held in a job object so they cannot outlive the
+window). The same reason as above: a README sentence claiming "runs on
+Windows" is not a check, and `AF_UNIX` sat unnoticed in three files while
+CI was green.
 
 ## Quick install — fresh Pi
 

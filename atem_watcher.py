@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """Watch an ATEM switcher via its native UDP protocol (port 9910).
 
-No external libraries required.  Writes state to /run/pi-guide/atem.json.
-Reads ATEM IP from /opt/pi-guide/tally.json (key: "atem_ip").
+No external libraries required.  Writes the state file and reads the ATEM
+IP from the paths in `paths.py` — on the Pi `/run/pi-guide/atem.json` and
+`/opt/pi-guide/tally.json`, locally (and on macOS/Windows) wherever
+`PI_GUIDE_STATE` / `PI_GUIDE_CONF` point.
 """
 import json
 import os
@@ -10,7 +12,6 @@ import queue
 import signal
 import socket
 import struct
-import tempfile
 import threading
 import time
 from pathlib import Path
@@ -22,12 +23,12 @@ import sys
 # Verzeichnis, in dem sie liegen.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import paths  # noqa: E402
+import cmd_channel  # noqa: E402
 
 # Die Pfade kommen aus `paths.py` — eine Stelle statt neunzehn. Ohne
 # gesetzte Umgebungsvariablen sind es genau die alten, siehe dort.
 STATE_FILE = paths.ATEM_STATE
 CONFIG_FILE = paths.TALLY_FILE
-CMD_SOCKET = paths.ATEM_CMD_SOCK
 ATEM_PORT = 9910
 RECV_TIMEOUT = 2.0          # socket recv timeout (seconds)
 KEEPALIVE_INTERVAL = 1.0    # send keepalive ping every N seconds
@@ -44,22 +45,15 @@ CMD_QUEUE: "queue.Queue[dict]" = queue.Queue(maxsize=256)
 
 
 def atomic_write(path: Path, payload: dict) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=".atem.", suffix=".tmp")
-    try:
-        with os.fdopen(fd, "w") as f:
-            json.dump(payload, f)
-        os.replace(tmp, path)
-        try:
-            os.chmod(path, 0o664)
-        except Exception:
-            pass
-    except Exception:
-        try:
-            os.unlink(tmp)
-        except Exception:
-            pass
-        raise
+    """Vollstaendig oder gar nicht — der Leser sieht nie ein Fragment.
+
+    Liegt seit 2026-09-12 in `paths.py`, weil derselbe Dreisatz in vier
+    Programmen stand und unter Windows in allen vieren dieselbe Eigenheit
+    hat: `os.replace` scheitert dort, solange ein anderer Prozess die
+    Zieldatei offen hat. Der Helfer wiederholt es kurz; hier bleibt nur
+    der Name stehen, den die Aufrufer kennen.
+    """
+    paths.atomic_write_json(path, payload)
 
 
 def load_config() -> dict:
@@ -327,34 +321,25 @@ class AtemClient:
 
 
 def cmd_listener_thread():
-    """Listen on a Unix socket for JSON commands and enqueue them.
+    """Listen for JSON commands and enqueue them.
 
     Wire format: one JSON object per connection, terminated by newline.
     Examples:
         {"cmd": "set_aux", "aux": 1, "source": 5}
 
     The response is a single JSON line: {"ok": bool, "error": "..."}.
+
+    Wo der Kanal liegt, entscheidet `cmd_channel`: auf dem Pi und auf dem
+    Mac ein Unix-Socket, unter Windows ein Loopback-Port. Dieses Programm
+    sieht in beiden Faellen dasselbe horchende Socket.
     """
     try:
-        CMD_SOCKET.parent.mkdir(parents=True, exist_ok=True)
-        try:
-            CMD_SOCKET.unlink()
-        except FileNotFoundError:
-            pass
-        srv = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        srv.bind(str(CMD_SOCKET))
-        try:
-            # 0o666: any local user can send commands. This is a LAN-only
-            # appliance socket (not reachable over the network), so opening
-            # it up lets the Pi's regular (non-root) user test set_aux via
-            # `nc -U /run/pi-guide/atem-cmd.sock` without sudo.
-            os.chmod(str(CMD_SOCKET), 0o666)
-        except Exception:
-            pass
-        srv.listen(8)
+        srv = cmd_channel.listen()
     except Exception as e:
-        print(f"atem cmd listener bind failed: {e}", flush=True)
+        print(f"atem cmd listener bind failed ({cmd_channel.beschreibung()}): {e}",
+              flush=True)
         return
+    print(f"atem cmd listener on {cmd_channel.beschreibung()}", flush=True)
 
     while True:
         try:
@@ -484,6 +469,11 @@ def run():
 
     if client:
         client.close()
+    # Die Spur des Befehlskanals mitnehmen. Unter Windows steht dort eine
+    # Portnummer, und eine stehengebliebene zeigt beim naechsten Start auf
+    # einen Watcher, den es nicht mehr gibt — der Sender bekaeme dann
+    # „Verbindung abgelehnt" statt „laeuft nicht".
+    cmd_channel.aufraeumen()
     write_disconnected("watcher stopped")
 
 

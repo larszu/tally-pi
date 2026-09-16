@@ -5,29 +5,66 @@ on:
   pull_request:
 
 jobs:
-  check:
+  # ─── Die Zusage „laeuft auch lokal" wird auf DREI Systemen geprueft ───────
+  #
+  # Seit dem 2026-09-12 sagt das README, der lokale Start gehe auch auf einem
+  # Mac und unter Windows. Ein Satz im README ist keine Pruefung: bis dahin
+  # lief hier nur ubuntu, und genau darum stand `socket.AF_UNIX` unbemerkt an
+  # drei Stellen -- ein Ausdruck, den es unter Windows nicht gibt und der dort
+  # erst dann auffaellt, wenn jemand einen Knopf drueckt.
+  #
+  # Die Tests sind dieselben. Es gibt keinen Windows-Zweig im Testcode, der
+  # etwas anderes prueft als der Linux-Zweig -- `tests/test_plattformen.py`
+  # stellt auf jedem der drei Systeme dieselben Fragen und faehrt dazu den
+  # Server wirklich hoch.
+  test:
+    name: Tests (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false      # ein rotes Windows soll nicht das gruene macOS verbergen
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+      # `shell: bash` auch unter Windows: dort gibt es die Git-Bash, und ohne
+      # sie waere `*.py` ein wortwoertliches Argument statt einer Liste.
+      - name: Compile Python services
+        shell: bash
+        run: python -m compileall -q *.py
+      # `unittest` statt pytest: keine neue Abhaengigkeit fuer ein Pi-Repo, das
+      # sonst keine Dev-Dependencies hat.
+      #
+      # Bis 2026-09-04 pruefte dieses Repo NUR Syntax. Die beiden Stellen mit
+      # dem groessten stillen Schadenspotenzial -- das ATEM-Paketlayout und die
+      # Entscheidung, ob eine Tally-Lampe rot zeigt -- sind reine Funktionen und
+      # ohne Hardware pruefbar. Sie liefen nur nie.
+      - name: Tests (ATEM-Protokoll, Tally-Zustand, lokaler Start)
+        shell: bash
+        run: python -m unittest discover -s tests -v
+
+  # ─── Was nur einmal geprueft werden muss ──────────────────────────────────
+  #
+  # Shell-Skripte und die Node-Version der Actions haengen nicht am
+  # Betriebssystem des Laeufers. Dreimal dieselbe Antwort einzuholen, kostet
+  # nur Wartezeit.
+  einmalig:
+    name: Skripte und Actions
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-python@v6
         with:
           python-version: '3.11'
-      - name: Compile Python services
-        run: python -m compileall -q *.py
       - name: Check shell scripts
-        run: for f in *.sh; do bash -n "$f"; done
+        run: |
+          for f in *.sh; do bash -n "$f"; done
+          bash -n start-local.command
       # Fragt die action.yml jedes Pins nach ihrer Node-Version, statt sie in
       # einem Kommentar zu behaupten. Am 2026-09-05 liefen hier BEIDE Actions
       # auf dem abgekuendigten node20, und niemandem ist es aufgefallen -- die
       # Warnung steht am Ende jedes Laufs, und genau deshalb liest sie keiner.
       - name: Actions laufen auf einer unterstuetzten Node-Version
         run: python scripts/actions_node_runtime.py
-      # Bis 2026-09-04 pruefte dieses Repo NUR Syntax. Die beiden Stellen mit
-      # dem groessten stillen Schadenspotenzial -- das ATEM-Paketlayout und die
-      # Entscheidung, ob eine Tally-Lampe rot zeigt -- sind reine Funktionen und
-      # ohne Hardware pruefbar. Sie liefen nur nie.
-      #
-      # `unittest` statt pytest: keine neue Abhaengigkeit fuer ein Pi-Repo, das
-      # sonst keine Dev-Dependencies hat.
-      - name: Tests (ATEM-Protokoll, Tally-Zustand)
-        run: python -m unittest discover -s tests -v

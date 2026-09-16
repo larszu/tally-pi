@@ -1,0 +1,69 @@
+/* ---------------------------------------------------------------------------
+ * Das Kopfband der Vorfuehrung.
+ *
+ * ES MUSS AUFFALLEN, UND ZWAR IMMER. Die Seite darunter ist die echte
+ * Bedienoberflaeche eines Geraets, das Kameras umschaltet. Wer sie auf der
+ * Projektseite oeffnet, muss auf den ersten Blick sehen, dass hier nichts
+ * angeschlossen ist — sonst konfiguriert jemand zwanzig Minuten lang eine
+ * Anlage, die es nicht gibt, oder haelt eine gruene Lampe fuer eine Aussage
+ * ueber sein Studio.
+ *
+ * Deshalb: oben, ueber der ganzen Breite, in einem Ton, der in keinem
+ * Tally-Zustand vorkommt (weder Rot fuer PGM noch Gruen fuer PVW noch das
+ * Orange von `offline`), und nicht wegklickbar.
+ * ------------------------------------------------------------------------ */
+.demo-band {
+  position: sticky; top: 0; z-index: 99999;
+  background: #3b1d6e;                 /* Violett: kein Tally-Zustand ist violett */
+  color: #f4f0ff;
+  border-bottom: 2px solid #7c5cc4;
+  font: 13px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  padding: 8px 12px;
+  display: flex; flex-direction: column; gap: 6px;
+}
+.demo-zeile { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.demo-marke {
+  background: #f4f0ff; color: #3b1d6e; font-weight: 700;
+  padding: 2px 8px; border-radius: 999px; letter-spacing: .04em;
+  text-transform: uppercase; font-size: 11px; white-space: nowrap;
+}
+.demo-text { flex: 1 1 20rem; min-width: 0; }
+.demo-text code { background: rgba(255,255,255,.12); padding: 0 4px; border-radius: 3px; }
+.demo-beschriftung { opacity: .75; }
+.demo-knopf, .demo-weg {
+  background: rgba(255,255,255,.10); color: #f4f0ff;
+  border: 1px solid #7c5cc4; border-radius: 6px;
+  padding: 4px 10px; font-size: 12px; cursor: pointer; text-decoration: none;
+  font-family: inherit;
+}
+.demo-knopf:hover, .demo-weg:hover { background: rgba(255,255,255,.20); }
+.demo-knopf.an { background: #f4f0ff; color: #3b1d6e; font-weight: 600; }
+.demo-erklaerung { opacity: .9; font-style: italic; }
+.demo-link { color: #cdbcff; }
+
+/* ── Die Farbflaechen-Seiten ───────────────────────────────────────────────
+ *
+ * Tally- und Cue-Seite SIND eine Flaeche in einer Farbe — quer durch ein
+ * dunkles Studio erkennbar, das ist ihr ganzer Zweck. Ein Band, das dort ein
+ * Drittel des Handy-Schirms einnimmt, macht genau die Seite kaputt, die es
+ * vorfuehren soll. Also: einzeilig, zuklappbar, und die Flaeche beginnt
+ * exakt darunter (`--demo-band-h` misst das JavaScript nach dem Umbruch,
+ * denn wie hoch das Band ist, weiss erst der Browser). */
+.demo-band-schmal { padding: 5px 10px; gap: 4px; }
+.demo-band-schmal .demo-text { font-size: 12px; }
+.demo-band-schmal.zu .demo-faltung { display: none; }
+.demo-faltung { display: flex; flex-direction: column; gap: 6px; }
+.demo-klappe {
+  background: rgba(255,255,255,.10); color: #f4f0ff; border: 1px solid #7c5cc4;
+  border-radius: 6px; padding: 2px 8px; font: inherit; font-size: 12px; cursor: pointer;
+}
+.demo-lagenname { white-space: nowrap; opacity: .85; }
+
+body.demo-hat-band #bg,
+body.demo-hat-band #cue-bg,
+body.demo-hat-band #buehne { top: var(--demo-band-h, 88px); }
+
+@media (max-width: 700px) {
+  .demo-band { font-size: 12px; padding: 6px 8px; }
+  .demo-text { flex-basis: 100%; }
+}
