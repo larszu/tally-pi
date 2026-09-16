@@ -7,8 +7,14 @@ A self-contained broadcast appliance built on top of
 smartphone tally pages and physical trigger buttons, all configured from one
 web UI. No build step, no cloud, no framework.
 
+The Raspberry Pi (with its 40-pin header) is the appliance — but the same code
+runs **natively on macOS and Windows** too: as a ready-made download from the
+[Releases](../../releases) page (no Python needed), or straight from source.
+Real GPIO there comes from a **Numato USB adapter**; everything else — tally
+UI, ATEM control, browser tally — works with nothing plugged in.
+
 [![syntax](https://github.com/larszu/tally-pi/actions/workflows/syntax.yml/badge.svg)](https://github.com/larszu/tally-pi/actions/workflows/syntax.yml)
-![platform](https://img.shields.io/badge/platform-Raspberry%20Pi%204%20%2F%205-c51a4a)
+![platform](https://img.shields.io/badge/platform-Pi%20%C2%B7%20macOS%20%C2%B7%20Windows-c51a4a)
 ![python](https://img.shields.io/badge/python-stdlib%20only-3776ab)
 
 <div align="center">
@@ -152,11 +158,11 @@ tally UI, ATEM control, trigger buttons, tally lamps — runs natively on all
 three.
 
 It starts **the same programs the Pi runs** — `guide_server.py`,
-`atem_watcher.py`, `gpio_watcher.py` — pointed at a directory under
-`.local-run/` instead of `/opt/pi-guide` and `/run/pi-guide`. There is no
-second code path and no "dev mode" with its own behaviour; the paths come
-from `paths.py`, which reads `PI_GUIDE_CONF` and `PI_GUIDE_STATE` and
-falls back to per-platform defaults when they are unset. A running Pi
+`atem_watcher.py`, `gpio_watcher.py` and `numato_watcher.py` — pointed at a
+directory under `.local-run/` instead of `/opt/pi-guide` and `/run/pi-guide`.
+There is no second code path and no "dev mode" with its own behaviour; the
+paths come from `paths.py`, which reads `PI_GUIDE_CONF` and `PI_GUIDE_STATE`
+and falls back to per-platform defaults when they are unset. A running Pi
 notices nothing.
 
 **What differs off the Pi lives in one file each:**
@@ -197,11 +203,14 @@ the network.
 
 **What is missing is missing visibly.** Nothing is faked:
 
-* Without a 40-pin header there are no GPIO inputs. `gpio_watcher` writes
-  `gpio_available: false` **with a reason** into `input-state.json` and
-  keeps running. It does not invent button presses — a camera cut hangs
-  off those inputs, and a watcher that stays silent looks exactly like one
-  that sees nothing.
+* Without a 40-pin header **and** without a Numato USB board there are no
+  GPIO inputs. `gpio_watcher` writes `gpio_available: false` **with a reason**
+  into `input-state.json` and keeps running; `numato_watcher` writes
+  `connected: false` with its reason into `numato.json`. Neither invents
+  button presses — a camera cut hangs off those inputs, and a watcher that
+  stays silent looks exactly like one that sees nothing. Plug in a Numato
+  board and the inputs (and the tally lamps) are real, on any of the three
+  platforms — see *Real GPIO on Mac/Windows* above.
 * Without an I²C display `pi_status.py` says so and exits cleanly.
 * Without a switcher `atem_watcher` reports *not connected*. `--demo`
   therefore does not start it at all, and the example state carries
