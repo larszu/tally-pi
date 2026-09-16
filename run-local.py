@@ -32,6 +32,11 @@ Nichts davon wird nachgebildet:
   * `--demo` legt EINEN Zustand ab (drei Kameras, PGM 1 / PVW 2) und
     startet den ATEM-Watcher gar nicht erst. Der Zustand steht still und
     ist als Beispiel erkennbar — er behauptet keine Verbindung.
+  * `--numato` startet den USB-Watcher. DAS IST DER EINZIGE GPIO-WEG
+    AUSSERHALB DES PI (Nutzer, 2026-09-15): `gpio_watcher` braucht `gpiod`
+    und `/dev/gpiochip0`, ein Numato-Modul haengt an einem seriellen Port
+    und laeuft damit auf Windows, macOS und Linux gleich. Auch er erfindet
+    nichts — ohne Modul am Kabel schreibt er, dass keines da ist.
 
 ─── WAS AN MAC UND WINDOWS ANDERS IST (und was nicht) ──────────────────────
 
@@ -53,12 +58,14 @@ AUFRUF
     python3 run-local.py --demo          # dazu ein stehender Beispiel-Zustand
     python3 run-local.py --demo --open   # und gleich den Browser aufmachen
     python3 run-local.py --atem 10.0.0.5 # gegen einen echten Mischer
+    python3 run-local.py --numato        # GPIO ueber ein Numato-USB-Modul
     python3 run-local.py --port 8081     # anderer Port
     python3 run-local.py --host 127.0.0.1  # nur lokal, nicht im Netz
 
 Unter Windows heisst das Programm meist `python` statt `python3`; auf dem
 Mac und unter Windows gibt es zum Doppelklicken ausserdem
-`start-local.command` bzw. `start-local.bat`.
+`start-local.command` bzw. `start-local.bat`. Beide suchen erst `py -3`
+und reichen alle Schalter durch, also auch `--numato`.
 
 Der Zustand liegt unter `.local-run/` im Arbeitsverzeichnis (ueber
 `--dir` verschiebbar). Er wird beim Start NICHT geloescht — wer eine
@@ -305,9 +312,14 @@ def main() -> int:
     ap.add_argument("--atem", default="",
                     help="IP eines echten ATEM im Netz")
     ap.add_argument("--no-gpio", action="store_true",
-                    help="den GPIO-Watcher gar nicht erst starten")
+                    help="den GPIO-Watcher (Pi, /dev/gpiochip0) gar nicht "
+                         "erst starten")
     ap.add_argument("--open", action="store_true", dest="oeffnen",
                     help="die Oberflaeche im Standardbrowser aufmachen")
+    ap.add_argument("--numato", action="store_true",
+                    help="den Numato-USB-Watcher starten — das GPIO-Interface "
+                         "fuer Rechner ohne 40-poligen Stecker (Windows, "
+                         "macOS, Linux)")
     a = ap.parse_args()
 
     probe_host = "127.0.0.1" if a.host == "0.0.0.0" else a.host
@@ -399,6 +411,38 @@ def main() -> int:
         starte("atem_watcher.py")
     if not a.no_gpio:
         starte("gpio_watcher.py")
+
+    # DAS GPIO-INTERFACE FUER RECHNER OHNE 40-POLIGEN STECKER (Nutzer,
+    # 2026-09-15: „tally pi muss auch auf windows und mac laufen und dort als
+    # gpio interface einen numato gpio usb benutzen koennen").
+    #
+    # `gpio_watcher.py` braucht `gpiod` und `/dev/gpiochip0` — beides gibt es
+    # auf einem Schreibtischrechner nicht, und es laeuft dort deshalb mit
+    # `gpio_available: false`. Ein USB-Modul ist dort nicht die zweite Wahl,
+    # sondern die einzige.
+    #
+    # ER LAEUFT NUR AUF ANSAGE, und das ist Absicht. Der Watcher haelt einen
+    # seriellen Port offen und pollt ihn zwanzigmal je Sekunde. Ihn ungefragt
+    # zu starten hiesse, auf jedem Rechner jeden aufgezaehlten Port
+    # anzusprechen — darunter Modems, Bluetooth-Bruecken und der
+    # Debug-Anschluss irgendeines anderen Geraets. `probe_numato` schreibt
+    # `ver\r` hinein; was das bei fremder Hardware ausloest, weiss dieses
+    # Programm nicht.
+    #
+    # OHNE PYSERIAL GEHT ER NICHT, und das wird VOR dem Start gesagt statt
+    # als Zeile im Protokoll eines Prozesses, der sich sofort beendet.
+    if a.numato:
+        try:
+            import serial  # noqa: F401
+        except ImportError:
+            rat = ("apt install python3-serial" if sys.platform.startswith("linux")
+                   else "pip install pyserial")
+            print(f"[local] --numato braucht pyserial. Nachruesten: {rat}")
+            print("[local] Die Oberflaeche laeuft trotzdem; GPIO gibt es dann "
+                  "auf diesem Rechner nicht.")
+        else:
+            starte("numato_watcher.py")
+
     starte("guide_server.py")
 
     lan = lan_adresse()
@@ -410,6 +454,16 @@ def main() -> int:
         print(f"    im selben Netz:  http://{lan}:{a.port}/")
     print(f"    Konfiguration:   {conf}")
     print(f"    Zustand:         {state}")
+    if a.numato:
+        print("    GPIO:            Numato-USB-Modul (Zustand unter /numato)")
+    elif a.no_gpio:
+        print("    GPIO:            aus (--no-gpio)")
+    elif not sys.platform.startswith("linux"):
+        # Sagen, dass es nicht geht, und WIE es geht. Auf einem Mac oder
+        # unter Windows laeuft `gpio_watcher` zwar, findet aber nie ein
+        # `/dev/gpiochip0` — wer das nicht weiss, sucht den Fehler bei sich.
+        print("    GPIO:            kein /dev/gpiochip0 auf diesem System — "
+              "fuer echte Ein-/Ausgaenge `--numato` mit einem USB-Modul")
     if a.host == "0.0.0.0" and (MAC or WINDOWS):
         # Beide Systeme fragen beim ersten Binden nach. Wer die Frage
         # wegklickt, hat danach eine Seite, die nur auf diesem Rechner

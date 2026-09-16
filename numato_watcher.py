@@ -1,11 +1,56 @@
 #!/usr/bin/env python3
 """Numato 32-CH USB GPIO watcher with hot-plug support.
 
-Detects /dev/numato0 (udev symlink) or auto-scans /dev/ttyACM* for a Numato
-device (responds to `ver\r`). Polls all 32 digital channels + ADCs, fires
-Companion actions on edges, and writes live state to /run/pi-guide/numato.json.
+Findet das Geraet auf Linux, macOS UND Windows, pollt alle 32 digitalen
+Kanaele + ADCs, feuert Companion-Aktionen auf Flanken und schreibt den
+Zustand nach `paths.NUMATO_STATE`.
+
+─── WAS GEMELDET WURDE (Nutzer, 2026-09-15) ────────────────────────────────
+
+„tally pi muss auch auf windows und mac laufen und dort als gpio interface
+einen numato gpio usb benutzen koennen."
+
+─── WARUM DAS VORHER NICHT GING ────────────────────────────────────────────
+
+Die Geraetesuche war LINUX-ONLY, und zwar an zwei Stellen zugleich:
+
+    #: Der udev-Symlink dieses Repos (`99-numato.rules`). Nur auf Linux, und
+#: dort die verlaessliche Zuordnung — deshalb wird er zuerst versucht.
+PREFERRED_DEVICES = ["/dev/numato0", "/dev/numato1"]
+#: Numato Lab. Sortiert die Reihenfolge, schliesst nichts aus — siehe Kopf.
+NUMATO_VID = 0x2A19   # udev-Symlink
+    candidates = sorted(glob.glob("/dev/ttyACM*"))          # CDC-ACM
+
+`/dev/numato0` legt eine udev-Regel an (`99-numato.rules` in diesem Repo) —
+udev gibt es nur unter Linux. `/dev/ttyACM*` ist der Linux-Name fuer ein
+CDC-ACM-Geraet; dieselbe Hardware heisst
+
+    Windows   COM3, COM7, …
+    macOS     /dev/cu.usbmodem14201, …
+
+Auf beiden fand `find_device()` also NICHTS, und zwar lautlos: die Funktion
+gab `None` zurueck, die Schleife wartete auf ein Geraet, und der Zustand
+sagte „kein Numato gefunden" — was stimmte und den Grund verschwieg. Wer
+das Modul an einen Mac steckte, bekam dieselbe Meldung wie jemand ohne
+Modul.
+
+DAS IST DER EINZIGE GPIO-WEG AUSSERHALB DES PI. `gpio_watcher.py` braucht
+`gpiod` und `/dev/gpiochip0`; beides gibt es auf einem Schreibtischrechner
+nicht. Ein USB-Modul ist dort nicht die zweite Wahl, sondern die einzige.
+
+─── WIE JETZT GESUCHT WIRD ─────────────────────────────────────────────────
+
+Ueber `serial.tools.list_ports` — das ist pyserials eigene Aufzaehlung und
+kennt alle drei Systeme. Der udev-Symlink bleibt vorne dran, weil er auf
+einem eingerichteten Pi die verlaessliche Zuordnung ist; danach wird jeder
+aufgezaehlte Port GEPROBT (`ver\r`), nicht geraten.
+
+Die Hersteller-Kennung (VID 0x2A19, Numato Lab) sortiert nur die
+Reihenfolge — sie schliesst nichts aus. Numato baut mehrere Serien, und ein
+Modul mit anderer Kennung, das auf `ver` antwortet, ist ein Modul, das auf
+`ver` antwortet. Umgekehrt waere eine reine VID-Pruefung genau die Sorte
+Filter, die bei neuer Hardware still nichts mehr findet.
 """
-import glob
 import json
 import os
 import re
@@ -33,12 +78,19 @@ import paths  # noqa: E402
 # Es wird nichts vorgetaeuscht: ohne pyserial gibt es keine Numato-Platine,
 # und das Programm sagt es und laeuft nicht weiter. Es sagt es nur dort, wo
 # jemand es liest (beim Start), mit einem Rat, der zur Plattform passt.
+#
+# `serial.tools.list_ports` KOMMT SEIT 2026-09-15 MIT (Nutzer: „tally pi muss
+# auch auf windows und mac laufen und dort als gpio interface einen numato
+# gpio usb benutzen koennen"). Es ist pyserials eigene Aufzaehlung und kennt
+# alle drei Systeme — ohne sie war die Geraetesuche hier Linux-only.
 try:
     import serial
+    from serial.tools import list_ports
     SERIAL_VERFUEGBAR = True
     SERIAL_GRUND = ""
-except ImportError as _e:
+except ImportError as _e:  # pragma: no cover — haengt an der Installation
     serial = None
+    list_ports = None
     SERIAL_VERFUEGBAR = False
     SERIAL_GRUND = f"pyserial nicht verfuegbar: {_e}"
 
@@ -49,7 +101,11 @@ STATE_FILE = paths.NUMATO_STATE
 COMPANION = "http://localhost:8000"
 POLL_INTERVAL = 0.05  # 50 ms
 ADC_POLL_EVERY = 4    # every Nth digital poll (so ADC runs ~5 Hz at 50ms loop / 4)
+#: Der udev-Symlink dieses Repos (`99-numato.rules`). Nur auf Linux, und
+#: dort die verlaessliche Zuordnung — deshalb wird er zuerst versucht.
 PREFERRED_DEVICES = ["/dev/numato0", "/dev/numato1"]
+#: Numato Lab. Sortiert die Reihenfolge, schliesst nichts aus — siehe Kopf.
+NUMATO_VID = 0x2A19
 BAUD = 19200
 
 
@@ -82,15 +138,51 @@ def bindings_mtime():
         return 0.0
 
 
-def find_device():
-    """Return path to the first plausible Numato device, or None."""
+def kandidaten():
+    """Alle Ports, die ein Numato sein KOENNTEN — beste Vermutung zuerst.
+
+    Die Reihenfolge ist die ganze Klugheit dieser Funktion, denn geprobt wird
+    ohnehin jeder Eintrag:
+
+      1. der udev-Symlink (Linux, eingerichteter Pi) — eindeutig,
+      2. Ports mit der Hersteller-Kennung von Numato Lab,
+      3. alles Uebrige, was `list_ports` aufzaehlt.
+
+    Punkt 3 ist kein Fuellmaterial: `list_ports` meldet auf manchen Systemen
+    keine VID (etwa hinter einem USB-Hub mit eigenem Treiber), und ein Modul,
+    das auf `ver` antwortet, ist ein Modul. Was hier NICHT passiert, ist
+    Raten nach Namensmuster — `probe_numato` entscheidet.
+    """
+    reihe = []
     for p in PREFERRED_DEVICES:
         if os.path.exists(p):
+            reihe.append(p)
+
+    passend, uebrig = [], []
+    try:
+        for port in list_ports.comports():  # noqa: F821 — in `main` geprueft
+            if port.device in reihe:
+                continue
+            (passend if port.vid == NUMATO_VID else uebrig).append(port.device)
+    except Exception as e:  # pragma: no cover — systemabhaengig
+        log(f"port enumeration failed: {e}")
+
+    return reihe + sorted(passend) + sorted(uebrig)
+
+
+def find_device():
+    """Return path to the first plausible Numato device, or None.
+
+    Der Symlink wird nicht geprobt: er existiert nur, wenn die udev-Regel
+    dieses Repos ihn angelegt hat, und die trifft auf die Kennung. Alles
+    andere wird geprobt — auch unter Windows, wo `COM7` genauso gut ein
+    Bluetooth-Adapter sein kann.
+    """
+    for p in kandidaten():
+        if p in PREFERRED_DEVICES:
             return p
-    candidates = sorted(glob.glob("/dev/ttyACM*"))
-    for c in candidates:
-        if probe_numato(c):
-            return c
+        if probe_numato(p):
+            return p
     return None
 
 
@@ -241,18 +333,13 @@ def main():
         write_state({"connected": False, "device": None,
                      "error": SERIAL_GRUND, "ts": time.time()})
         return 1
-    if not sys.platform.startswith("linux"):
-        # Die Geraetesuche kennt `/dev/numato0` und `/dev/ttyACM*`. Unter
-        # Windows heissen serielle Anschluesse `COM3`, auf dem Mac
-        # `/dev/cu.usbmodem*`. Das ist nachruestbar, aber nicht ohne die
-        # Platine zu pruefen — und etwas zu suchen, wo man nicht suchen kann,
-        # waere eine leere Anzeige ohne Grund. Also steht der Grund da.
-        log(f"numato-watcher: die Geraetesuche gibt es bisher nur auf Linux "
-            f"({sys.platform} nennt serielle Anschluesse anders). Die "
-            f"Numato-Platine haengt am Pi; dort laeuft dieser Dienst.")
-        write_state({"connected": False, "device": None,
-                     "error": f"Geraetesuche auf {sys.platform} nicht "
-                              f"unterstuetzt", "ts": time.time()})
+    # HIER STAND EIN RIEGEL FUER ALLES AUSSER LINUX, und er war ehrlich: „die
+    # Geraetesuche gibt es bisher nur auf Linux … das ist nachruestbar".
+    # Nachgeruestet am 2026-09-15 — `kandidaten()` zaehlt jetzt ueber
+    # `serial.tools.list_ports` auf, und das kennt `COM3` wie
+    # `/dev/cu.usbmodem*` wie `/dev/ttyACM*`. Der Riegel ist damit kein
+    # Schutz mehr, sondern haette genau das verhindert, wofuer er
+    # angekuendigt war.
         return 1
     log("numato-watcher starting (hot-plug enabled)")
     while True:
@@ -276,4 +363,7 @@ def main():
 
 
 if __name__ == "__main__":
+    # Der Rueckgabewert von `main` ist der Exit-Code: fehlt pyserial, endet
+    # das Programm mit 1 und `run-local.py` meldet es. Ein `main()` ohne
+    # `sys.exit` haette den Abbruch verschluckt und 0 zurueckgegeben.
     sys.exit(main() or 0)
