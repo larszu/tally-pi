@@ -348,7 +348,15 @@ def main() -> int:
     ap.add_argument("--atem", default="",
                     help="IP eines echten ATEM im Netz")
     ap.add_argument("--no-gpio", action="store_true",
-                    help="den GPIO-Watcher gar nicht erst starten")
+                    help="beide GPIO-Watcher (Pi-Stecker UND Numato-USB) "
+                         "gar nicht erst starten")
+    # `--numato` ist ein No-op: der Numato-Watcher startet ohnehin automatisch
+    # (ausser bei --no-gpio). Der Schalter bleibt anerkannt, damit ein Aufruf
+    # oder ein Doppelklick-Starter, der ihn durchreicht, nicht mit „unbekanntes
+    # Argument" abbricht — und damit vertraute Aufrufe weiter funktionieren.
+    ap.add_argument("--numato", action="store_true",
+                    help="der Numato-USB-Watcher (startet ohnehin automatisch; "
+                         "dieser Schalter schadet nicht)")
     ap.add_argument("--open", action="store_true", dest="oeffnen",
                     help="die Oberflaeche im Standardbrowser aufmachen")
     a = ap.parse_args()
@@ -467,6 +475,13 @@ def main() -> int:
         print(f"    im selben Netz:  http://{lan}:{a.port}/")
     print(f"    Konfiguration:   {conf}")
     print(f"    Zustand:         {state}")
+    if not a.no_gpio and not sys.platform.startswith("linux"):
+        # Auf Mac/Windows gibt es kein /dev/gpiochip0 — echte Ein-/Ausgaenge
+        # kommen dort NUR ueber ein Numato-USB-Modul. Wer das nicht weiss,
+        # sucht den Fehler bei sich. Der Watcher laeuft schon; ist kein Modul
+        # angesteckt, steht der Grund in `numato.json` und auf der Oberflaeche.
+        print("    GPIO:            kein /dev/gpiochip0 — echte Ein-/Ausgaenge "
+              "brauchen ein Numato-USB-Modul (Zustand unter /numato)")
     if a.host == "0.0.0.0" and (MAC or WINDOWS):
         # Beide Systeme fragen beim ersten Binden nach. Wer die Frage
         # wegklickt, hat danach eine Seite, die nur auf diesem Rechner

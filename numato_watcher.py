@@ -427,17 +427,14 @@ def run():
         return (letzter_stand["bits"] >> channel) & 1
 
     while True:
-        namen = numato_io.finde_geraete()
+        device = numato_io.finde_geraet()
         board = None
-        device = None
-        for name in namen:
-            if numato_io.probe(name):
-                try:
-                    board = numato_io.oeffne(name)
-                    device = name
-                    break
-                except Exception as e:
-                    log(f"numato open {name} failed: {e}")
+        if device is not None:
+            try:
+                board = numato_io.oeffne(device)
+            except Exception as e:
+                log(f"numato open {device} failed: {e}")
+                board = None
         if board is None:
             _write_disconnected("kein Numato-Board gefunden")
             time.sleep(2)

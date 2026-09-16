@@ -43,6 +43,7 @@ unerreichbar. `PYSERIAL_GRUND` traegt den Grund; `finde_geraete`/`oeffne`
 melden ihn dann statt still nichts zu finden.
 """
 import glob
+import os
 import re
 import sys
 import time
@@ -100,11 +101,19 @@ def finde_geraete():
             namen.append(n)
 
     for p in BEVORZUGTE_PFADE:
-        if Path(p).exists():
+        # `os.path.exists` (nicht `Path.exists`), damit ein Test die Existenz
+        # eines Symlinks je Pfad vortaeuschen kann (siehe
+        # tests/test_numato_geraetesuche.py).
+        if os.path.exists(p):
             dazu(p)
 
     if list_ports is not None:
-        anschluesse = list(list_ports.comports())
+        # `comports()` wirft auf manchen Systemen. Das ist kein Grund
+        # aufzuhoeren — der udev-Symlink oben kann trotzdem da sein.
+        try:
+            anschluesse = list(list_ports.comports())
+        except Exception:
+            anschluesse = []
         for info in anschluesse:
             if getattr(info, "vid", None) == NUMATO_VID:
                 dazu(info.device)
@@ -205,6 +214,22 @@ def probe(name: str, warten: float = 0.15) -> bool:
             return len(s.read(128)) > 0
     except Exception:
         return False
+
+
+def finde_geraet():
+    """Der erste brauchbare Numato-Anschluss — oder None.
+
+    Der udev-Symlink (`/dev/numato0`) wird auf einem eingerichteten Pi als
+    verlaessliche Zuordnung OHNE Probe genommen; jeder andere Anschluss wird
+    mit `ver\\r` geprobt, statt aufs Geratewohl geoeffnet zu werden — an einem
+    fremden seriellen Port haengt vielleicht kein Numato.
+    """
+    for name in finde_geraete():
+        if name in BEVORZUGTE_PFADE and os.path.exists(name):
+            return name
+        if probe(name):
+            return name
+    return None
 
 
 def oeffne(name: str):
