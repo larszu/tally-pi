@@ -25,3 +25,10 @@ _site/
 # Der lokale Start legt Konfiguration und Zustand hier ab (run-local.py).
 # Das ist Laufzeit eines einzelnen Rechners und gehoert nicht ins Repo.
 .local-run/
+
+# PyInstaller: die fertigen Programme baut die Release-Action (scripts/
+# build-local.py, tally-pi-local.spec). Sie entstehen in CI neu und gehoeren
+# nicht ins Repo.
+build/
+dist/
+release/

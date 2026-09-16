@@ -79,6 +79,41 @@ ROOT = Path(__file__).resolve().parent
 WINDOWS = sys.platform.startswith("win")
 MAC = sys.platform == "darwin"
 
+# Das fertige, mit PyInstaller gebaute Programm laeuft OHNE installiertes
+# Python. Damit aendert sich genau eine Sache am Ablauf: wie die drei Dienste
+# gestartet werden. `python run-local.py guide_server.py` gibt es dort nicht
+# mehr — `sys.executable` ist dann nicht mehr der Interpreter, sondern dieses
+# Programm selbst, und `guide_server.py` liegt als eingebautes Modul im Bundle,
+# nicht als Datei daneben. Der Dienststart geht deshalb ueber `--_dienst`
+# (siehe `dienst_aus_bundle_starten` und `starte`). Alles andere — Pfade aus
+# `paths.py`, der Befehlskanal, das Beenden — bleibt Wort fuer Wort gleich.
+FROZEN = getattr(sys, "frozen", False)
+
+
+def dienst_aus_bundle_starten() -> None:
+    """Im gebauten Programm einen der drei Dienste ausfuehren — sonst nichts.
+
+    Das gebaute Programm ist EIN Startpunkt (`run-local.py`), aber es muss vier
+    verschiedene Programme sein koennen: die Oberflaeche und ihre drei Dienste.
+    Ein Kindprozess wird deshalb als `<programm> --_dienst guide_server`
+    gestartet; diese Funktion faengt genau diesen Aufruf ganz am Anfang ab und
+    fuehrt das genannte Modul so aus, als waere es direkt gestartet worden —
+    sein `if __name__ == "__main__"`-Block laeuft, kein zweiter Codepfad.
+
+    Ohne `--_dienst` kehrt sie sofort zurueck und `run-local.py` laeuft normal
+    weiter. Sie schadet also auch dem gewoehnlichen Start aus dem Quellbaum
+    nicht; gebraucht wird sie nur im Bundle.
+    """
+    if len(sys.argv) >= 3 and sys.argv[1] == "--_dienst":
+        import runpy
+        name = sys.argv[2]
+        # argv so hinbiegen, als waere das Modul direkt aufgerufen worden: die
+        # Dienste lesen zwar keine eigenen Argumente, aber `sys.argv[0]` taucht
+        # in Fehlermeldungen auf, und ein `--_dienst` davor waere irrefuehrend.
+        sys.argv = [name + ".py", *sys.argv[3:]]
+        runpy.run_module(name, run_name="__main__")
+        raise SystemExit(0)
+
 #: Aelter geht nicht: die Programme hier benutzen `list[...]`-Annotationen
 #: und `gpiod` 2.x. 3.9 ist das, was auf einem macOS ohne Zusatzinstallation
 #: liegt, und deutlich aelter als jedes aktuelle Windows-Python.
@@ -383,8 +418,15 @@ def main() -> int:
     kind_flags = subprocess.CREATE_NEW_PROCESS_GROUP if WINDOWS else 0
 
     def starte(datei: str, *args: str) -> subprocess.Popen:
-        p = subprocess.Popen([sys.executable, str(ROOT / datei), *args],
-                             env=umgebung, cwd=str(ROOT),
+        if FROZEN:
+            # Kein `python guide_server.py`: die Datei liegt als Modul im
+            # Bundle, `sys.executable` ist dieses Programm selbst. Der Dienst
+            # kommt ueber `--_dienst` hoch (siehe `dienst_aus_bundle_starten`).
+            modul = datei[:-3] if datei.endswith(".py") else datei
+            befehl = [sys.executable, "--_dienst", modul, *args]
+        else:
+            befehl = [sys.executable, str(ROOT / datei), *args]
+        p = subprocess.Popen(befehl, env=umgebung, cwd=str(ROOT),
                              creationflags=kind_flags)
         prozesse.append(p)
         in_job_haengen(job, p.pid)
@@ -476,4 +518,8 @@ def main() -> int:
 
 
 if __name__ == "__main__":
+    # Zuerst pruefen, ob dieser Aufruf ein Dienst aus dem Bundle sein soll —
+    # dann fuehrt die Funktion ihn aus und kehrt nie zurueck. Sonst der
+    # normale Start der Oberflaeche.
+    dienst_aus_bundle_starten()
     sys.exit(main())

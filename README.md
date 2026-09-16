@@ -110,6 +110,21 @@ you and keeps the window open if something goes wrong.
 That is the whole prerequisite list: Python 3.9 or newer. No Pi, no ATEM,
 no GPIO header, no `sudo`, no admin rights.
 
+### Don't want to install Python? Download a ready-made build
+
+Every `v*` tag builds a standalone program for **macOS** and **Windows** and
+attaches it to the [Releases](../../releases) page — no Python needed. Unzip
+`tally-pi-local-<system>-<version>.zip` and run `tally-pi-local` inside; it
+opens the same interface as above. It bundles the same `guide_server.py`,
+`atem_watcher.py` and `gpio_watcher.py` — it is PyInstaller packaging the
+source you see here, not a different program (recipe: `tally-pi-local.spec`,
+build script: `scripts/build-local.py`, workflow: `.github/workflows/release.yml`).
+
+On macOS the binary is only ad-hoc-signed (there is no paid Apple certificate),
+so the first launch needs a **right-click → Open** to get past Gatekeeper.
+GPIO inputs, tally outputs and the OLED still need the Pi; the interface says
+so at every affected spot, exactly as it does when started from source.
+
 It starts **the same programs the Pi runs** — `guide_server.py`,
 `atem_watcher.py`, `gpio_watcher.py` — pointed at a directory under
 `.local-run/` instead of `/opt/pi-guide` and `/run/pi-guide`. There is no
