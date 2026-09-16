@@ -46,8 +46,11 @@ jobs:
           # diesen Interpreter mit ins Bundle — der Nutzer braucht keinen.
           python-version: '3.11'
 
-      - name: PyInstaller installieren
-        run: python -m pip install --upgrade pyinstaller
+      - name: PyInstaller und pyserial installieren
+        # pyserial muss beim Bauen da sein, damit PyInstaller es mit ins
+        # Bundle nimmt — ohne pyserial faende das fertige Programm kein
+        # Numato-USB-Board (die einzige GPIO-Quelle auf Mac/Windows).
+        run: python -m pip install --upgrade pyinstaller pyserial
 
       - name: Version aus dem Tag ableiten
         # Der Dateiname traegt die Version. Bei einem Tag-Push kommt sie aus

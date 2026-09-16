@@ -136,6 +136,12 @@ ATEM_CMD_SOCK = STATE_DIR / "atem-cmd.sock"
 #: liegt auf einem Loopback-Port und dessen Nummer steht in dieser Datei.
 #: Siehe `cmd_channel.py`.
 ATEM_CMD_PORT = STATE_DIR / "atem-cmd.port"
+#: Befehlskanal zum Numato-Watcher (Tally-Lampen setzen). Wie beim ATEM-Kanal:
+#: Unix-Socket auf POSIX, Loopback-Port unter Windows (Nummer in der .port).
+#: Siehe `cmd_channel.py`. Nur belegt, wenn die GPIO-Ausgaenge ueber ein
+#: Numato-USB-Board laufen (Mac/Windows, oder ein Pi ohne Header).
+NUMATO_CMD_SOCK = STATE_DIR / "numato-cmd.sock"
+NUMATO_CMD_PORT = STATE_DIR / "numato-cmd.port"
 NUMATO_STATE = STATE_DIR / "numato.json"
 INPUT_STATE = STATE_DIR / "input-state.json"
 CUE_FILE = STATE_DIR / "cue.json"

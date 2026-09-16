@@ -48,6 +48,21 @@ versteckte_importe = [
     "pi_status",
     "paths",
     "cmd_channel",
+    "tally_actions",
+    "numato_io",
+    # pyserial: der Draht zum Numato-USB-Board. `serial.tools.list_ports`
+    # laedt zur Laufzeit den plattform-eigenen Zweig nach (`_windows`, `_osx`,
+    # `_posix`/`_linux`) — PyInstaller sieht diesen dynamischen Import nicht,
+    # also stehen alle hier. Der jeweils fremde ist im Bundle totes Gewicht
+    # von wenigen KB; ohne den passenden faende das gebaute Programm auf genau
+    # der Plattform kein Board, fuer die es gebaut wurde.
+    "serial",
+    "serial.tools",
+    "serial.tools.list_ports",
+    "serial.tools.list_ports_windows",
+    "serial.tools.list_ports_osx",
+    "serial.tools.list_ports_posix",
+    "serial.tools.list_ports_linux",
 ]
 
 # Die Dateien, die `guide_server` zur Laufzeit ausliefert. Ziel ".", weil es

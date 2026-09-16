@@ -1017,7 +1017,181 @@ class TallyOutputs:
             }
 
 
-TALLY_OUTPUTS = TallyOutputs()
+class NumatoTallyOutputs:
+    """Tally-Ausgaenge ueber ein Numato-USB-Board — dieselbe Schnittstelle wie
+    `TallyOutputs`, aber der Draht ist ein anderer.
+
+    Wo `TallyOutputs` selbst eine libgpiod-Leitung haelt, HAT dieser Backend
+    kein Board: der `numato_watcher` besitzt es (ein serieller Anschluss
+    gehoert einem Prozess). Hier werden die Lampen-Anliegen nur ueber den
+    Numato-Befehlskanal dorthin geschickt — genau wie ATEM-Befehle zum
+    ATEM-Watcher gehen.
+
+    Konventionen wie beim Pi-Backend, damit Auto-Treiber und Diagnose
+    unveraendert bleiben:
+      * `set(bcm, on)` mit on=True heisst „Pin auf LOW ziehen" (Relais an bei
+        active-low). Am Numato ist LOW = `gpio clear`, HIGH = `gpio set` —
+        das Anliegen wird beim Senden entsprechend gedreht.
+      * `_values[bcm]` speichert dasselbe wie beim Pi (True = LOW getrieben),
+        `_bcms`/`_latched`/`_error` heissen gleich (die Diagnose liest sie).
+    """
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._bcms = []
+        self._values = {}        # bcm -> bool (True = LOW getrieben)
+        self._sent = {}          # bcm -> zuletzt WIRKLICH gesendeter LOW-Wunsch
+        self._pulse_timers = {}
+        self._latched = set()
+        self._error = None
+        self._session = None     # Sitzung des Watchers; wechselt bei Neustart
+
+    def configure(self, bcms):
+        chans = sorted({int(b) for b in bcms if isinstance(b, int) and 0 <= b <= 31})
+        with self._lock:
+            for t in self._pulse_timers.values():
+                try: t.cancel()
+                except Exception: pass
+            self._pulse_timers.clear()
+            self._latched.clear()
+            self._bcms = list(chans)
+            self._values = {b: False for b in chans}
+            self._sent = {}
+            self._error = None
+
+    def _aktuelle_session(self):
+        d = get_numato_state()
+        return d.get("session") if isinstance(d, dict) else None
+
+    def _sende(self, bcm, low_gewuenscht):
+        """An den Watcher schicken — LOW-Wunsch in `gpio set/clear` uebersetzt.
+
+        Am Numato ist `on=True` = `gpio set` = HIGH. „Pin auf LOW" ist also
+        `on=False`. Nur bei echter Aenderung (oder nach Watcher-Neustart)
+        wird gesendet, damit der 250-ms-Auto-Treiber nicht bei jedem Takt
+        einen Socket aufmacht.
+        """
+        sess = self._aktuelle_session()
+        if sess != self._session:
+            # Watcher neu gestartet -> unser „schon gesendet" gilt nicht mehr.
+            self._session = sess
+            self._sent = {}
+        if self._sent.get(bcm) == bool(low_gewuenscht):
+            return True, "unveraendert"
+        try:
+            antwort = cmd_channel.NUMATO.sende(
+                {"cmd": "set", "channel": int(bcm), "on": (not low_gewuenscht)},
+                timeout=1.0)
+            self._sent[bcm] = bool(low_gewuenscht)
+            self._error = None
+            return True, antwort.get("message", "ok") if isinstance(antwort, dict) else "ok"
+        except Exception as e:
+            # Nicht als gesendet merken -> der naechste Takt versucht es erneut.
+            self._error = f"numato: {e}"
+            return False, str(e)
+
+    def set(self, bcm, on, respect_pulse=False, source=None):
+        with self._lock:
+            if bcm not in self._values:
+                return False, f"Kanal {bcm} nicht als Tally-Ausgang konfiguriert"
+            if respect_pulse and bcm in self._pulse_timers:
+                return True, "skipped (pulse active)"
+            if respect_pulse and bcm in self._latched:
+                return True, "skipped (latch active)"
+            self._values[bcm] = bool(on)
+            ok, msg = self._sende(bcm, on)
+            if not respect_pulse:
+                t = self._pulse_timers.pop(bcm, None)
+                if t:
+                    try: t.cancel()
+                    except Exception: pass
+            return ok, msg
+
+    def pulse(self, bcm, ms):
+        ok, msg = self.set(bcm, True)
+        if not ok:
+            return ok, msg
+        ms = max(1, min(60_000, int(ms)))
+
+        def _release():
+            with self._lock:
+                self._pulse_timers.pop(bcm, None)
+            self.set(bcm, False)
+
+        timer = threading.Timer(ms / 1000.0, _release)
+        timer.daemon = True
+        with self._lock:
+            old = self._pulse_timers.get(bcm)
+            if old:
+                try: old.cancel()
+                except Exception: pass
+            self._pulse_timers[bcm] = timer
+        timer.start()
+        return True, f"pulse {ms}ms"
+
+    def latch(self, bcm, on):
+        with self._lock:
+            if bcm not in self._values:
+                return False, f"Kanal {bcm} nicht als Tally-Ausgang konfiguriert"
+            self._values[bcm] = bool(on)
+            ok, msg = self._sende(bcm, on)
+            t = self._pulse_timers.pop(bcm, None)
+            if t:
+                try: t.cancel()
+                except Exception: pass
+            self._latched.add(bcm)
+        try:
+            log_event("latch", bcm=bcm, value=bool(on), action="latch")
+        except Exception:
+            pass
+        return ok, ("latched" if ok else msg)
+
+    def release(self, bcm):
+        with self._lock:
+            was = bcm in self._latched
+            self._latched.discard(bcm)
+        if was:
+            try:
+                log_event("latch", bcm=bcm, action="release")
+            except Exception:
+                pass
+        return True, "released"
+
+    def state(self):
+        with self._lock:
+            return {
+                "configured": list(self._bcms),
+                "values": {str(b): self._values.get(b, False) for b in self._bcms},
+                "latched": sorted(self._latched),
+                "error": self._error,
+                "backend": "numato",
+            }
+
+
+def _libgpiod_verfuegbar():
+    try:
+        import gpiod  # noqa: F401
+        return True
+    except Exception:
+        return False
+
+
+def make_tally_outputs():
+    """Den Ausgangs-Backend waehlen: Pi-Stecker (libgpiod) oder Numato-USB.
+
+    `TALLY_GPIO_BACKEND=pi|numato` erzwingt einen; ohne die Variable (oder
+    `auto`) faellt die Wahl auf libgpiod, wenn es da ist (der Pi), sonst auf
+    Numato (Mac/Windows haben keinen Header, aber einen USB-Anschluss).
+    """
+    wahl = os.environ.get("TALLY_GPIO_BACKEND", "auto").strip().lower()
+    if wahl == "pi":
+        return TallyOutputs()
+    if wahl == "numato":
+        return NumatoTallyOutputs()
+    return TallyOutputs() if _libgpiod_verfuegbar() else NumatoTallyOutputs()
+
+
+TALLY_OUTPUTS = make_tally_outputs()
 
 
 def reconfigure_tally_outputs():

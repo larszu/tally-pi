@@ -19,13 +19,16 @@ Das ist der Grund, warum die Pfade seit 2026-09-09 aus `paths.py` kommen:
 ein lokaler Start, der eine eigene Kopie der Logik braucht, prueft die
 Kopie und nicht das Programm.
 
-WAS FEHLT, FEHLT SICHTBAR. Ohne 40-poligen Stecker gibt es keine
-GPIO-Eingaenge, ohne I2C kein OLED, ohne Mischer im Netz keine ATEM-Daten.
+WAS FEHLT, FEHLT SICHTBAR. Ohne GPIO-Quelle gibt es keine Taster und keine
+Tally-Lampen, ohne I2C kein OLED, ohne Mischer im Netz keine ATEM-Daten.
 Nichts davon wird nachgebildet:
 
-  * `gpio_watcher` schreibt `gpio_available: false` samt Grund und laeuft
-    weiter. Ein Mock, der Tastendruecke erfindet, waere hier gefaehrlich —
-    an diesen Eingaengen haengt eine Kamera-Umschaltung.
+  * `gpio_watcher` (Pi-Stecker) schreibt `gpio_available: false` samt Grund
+    und laeuft weiter. Ein Mock, der Tastendruecke erfindet, waere hier
+    gefaehrlich — an diesen Eingaengen haengt eine Kamera-Umschaltung.
+  * `numato_watcher` (USB-Board) sucht ein Numato-GPIO-Board am USB-Anschluss
+    und meldet in `numato.json` ehrlich, ob eines da ist. IST eines da, sind
+    Taster UND Tally-Lampen echt — auch auf Mac und Windows (siehe unten).
   * `atem_watcher` laeuft normal und meldet „nicht verbunden", solange
     keine Gegenstelle antwortet. Mit `--atem <ip>` spricht er einen echten
     Mischer im Netz an; das ist der ehrliche Weg, die Anzeige zu pruefen.
@@ -35,17 +38,22 @@ Nichts davon wird nachgebildet:
 
 ─── WAS AN MAC UND WINDOWS ANDERS IST (und was nicht) ──────────────────────
 
-Nichts am Ablauf. Drei Dinge am Unterbau, alle in eigenen Dateien:
+Nichts am Ablauf. Der Unterbau unterscheidet sich an vier Stellen, alle in
+eigenen Dateien:
 
   * die Vorgabepfade    → `paths.py` (`/opt` und `/run` gibt es dort nicht)
   * der Befehlskanal    → `cmd_channel.py` (Windows kennt kein AF_UNIX)
+  * die GPIO-Quelle     → `numato_watcher.py` + `numato_io.py`: kein 40-poliger
+                          Stecker, aber ein Numato-USB-Board leistet dasselbe.
+                          Der Guide-Server schickt die Lampen-Befehle dorthin
+                          (`cmd_channel.NUMATO`), der Watcher besitzt das Board.
   * das Beenden         → weiter unten: unter Windows bekommen die
                           Kindprozesse Strg-C nicht vom Fenster, sondern
                           werden von hier beendet.
 
-Was NICHT geht, geht auf keiner der drei Plattformen: GPIO-Eingaenge,
-Tally-Ausgaenge und das OLED brauchen den Pi. Das sagt die Oberflaeche
-selbst, an jeder betroffenen Stelle.
+Was einen Numato-Adapter braucht, sagt die Oberflaeche selbst: ohne Board
+steht in `numato.json` der Grund, und die betroffenen Stellen zeigen ihn an.
+Das OLED bleibt Pi-Sache (I2C).
 
 AUFRUF
 
@@ -441,6 +449,13 @@ def main() -> int:
         starte("atem_watcher.py")
     if not a.no_gpio:
         starte("gpio_watcher.py")
+        # Der Numato-Watcher gibt die GPIO-Funktionen ueber ein USB-Board —
+        # auf Mac und Windows der einzige Weg zu echten Ein- und Ausgaengen,
+        # auf dem Pi eine Ergaenzung zum Stecker. Ohne Board taeuscht er nichts
+        # vor und stirbt nicht (er meldet „nicht verbunden"), also stoert er
+        # den Start auf einem Rechner ohne Board nicht. `--no-gpio` laesst ihn
+        # samt Pi-Watcher weg (kein GPIO gewuenscht).
+        starte("numato_watcher.py")
     starte("guide_server.py")
 
     lan = lan_adresse()

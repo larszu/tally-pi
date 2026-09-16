@@ -19,6 +19,8 @@ install -m 644 setup-guide.html    /opt/pi-guide/
 # wird das in `tests/test_lokaler_start.py`.
 install -m 644 paths.py            /opt/pi-guide/
 install -m 644 cmd_channel.py      /opt/pi-guide/
+install -m 644 tally_actions.py    /opt/pi-guide/
+install -m 644 numato_io.py        /opt/pi-guide/
 install -m 755 guide_server.py     /opt/pi-guide/
 install -m 755 gpio_watcher.py     /opt/pi-guide/
 install -m 755 numato_watcher.py   /opt/pi-guide/

@@ -283,7 +283,8 @@ class JedesProgrammLaedtAufDieserPlattform(unittest.TestCase):
     """Importierbar heisst nicht lauffaehig — aber nicht importierbar heisst tot."""
 
     def test_import(self):
-        for name in ("paths", "cmd_channel", "guide_server", "atem_watcher",
+        for name in ("paths", "cmd_channel", "tally_actions", "numato_io",
+                     "guide_server", "atem_watcher",
                      "gpio_watcher", "numato_watcher", "pi_status"):
             with self.subTest(modul=name):
                 raus = subprocess.run(

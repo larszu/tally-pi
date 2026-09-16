@@ -12,7 +12,6 @@ import json
 import os
 import sys
 import time
-import urllib.parse
 import urllib.request
 from datetime import timedelta
 from pathlib import Path
@@ -54,6 +53,7 @@ except Exception as _e:  # ImportError, und auf Fremdsystemen auch OSError
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import paths  # noqa: E402
 import cmd_channel  # noqa: E402
+import tally_actions  # noqa: E402
 
 # Die Pfade kommen aus `paths.py` — eine Stelle statt neunzehn. Ohne
 # gesetzte Umgebungsvariablen sind es genau die alten, siehe dort.
@@ -95,58 +95,12 @@ def _load_json(path):
 
 
 def _device_to_binding(d):
-    """Translate a tally-device with `in_gpio` into a binding-record."""
-    bcm = d.get("in_gpio")
-    if not isinstance(bcm, int):
-        return None
-    action_type = d.get("in_action_type", "none")
-    if action_type == "none":
-        return None
-    if action_type in ("atem_aux", "atem_pgm", "atem_pvw"):
-        src = d.get("in_atem_source")
-        if not isinstance(src, int):
-            src = d.get("input")  # fall back to device's own ATEM input
-        rel = d.get("in_atem_source_release")
-        rel = rel if isinstance(rel, int) else None
-        action = {"kind": action_type,
-                  "source": src,
-                  "source_release": rel,
-                  "me": int(d.get("me") or 1)}
-        if action_type == "atem_aux":
-            action["aux"] = d.get("in_atem_aux")
-    elif action_type == "companion":
-        mode = d.get("in_companion_mode", "tap")
-        kind = "down_up" if mode == "hold" else "press"
-        action = {"kind": kind,
-                  "page":   d.get("in_companion_page", 1),
-                  "row":    d.get("in_companion_row", 0),
-                  "column": d.get("in_companion_col", 0)}
-    else:
-        return None
-    # Modes that need both edges (so we can fire press AND release):
-    #   - companion down_up
-    #   - atem_aux/pgm/pvw with a release-source defined
-    #   - any binding with hold_release_ms > 0 (burst tracker needs every edge)
-    edge = d.get("in_edge", "falling")
-    kind = action.get("kind")
-    is_atem = kind in ("atem_aux", "atem_pgm", "atem_pvw")
-    hold_ms = int(d.get("in_hold_release_ms") or 0)
-    needs_both = (kind == "down_up"
-                  or (is_atem and action.get("source_release") is not None)
-                  or hold_ms > 0)
-    if needs_both:
-        edge = "both"
-    return {
-        "bcm": bcm,
-        "trigger_edge": edge,
-        "enabled": True,
-        "bias": d.get("in_bias", "pull-up"),
-        "debounce_ms": int(d.get("in_debounce_ms", 20)),
-        "hold_release_ms": hold_ms,
-        "burst_min_edges": max(1, int(d.get("in_burst_min_edges") or 1)),
-        "action": action,
-        "_label": d.get("name") or d.get("id") or f"in_gpio_{bcm}",
-    }
+    """Translate a tally-device with `in_gpio` into a binding-record.
+
+    Die Uebersetzung liegt in `tally_actions` — Wort fuer Wort dieselbe wie
+    beim Numato-Watcher, nur der Schluessel der Leitung heisst hier `bcm`.
+    """
+    return tally_actions.device_to_binding(d, source="pi")
 
 
 def load_bindings():
@@ -209,88 +163,21 @@ def atem_cmd(cmd: dict) -> None:
 
 
 def run_action(binding, event_type, _edge_count=None):
-    trig = binding.get("trigger_edge", "falling")
-    bcm = binding.get("bcm")
-    label = binding.get("_label") or f"GPIO{bcm}"
+    """Eine Flanke am Pi-Stecker ausfuehren.
 
-    # Local helper: every input-event log gets the same baseline fields,
-    # plus edge_count when the burst tracker reports it.
-    def _ilog(**extra):
-        rec = {"bcm": bcm, "edge": event_type, "label": label}
-        if _edge_count is not None:
-            rec["edge_count"] = _edge_count
-        rec.update(extra)
-        log_event("input", **rec)
-
-    if trig != "both" and trig != event_type:
-        # Edge fired but the binding doesn't act on it — log so the user
-        # can see the pin actually triggered.
-        _ilog(action="ignored", reason=f"trigger={trig}")
-        return
-    a = binding.get("action") or {}
-    kind = a.get("kind")
-    try:
-        if kind == "press":
-            url = f"{COMPANION}/api/location/{a['page']}/{a['row']}/{a['column']}/press"
-            http_post(url)
-            log(f"{label} {event_type} -> press {a['page']}/{a['row']}/{a['column']}")
-            _ilog(action="companion_press",
-                  page=a['page'], row=a['row'], column=a['column'], ok=True)
-        elif kind == "down_up":
-            sub = "down" if event_type == "falling" else "up"
-            url = f"{COMPANION}/api/location/{a['page']}/{a['row']}/{a['column']}/{sub}"
-            http_post(url)
-            log(f"{label} {event_type} -> {sub} {a['page']}/{a['row']}/{a['column']}")
-            _ilog(action="companion_" + sub,
-                  page=a['page'], row=a['row'], column=a['column'], ok=True)
-        elif kind == "variable":
-            name = urllib.parse.quote(a["variable"])
-            val = str(a.get("value", "1"))
-            url = f"{COMPANION}/api/custom-variable/{name}/value"
-            http_post(url, val.encode())
-            log(f"{label} {event_type} -> variable {a['variable']}={val}")
-            _ilog(action="companion_variable",
-                  variable=a['variable'], value=val, ok=True)
-        elif kind in ("atem_aux", "atem_pgm", "atem_pvw"):
-            src_press   = a.get("source")
-            src_release = a.get("source_release")
-            configured = binding.get("trigger_edge", "falling")
-            if configured == "rising":
-                is_press = (event_type == "rising")
-            else:
-                is_press = (event_type == "falling")
-            target = src_press if is_press else src_release
-            phase = "press" if is_press else "release"
-            if target is None:
-                if not is_press:
-                    return
-                target = src_press
-            if not isinstance(target, int):
-                log(f"{label}: {kind} missing source ({a})")
-                _ilog(action=kind, phase=phase, ok=False, error="missing source")
-                return
-            if kind == "atem_aux":
-                aux = int(a.get("aux") or 0)
-                if not aux:
-                    _ilog(action=kind, phase=phase, ok=False,
-                          error="missing aux number")
-                    return
-                atem_cmd({"cmd": "set_aux", "aux": aux, "source": target})
-                log(f"{label} {event_type}({phase}) -> ATEM Aux{aux} <- src {target}")
-                _ilog(action=kind, phase=phase, aux=aux, source=target, ok=True)
-            else:
-                me = int(a.get("me") or 1)
-                sub = "set_program" if kind == "atem_pgm" else "set_preview"
-                atem_cmd({"cmd": sub, "me": me, "source": target})
-                bus = "PGM" if kind == "atem_pgm" else "PVW"
-                log(f"{label} {event_type}({phase}) -> ATEM {bus} ME{me} <- src {target}")
-                _ilog(action=kind, phase=phase, me=me, source=target, ok=True)
-        else:
-            log(f"{label}: unknown action kind {kind!r}")
-            _ilog(action="unknown", kind=str(kind), ok=False)
-    except Exception as e:
-        log(f"action error on {label}: {e}")
-        _ilog(action=str(kind), ok=False, error=str(e))
+    Die Rechnung selbst liegt in `tally_actions.run_action` — dieselbe, die
+    der Numato-Watcher benutzt. Hier werden nur die Helfer dieses Prozesses
+    eingeschoben: sein `log`/`log_event`, der ATEM-Befehlskanal und der
+    HTTP-POST an Companion. `bcm` haengt an jeder Log-Zeile, damit das Log
+    sagt, welche Leitung ausloeste.
+    """
+    tally_actions.run_action(
+        binding, event_type,
+        log=log, log_event=log_event,
+        atem_cmd=atem_cmd, http_post=http_post, companion=COMPANION,
+        edge_count=_edge_count,
+        log_fields={"bcm": binding.get("bcm")},
+    )
 
 
 def bias_of(s):
