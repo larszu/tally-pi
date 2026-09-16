@@ -94,6 +94,26 @@
     return s === undefined ? "unknown" : s;
   }
 
+  // Eine Lage anhand ihrer id finden — egal ob eine der drei benannten oder
+  // eine aus dem schaltbaren Zustandsraum (`daten.auswahl.lagen`). So findet
+  // auch ein anderer Tab die Lage wieder, die hier gewaehlt wurde.
+  function lageMitId(id) {
+    var benannt = (daten && daten.lagen) || [];
+    for (var i = 0; i < benannt.length; i++) if (benannt[i].id === id) return benannt[i];
+    var s = daten && daten.auswahl && daten.auswahl.lagen;
+    if (s) for (var k in s) if (s.hasOwnProperty(k) && s[k].id === id) return s[k];
+    return null;
+  }
+
+  function lageSetzen(l, quelle) {
+    if (!l || l === lage) return;
+    lage = l;
+    konfig = JSON.parse(JSON.stringify(l.antworten["/tally-config"]));
+    notiere("atem", { action: quelle, lage: l.id,
+                      connected: !!l.antworten["/atem"].connected });
+    melde();
+  }
+
   function geraetMit(id) {
     var liste = (konfig && konfig.devices) || [];
     for (var i = 0; i < liste.length; i++) if (liste[i].id === id) return liste[i];
@@ -303,13 +323,7 @@
       var n = ev.data || {};
       if (n.art === "cue") { cue = n.cue; return; }
       if (n.art === "lage") {
-        var gewaehlt = daten && daten.lagen.filter(function (l) { return l.id === n.lage; })[0];
-        if (!gewaehlt || gewaehlt === lage) return;
-        lage = gewaehlt;
-        konfig = JSON.parse(JSON.stringify(gewaehlt.antworten["/tally-config"]));
-        notiere("atem", { action: "lage (aus einem anderen Tab)", lage: lage.id,
-                          connected: !!lage.antworten["/atem"].connected });
-        melde();
+        lageSetzen(lageMitId(n.lage), "lage (aus einem anderen Tab)");
       }
     };
   }
@@ -365,16 +379,60 @@
     daten.lagen.forEach(function (l) {
       var b = document.createElement("button");
       b.type = "button"; b.className = "demo-knopf"; b.textContent = l.titel;
-      b.addEventListener("click", function () {
-        lage = l;
-        konfig = JSON.parse(JSON.stringify(l.antworten["/tally-config"]));
-        notiere("atem", { action: "lage", lage: l.id,
-                          connected: !!l.antworten["/atem"].connected });
-        lageSenden();
-        melde();
-      });
+      b.addEventListener("click", function () { lageSetzen(l, "lage"); lageSenden(); });
       lagenEl.appendChild(b);
     });
+
+    // ── Selbst schalten: die echte Funktion ──────────────────────────────────
+    // PGM/PVW/AUX frei waehlen, die Oberflaeche reagiert wie am echten Mischer.
+    // Jede Auswahl ist eine vorberechnete Lage aus `daten.auswahl.lagen`
+    // (guide_server hat sie gerechnet) — hier wird nur herausgesucht.
+    var pgmSel = null, pvwSel = null, auxSel = null;
+    if (daten.auswahl && daten.auswahl.lagen) {
+      var aus = daten.auswahl;
+      var schalter = document.createElement("div");
+      schalter.className = "demo-zeile demo-schalter";
+      schalter.appendChild(beschriftung("Selbst schalten:"));
+      var nameVon = function (n) {
+        n = String(n);
+        if (n === "0") return "aus";
+        return (aus.eingaenge && aus.eingaenge[n]) || ("Eingang " + n);
+      };
+      var feld = function (titel, werte) {
+        var wrap = document.createElement("label");
+        wrap.className = "demo-feld";
+        wrap.appendChild(document.createTextNode(titel + " "));
+        var sel = document.createElement("select");
+        sel.className = "demo-auswahl";
+        werte.forEach(function (n) {
+          var o = document.createElement("option");
+          o.value = String(n); o.textContent = nameVon(n);
+          sel.appendChild(o);
+        });
+        wrap.appendChild(sel);
+        schalter.appendChild(wrap);
+        return sel;
+      };
+      pgmSel = feld("PGM", aus.pgm);
+      pvwSel = feld("PVW", aus.pvw);
+      auxSel = feld("AUX 1", aus.aux1);
+      var schalten = function () {
+        var l = aus.lagen[pgmSel.value + "|" + pvwSel.value + "|" + auxSel.value];
+        if (l) { lageSetzen(l, "geschaltet"); lageSenden(); }
+      };
+      [pgmSel, pvwSel, auxSel].forEach(function (s) {
+        s.addEventListener("change", schalten);
+      });
+      lagenEl.parentNode.insertBefore(schalter, lagenEl.nextSibling);
+    }
+
+    var setzeWenn = function (sel, wert) {
+      if (!sel) return;
+      var s = String(wert);
+      for (var i = 0; i < sel.options.length; i++) {
+        if (sel.options[i].value === s) { sel.value = s; return; }
+      }
+    };
 
     var wegeEl = leiste.querySelector(".demo-wege");
     wegeEl.appendChild(beschriftung("Seiten:"));
@@ -403,6 +461,12 @@
       leiste.querySelector(".demo-erklaerung").textContent = lage.erklaerung;
       var name = leiste.querySelector(".demo-lagenname");
       if (name) name.textContent = "Lage: " + lage.titel;
+      // Die Auswahlfelder auf die aktuelle Lage stellen — egal, ob sie ueber
+      // die Felder, einen benannten Knopf oder einen anderen Tab kam.
+      var atem = lage.antworten["/atem"] || {};
+      if (pgmSel && atem.pgm && atem.pgm["0"] != null) setzeWenn(pgmSel, atem.pgm["0"]);
+      if (pvwSel && atem.pvw && atem.pvw["0"] != null) setzeWenn(pvwSel, atem.pvw["0"]);
+      if (auxSel) setzeWenn(auxSel, (atem.aux && atem.aux["1"]) || 0);
       hoeheMelden();
     };
     melde();

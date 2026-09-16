@@ -21,14 +21,16 @@ web UI. No build step, no cloud, no framework.
 
 That link is not a screenshot tour. It is `setup-guide.html` — the same file
 the Pi serves — with the device cards, the tally diagnostics table, the
-browser tally pages and the cue display, all live. Switch the mixer state in
-the header bar and watch the lamps follow; open a tally page on your phone
-and switch again, it turns red with the desk.
+browser tally pages and the cue display, all live. **Operate it yourself:**
+in the header bar, set PGM / PVW / AUX 1 with the *Selbst schalten* pickers
+and watch the lamps, the diagnostics and the browser-tally pages follow —
+open a tally page on your phone and switch again, it turns red with the desk.
 
 **Nothing there is faked, and nothing there is real hardware.** GitHub Pages
 runs no Python, so the answers the UI would get from `guide_server.py` are
-computed **by `guide_server.py` itself**, at build time, over three scenarios
-— see `scripts/build-demo.py`. The one question that matters, *is this camera
+computed **by `guide_server.py` itself**, at build time, across the whole
+PGM×PVW×AUX switch space (plus three named scenarios) — see
+`scripts/build-demo.py`. The one question that matters, *is this camera
 live?*, is answered by `tally_state_for_device()`, the same function the Pi
 uses; the browser only looks its answer up. There is no second implementation
 to drift.

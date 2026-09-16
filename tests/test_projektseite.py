@@ -181,6 +181,55 @@ class DieVorfuehrungWirdGebaut(unittest.TestCase):
         self.assertEqual(set(zust0.values()), {"offline"},
                          "ohne Mischer darf nichts nach `safe` aussehen")
 
+    def test_der_schaltraum_ist_da_und_gibt_sich_als_beispiel(self):
+        # Die „echte Funktion" auf der Projektseite: ein vorberechneter
+        # Schaltraum aus PGM x PVW x AUX 1. Jede Lage muss sich — wie die drei
+        # benannten — als Beispiel zu erkennen geben.
+        aus = self.daten.get("auswahl")
+        self.assertTrue(aus and aus.get("lagen"), "kein Schaltraum gebaut")
+        self.assertEqual(len(aus["lagen"]),
+                         len(aus["pgm"]) * len(aus["pvw"]) * len(aus["aux1"]))
+        self.assertIn(aus["start"], aus["lagen"], "die Start-Auswahl fehlt im Raster")
+        for schluessel, lage in aus["lagen"].items():
+            with self.subTest(auswahl=schluessel):
+                self.assertTrue(lage["antworten"]["/atem"].get("demo"),
+                                "eine Schaltlage gibt sich nicht als Beispiel zu erkennen")
+
+    def test_der_schaltraum_rechnet_nicht_selbst(self):
+        # Wie bei den benannten Lagen: die Zustaende im Schaltraum muessen von
+        # `guide_server.tally_state_for_device` stammen, nicht aus einer
+        # zweiten Fassung. Eine Stichprobe wird nachgerechnet.
+        aus = self.daten["auswahl"]
+        umgebung = dict(os.environ)
+        umgebung["PI_GUIDE_CONF"] = str(self.ziel / "_pruef-conf2")
+        umgebung["PI_GUIDE_STATE"] = str(self.ziel / "_pruef-state2")
+        programm = (
+            "import json, sys\n"
+            "import guide_server as gs\n"
+            "auftrag = json.load(sys.stdin)\n"
+            "raus = []\n"
+            "for fall in auftrag:\n"
+            "    cfg = {'devices': [fall['geraet']]}\n"
+            "    raus.append(gs.tally_state_for_device(\n"
+            "        cfg, fall['geraet']['id'], atem_state=fall['atem']))\n"
+            "print(json.dumps(raus))\n"
+        )
+        faelle, erwartet = [], []
+        for schluessel, lage in list(aus["lagen"].items())[::5]:
+            atem = lage["antworten"]["/atem"]
+            for d in lage["antworten"]["/tally-diagnostics"]["devices"]:
+                konf = next(k for k in lage["antworten"]["/tally-config"]["devices"]
+                            if k["id"] == d["id"])
+                faelle.append({"atem": atem, "geraet": dict(konf, id="x")})
+                erwartet.append(d["state"])
+        raus = subprocess.run([sys.executable, "-c", programm], input=json.dumps(faelle),
+                              cwd=str(ROOT), env=umgebung, capture_output=True,
+                              text=True, timeout=120)
+        self.assertEqual(raus.returncode, 0, raus.stderr[-600:])
+        self.assertEqual(json.loads(raus.stdout), erwartet,
+                         "der Schaltraum zeigt einen anderen Tally-Zustand als "
+                         "guide_server.tally_state_for_device berechnet")
+
     def test_nichts_behauptet_eine_verbindung_die_es_nicht_gibt(self):
         for lage in self.daten["lagen"]:
             with self.subTest(lage=lage["id"]):
