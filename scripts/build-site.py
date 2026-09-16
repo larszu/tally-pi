@@ -74,38 +74,64 @@ VORLAGE = """<!doctype html>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{titel}</title>
 <style>
+  /* Lars Zumpe Medienproduktion — Markenpalette (ADR-007 der av-planner-suite).
+     DIESELBEN Werte wie das Werkzeug selbst in `setup-guide.html`: Deep Navy
+     als Grund, Zumpe Navy als Flaeche, Off-White als Akzent, keine Rundungen,
+     keine Schatten. Bis hierher trug die Projektseite noch die alte
+     Slate-Blau-Welt (dunkles Grau als Grund, Blau als Link-Akzent, runde
+     Ecken) — genau der Rueckweg, den `tests/test_brand_tokens.py` fuer die App
+     verbietet. Der Wert-Zwilling hier wird von
+     `tests/test_projektseite_marke.py` festgehalten. */
   :root {{
     color-scheme: dark;
-    --grund: #0f1419; --flaeche: #171d24; --linie: #2a323c;
-    --text: #e6edf3; --leise: #9aa7b4; --akzent: #4ea1ff;
+    --grund:   #132040;                 /* Deep Navy — Grund */
+    --flaeche: #182948;                 /* Panel (abgeleitet) */
+    --karte:   #1D324F;                 /* Zumpe Navy — Kopf/Karten */
+    --linie:   rgba(246, 245, 240, .14);
+    --text:    #E1ECEF;                 /* Eisblau — Fliesstext */
+    --stark:   #F6F5F0;                 /* Off-White — Ueberschriften, Links */
+    --leise:   #8C9CB3;                 /* Stahlblau — Meta */
+    --signal:  #D6402E;                 /* nur Fokus/Markierung, nie Flaeche */
+    --tx: 350ms cubic-bezier(.2,.8,.2,1);
+    --font-sans: "Public Sans", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    --font-mono: "JetBrains Mono", "Fira Code", ui-monospace, Consolas, monospace;
   }}
   * {{ box-sizing: border-box; }}
   body {{
     margin: 0; background: var(--grund); color: var(--text);
-    font: 16px/1.65 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    font: 16px/1.65 var(--font-sans);
   }}
-  .kopf {{ border-bottom: 1px solid var(--linie); background: var(--flaeche); }}
+  /* Marke: keine Rundungen, keine Schatten — flach, ruhig, kantig. */
+  img, code, pre {{ border-radius: 0; }}
+  *:focus-visible {{ outline: 2px solid var(--signal); outline-offset: 2px; }}
+  .kopf {{ border-bottom: 1px solid var(--linie); background: var(--karte); }}
   .kopf .innen {{ max-width: 52rem; margin: 0 auto; padding: 0.9rem 1.5rem;
     display: flex; gap: 1rem; align-items: baseline; flex-wrap: wrap; }}
-  .kopf a {{ color: var(--text); text-decoration: none; font-weight: 600; }}
+  .kopf a {{ color: var(--stark); text-decoration: none; font-weight: 600; }}
   .kopf .leise {{ color: var(--leise); font-size: 0.85rem; }}
   main {{ max-width: 52rem; margin: 0 auto; padding: 2rem 1.5rem 5rem; }}
-  a {{ color: var(--akzent); }}
-  h1, h2, h3, h4 {{ line-height: 1.25; margin: 2rem 0 0.75rem; }}
+  /* Off-White statt Blau, mit Unterstreichung als Affordanz — die Marke
+     kennt kein Link-Blau, der Strich traegt hier den Hinweis. */
+  a {{ color: var(--stark); text-decoration: underline;
+    text-underline-offset: 2px; text-decoration-color: var(--linie);
+    transition: text-decoration-color var(--tx); }}
+  a:hover {{ text-decoration-color: var(--stark); }}
+  h1, h2, h3, h4 {{ line-height: 1.25; margin: 2rem 0 0.75rem; color: var(--stark); }}
   h1 {{ font-size: 2rem; margin-top: 0; }}
   h2 {{ border-bottom: 1px solid var(--linie); padding-bottom: 0.35rem; }}
-  img {{ max-width: 100%; height: auto; border: 1px solid var(--linie); border-radius: 6px; }}
-  code {{ background: var(--flaeche); padding: 0.15em 0.4em; border-radius: 4px; font-size: 0.9em; }}
-  pre {{ background: var(--flaeche); border: 1px solid var(--linie); border-radius: 8px;
+  img {{ max-width: 100%; height: auto; border: 1px solid var(--linie); }}
+  code {{ background: var(--flaeche); padding: 0.15em 0.4em; font-size: 0.9em;
+    font-family: var(--font-mono); }}
+  pre {{ background: var(--flaeche); border: 1px solid var(--linie);
     padding: 1rem; overflow-x: auto; }}
   pre code {{ background: none; padding: 0; }}
-  blockquote {{ margin: 1rem 0; padding: 0.4rem 1rem; border-left: 3px solid var(--akzent);
+  blockquote {{ margin: 1rem 0; padding: 0.4rem 1rem; border-left: 3px solid var(--stark);
     background: var(--flaeche); color: var(--leise); }}
   /* Breite Tabellen scrollen in sich, statt die Seite breit zu machen. */
   .tabelle {{ overflow-x: auto; }}
   table {{ border-collapse: collapse; width: 100%; }}
   th, td {{ border: 1px solid var(--linie); padding: 0.45rem 0.7rem; text-align: left; }}
-  th {{ background: var(--flaeche); }}
+  th {{ background: var(--karte); color: var(--stark); }}
   hr {{ border: none; border-top: 1px solid var(--linie); margin: 2.5rem 0; }}
   footer {{ max-width: 52rem; margin: 0 auto; padding: 0 1.5rem 3rem;
     color: var(--leise); font-size: 0.85rem; }}
