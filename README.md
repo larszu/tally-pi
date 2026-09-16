@@ -79,11 +79,19 @@ the script yourself to regenerate them.</sub>
 ## Run it on your own machine — no Pi
 
 ```bash
-python3 run-local.py --demo
+python3 run-local.py --demo      # Linux, macOS
+run_windows.bat --demo           # Windows
 ```
 
 That is the whole prerequisite list: Python 3. No Pi, no ATEM, no GPIO
 header, no `sudo`.
+
+On **Windows** the interpreter is usually called `py`, not `python3`, and a
+Windows without the Store alias has no `python` on the PATH at all.
+`run_windows.bat` finds it, installs `pyserial` if it is missing and passes
+every switch through. `run_windows.bat --server` is the same thing without
+a browser and without the closing `pause` — that is the form a caller such
+as the AV Planner Suite needs.
 
 It starts **the same programs the Pi runs** — `guide_server.py`,
 `atem_watcher.py`, `gpio_watcher.py` — pointed at a directory under
@@ -99,6 +107,7 @@ nothing.
 | `--atem 10.0.0.5` | talk to a real switcher on the network |
 | `--port 8081` | serve somewhere else |
 | `--host 127.0.0.1` | this machine only — the default binds all interfaces so a phone on the same network can reach it |
+| `--numato` | GPIO over a **Numato USB module** — the only GPIO path off the Pi |
 | `--dir /some/where` | put config and state elsewhere |
 
 **What is missing is missing visibly.** Nothing is faked:
@@ -108,6 +117,20 @@ nothing.
   keeps running. It does not invent button presses — a camera cut hangs
   off those inputs, and a watcher that stays silent looks exactly like one
   that sees nothing.
+
+  **`--numato` is the way to have real GPIO anyway**, on Windows, macOS and
+  Linux alike. `gpio_watcher` needs `gpiod` and `/dev/gpiochip0`; a Numato
+  32-channel USB module hangs off a serial port, so off the Pi it is not
+  the second choice but the only one. The watcher enumerates ports through
+  pyserial — the udev symlink `/dev/numato0` first where it exists, then
+  ports carrying Numato Lab's vendor id, then everything else — and
+  **probes** each candidate with `ver\r` rather than guessing from its
+  name. `COM3` on Windows is as likely to be a Bluetooth bridge.
+
+  It only runs when asked, and that is deliberate: the watcher holds a
+  serial port open and polls it twenty times a second. Starting it
+  unasked would mean writing `ver\r` into every enumerated port on the
+  machine — modems, debug headers, whatever else is plugged in.
 * Without an I²C display `pi_status.py` says so and exits cleanly.
 * Without a switcher `atem_watcher` reports *not connected*. `--demo`
   therefore does not start it at all, and the example state carries
@@ -306,7 +329,7 @@ be a second truth about the same evening, and nobody would maintain it.
 | `guide_server.py` | Python-stdlib HTTP server. Endpoints: `/ipconfig` `/gpio` `/numato` `/atem` `/bindings` `/tally-config` `/tally-out/<bcm>/(on\|off\|pulse\|latch-on\|latch-off\|release)` `/tally-diagnostics` `/input-test` `/service/pi-gpio-watcher` `/logs` + `/logs/stream` (SSE) + `/tally/{state,stream,<id>}` `/cue` + `/cue/{display,state,stream,clear}`. Owns GPIO outputs via libgpiod 2.x. |
 | `gpio_watcher.py` | libgpiod input watcher. Merges `tally.json` devices (with `in_gpio` set) and legacy `bindings.json`. Burst tracker for noisy inputs. Fires ATEM CAuS/CPgI/CPvI via the atem-watcher socket, or Companion HTTP API calls. |
 | `atem_watcher.py` | Hand-rolled ATEM UDP client (no `pyatem` dep). Writes state to `/run/pi-guide/atem.json`. Listens on `/run/pi-guide/atem-cmd.sock` for JSON commands: `set_aux`, `set_program`, `set_preview`. |
-| `numato_watcher.py` | Hot-plug watcher for Numato 32-CH USB GPIO modules via udev. |
+| `numato_watcher.py` | Hot-plug watcher for Numato 32-CH USB GPIO modules. Enumerates serial ports through pyserial, so it finds the module on Linux, macOS and Windows alike; the udev symlink is preferred where it exists. |
 | `pi_status.py` | OLED status cycler (luma.oled). Disabled by default; enable manually if an OLED is connected. |
 | `pi-*.service` | systemd units for the watchers + the guide server + pi-status. |
 | `99-numato.rules` | udev rule → stable `/dev/numato0` symlink for any Numato board. |
