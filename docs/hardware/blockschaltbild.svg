@@ -1,0 +1,99 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="570" viewBox="0 0 1000 570" role="img" aria-labelledby="t">
+<style>
+  text{font:13px "Helvetica Neue",Arial,sans-serif;fill:#111}
+  .t{font-size:16px;font-weight:700}
+  .s{font-size:11px;fill:#444}
+  .w{stroke:#111;stroke-width:1.6;fill:none}
+  .b{stroke:#111;stroke-width:1.2;fill:#fff}
+  .iso{stroke:#b00;stroke-width:1.5;stroke-dasharray:7 5;fill:none}
+  .pin{fill:#111}
+  .gnd{stroke:#111;stroke-width:1.6}
+</style>
+<rect width="1000" height="570" fill="#fff"/>
+
+<title id="t">tally-pi Blockschaltbild: Pi, isoliertes I/O-Interface, Feldseite</title>
+<text class="t" x="20" y="30">tally-pi · Blockschaltbild des isolierten I/O-Interface (8 GPI, 8 Tally-Kontakte, 8 Lampen)</text>
+
+<rect class="b" x="20" y="70" width="210" height="200" rx="6"/>
+<text class="t" x="32" y="95">Raspberry Pi 5 / 4</text>
+<text x="32" y="120">USB-C 5 V / 5 A (Pi 5)</text>
+<text x="32" y="140">Ethernet → ATEM, Ross,</text>
+<text x="32" y="156">Companion</text>
+<text x="32" y="182">guide_server.py: Lampen</text>
+<text x="32" y="198">gpio_watcher.py: Taster</text>
+<text x="32" y="226">GPIO 3,3 V · 4 mA ab Werk</text>
+<text class="s" x="32" y="242">(RP1) · nie direkt nach aussen</text>
+
+<path class="w" d="M230 110 H310"/><text class="s" x="240" y="104">+5 V</text>
+<path class="w" d="M230 200 H310"/><text class="s" x="236" y="194">GPIO 4..27</text>
+
+<rect class="b" x="310" y="70" width="240" height="440" rx="6"/>
+<text class="t" x="322" y="95">Interface · Pi-Seite</text>
+<text x="322" y="120">8× Opto-Empfänger → GPIO</text>
+<text class="s" x="322" y="136">47 kΩ Pull-up, 100 nF, Schmitt (RP1)</text>
+<text x="322" y="165">ULN2803A Treiber (8×)</text>
+<text class="s" x="322" y="181">GPIO HIGH → Ausgang zieht nach GND</text>
+<text x="322" y="210">8× PhotoMOS-Sender-LED</text>
+<text class="s" x="322" y="226">680 Ω aus +5 V, vom ULN geschaltet</text>
+<text x="322" y="255">8× Lampenausgang (GND-bezogen)</text>
+<text class="s" x="322" y="271">ULN OUT, Polyfuse 0,5 A, TVS</text>
+<rect class="b" x="322" y="300" width="216" height="52" rx="4"/>
+<text x="332" y="320">DC/DC isoliert 5 V → 12 V, 1 W</text>
+<text class="s" x="332" y="338">z. B. B0512S-1WR3 · speist Kontakt-Modus</text>
+<text x="322" y="382">Klemmen +12 V_L (Lampen)</text>
+<text class="s" x="322" y="398">eigenes 12-V-Netzteil, GND mit Pi</text>
+<text x="322" y="440">GND_Pi</text><path class="gnd" d="M390 436 h20 M394 442 h12 M398 448 h4"/>
+
+<path class="iso" d="M575 60 V525"/>
+<text class="s" x="585" y="556" fill="#b00">Isolationsbarriere: Optokoppler, PhotoMOS, DC/DC · ≥ 1 kV</text>
+
+<rect class="b" x="600" y="70" width="190" height="440" rx="6"/>
+<text class="t" x="612" y="95">Feldseite</text>
+<text x="612" y="120">8× GPI (Opto-LED bipolar,</text>
+<text x="612" y="136">1 kΩ 1 W, TVS)</text>
+<text x="612" y="165">8× Tally-Kontakt</text>
+<text x="612" y="181">PhotoMOS 60 V / 0,5 A</text>
+<text x="612" y="210">+12 V_F / GND_F</text>
+<text class="s" x="612" y="226">aus dem DC/DC, potentialfrei</text>
+<text x="612" y="260">DB25-Buchse</text>
+<text class="s" x="612" y="276">Belegung wie Blackmagic</text>
+<text class="s" x="612" y="290">GPI &amp; Tally Interface</text>
+<text x="612" y="320">Phoenix-Klemmen je Kanal</text>
+<text class="s" x="612" y="336">GPI n · Tally n · +12 V_F · GND_F</text>
+<text x="612" y="440">GND_F</text><path class="gnd" d="M680 436 h20 M684 442 h12 M688 448 h4"/>
+
+<path class="w" d="M550 128 H600"/>
+<path class="w" d="M550 214 H600"/>
+<path class="w" d="M550 326 H600"/>
+
+<rect class="b" x="820" y="70" width="160" height="60" rx="6"/>
+<text x="830" y="92">CCU Tally IN</text>
+<text class="s" x="830" y="108">Sony · Panasonic · GV</text>
+<text class="s" x="830" y="122">Ikegami (Kontakt-Modus)</text>
+<rect class="b" x="820" y="150" width="160" height="60" rx="6"/>
+<text x="830" y="172">Multidyne SilverBack</text>
+<text class="s" x="830" y="188">DB25 Tally IN: Kontakt</text>
+<text class="s" x="830" y="202">nach GND, Pin 11 / 24</text>
+<rect class="b" x="820" y="230" width="160" height="60" rx="6"/>
+<text x="830" y="252">12-V-Tally-Lampe</text>
+<text class="s" x="830" y="268">Datavideo TD-1, Eigenbau</text>
+<text class="s" x="830" y="282">12 V / ≤ 500 mA je Kanal</text>
+<rect class="b" x="820" y="330" width="160" height="60" rx="6"/>
+<text x="830" y="352">Zoom-Demand RET/VTR</text>
+<text class="s" x="830" y="368">potentialfreier Taster</text>
+<text class="s" x="830" y="382">→ GPI n, Kontakt-Modus</text>
+<rect class="b" x="820" y="410" width="160" height="60" rx="6"/>
+<text x="830" y="432">CCU / Mischer GPO</text>
+<text class="s" x="830" y="448">Open Collector 5–24 V,</text>
+<text class="s" x="830" y="462">Relais → GPI n</text>
+
+<path class="w" d="M790 100 H820"/><text class="s" x="792" y="94">Tally</text>
+<path class="w" d="M790 180 H820"/><text class="s" x="792" y="174">Tally</text>
+<path class="w" d="M430 510 V528 H805 V260 H820" stroke-dasharray="4 3"/>
+<text class="s" x="792" y="254">Lampe</text>
+<path class="w" d="M790 360 H820"/><text class="s" x="796" y="354">GPI</text>
+<path class="w" d="M790 440 H820"/><text class="s" x="796" y="434">GPI</text>
+<text class="s" x="20" y="556">Kein Pi-Pin verlässt das Gehäuse. Gestrichelt: Lampen-Klemmen sind GND_Pi-bezogen, nicht isoliert.</text>
+
+</svg>

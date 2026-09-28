@@ -1,0 +1,81 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="440" viewBox="0 0 1000 440" role="img" aria-labelledby="t">
+<style>
+  text{font:13px "Helvetica Neue",Arial,sans-serif;fill:#111}
+  .t{font-size:16px;font-weight:700}
+  .s{font-size:11px;fill:#444}
+  .w{stroke:#111;stroke-width:1.6;fill:none}
+  .b{stroke:#111;stroke-width:1.2;fill:#fff}
+  .iso{stroke:#b00;stroke-width:1.5;stroke-dasharray:7 5;fill:none}
+  .pin{fill:#111}
+  .gnd{stroke:#111;stroke-width:1.6}
+</style>
+<rect width="1000" height="440" fill="#fff"/>
+
+<title id="t">Schaltplan GPI-Eingang, ein Kanal: bipolarer Optokoppler, Kontakt- oder Spannungsmodus</title>
+<text class="t" x="20" y="30">GPI-Eingang · ein Kanal (×8) · Feldseite links, Pi-Seite rechts</text>
+
+<circle class="b" cx="60" cy="120" r="5"/><text x="15" y="108">+12 V_F</text>
+<circle class="b" cx="60" cy="250" r="5"/><text x="15" y="238">GPI n</text>
+<text class="s" x="14" y="270">DB25 Pin 10..3</text>
+<circle class="b" cx="60" cy="340" r="5"/><text x="15" y="328">GND_F</text>
+<text class="s" x="14" y="360">DB25 Pin 1, 2, 11..15, 24, 25</text>
+
+<rect class="b" x="130" y="95" width="24" height="120" rx="3"/>
+<circle class="pin" cx="142" cy="110" r="3"/>
+<circle class="pin" cx="142" cy="155" r="3"/>
+<circle class="pin" cx="142" cy="200" r="3"/>
+<text x="130" y="88">JP1</text>
+<text class="s" x="162" y="114">1 = +12 V_F → Kontakt-Modus</text>
+<text class="s" x="162" y="204">3 = GND_F → Spannungs-Modus</text>
+<path class="w" d="M65 120 H120 V110 H139"/>
+<path class="w" d="M65 340 H120 V200 H139"/>
+<path class="w" d="M145 155 H180 V60 H330"/>
+<text class="s" x="190" y="54">Knoten X (JP1 Pin 2)</text>
+
+<rect class="b" x="330" y="50" width="60" height="20"/><text x="330" y="48">R1 1 kΩ 1 W</text>
+<path class="w" d="M390 60 H470 V150"/>
+
+<!-- U1 -->
+<rect class="b" x="420" y="120" width="180" height="200" rx="4"/>
+<text x="420" y="112">U1 H11AA1 (bipolare LED)</text>
+<path class="w" d="M455 163 L480 175 L455 187 Z M480 163 V187"/>
+<path class="w" d="M480 223 L455 235 L480 247 Z M455 223 V247"/>
+<path class="w" d="M470 150 H455 V163 M470 150 H480 V163 M455 187 V223 M480 187 V223 M455 247 V270 M480 247 V270 M455 270 H480 M467 270 V300 H420"/>
+<text class="s" x="428" y="146">1</text><text class="s" x="428" y="296">2</text>
+<path class="w" d="M420 300 H300 V250 H65"/>
+<!-- Transistor -->
+<path class="w" d="M540 180 V260"/>
+<path class="w" d="M540 200 L565 180 V150 H600"/>
+<path class="w" d="M540 240 L565 260 V290 H600"/>
+<path class="w" d="M555 251 L565 260 L552 259 Z"/>
+<text class="s" x="580" y="144">5 C</text><text class="s" x="580" y="306">4 E</text>
+<path class="iso" d="M510 100 V340"/>
+<text class="s" x="470" y="356" fill="#b00">galvanische Trennung</text>
+
+<!-- TVS D1 als Kasten -->
+<rect class="b" x="285" y="285" width="30" height="40"/>
+<path class="w" d="M300 250 V285 M300 325 V340 H120"/>
+<text x="322" y="300">D1 SMAJ33CA</text>
+<text class="s" x="322" y="314">TVS, bidirektional</text>
+
+<!-- Pi-Seite -->
+<path class="w" d="M600 150 H760"/>
+<circle class="b" cx="780" cy="150" r="5"/><text x="795" y="154">GPIO n (BCM)</text>
+<path class="w" d="M760 150 H775"/>
+<rect class="b" x="690" y="70" width="20" height="50"/>
+<path class="w" d="M700 120 V150 M700 70 V50"/>
+<text x="718" y="100">R2 47 kΩ</text>
+<text x="684" y="44">+3,3 V</text>
+<path class="w" d="M650 150 V190 M640 190 H660 M640 200 H660 M650 200 V240"/>
+<text x="668" y="200">C1 100 nF</text>
+<path class="gnd" d="M640 240 h20 M644 246 h12 M648 252 h4"/>
+<path class="w" d="M600 290 H650 V240"/>
+<text x="612" y="318">GND_Pi</text>
+<circle class="pin" cx="650" cy="150" r="3"/><circle class="pin" cx="700" cy="150" r="3"/>
+
+<text x="20" y="395">Kontakt-Modus (JP1 1-2): Taster, Relais oder Open Collector zwischen GPI n und GND_F. Es fliessen ≈ 10 mA aus +12 V_F.</text>
+<text x="20" y="415">Spannungs-Modus (JP1 2-3): 3..30 V DC beliebiger Polarität zwischen GPI n und GND_F. Bei 24 V ≈ 22 mA, R1 wird 0,5 W warm.</text>
+<text x="20" y="435">Pi-Seite: Ruhe = HIGH, aktiv = LOW. UI: Flanke fallend, Pull-up, Debounce 20 ms, Halten 0 — kein Burst-Tracker nötig.</text>
+
+</svg>

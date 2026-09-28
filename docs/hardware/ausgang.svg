@@ -1,0 +1,75 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="570" viewBox="0 0 1000 570" role="img" aria-labelledby="t">
+<style>
+  text{font:13px "Helvetica Neue",Arial,sans-serif;fill:#111}
+  .t{font-size:16px;font-weight:700}
+  .s{font-size:11px;fill:#444}
+  .w{stroke:#111;stroke-width:1.6;fill:none}
+  .b{stroke:#111;stroke-width:1.2;fill:#fff}
+  .iso{stroke:#b00;stroke-width:1.5;stroke-dasharray:7 5;fill:none}
+  .pin{fill:#111}
+  .gnd{stroke:#111;stroke-width:1.6}
+</style>
+<rect width="1000" height="520" fill="#fff"/>
+
+<title id="t">Schaltplan Tally-Ausgang, ein Kanal: ULN2803A, PhotoMOS-Kontakt und 12-V-Lampe</title>
+<text class="t" x="20" y="30">Tally-Ausgang · ein Kanal (×8) · oben potentialfreier Kontakt, unten 12-V-Lampe</text>
+
+<circle class="b" cx="60" cy="170" r="5"/><text x="20" y="158">GPIO n</text>
+<text class="s" x="14" y="190">push-pull</text>
+<text class="s" x="14" y="204">UI: Pegel = HIGH</text>
+<path class="w" d="M65 170 H160"/>
+
+<rect class="b" x="160" y="110" width="120" height="200" rx="4"/>
+<text x="160" y="102">U2 ULN2803A (1 von 8)</text>
+<text class="s" x="168" y="174">IN n</text>
+<text class="s" x="240" y="174">OUT n</text>
+<text class="s" x="168" y="300">GND 9</text>
+<text class="s" x="218" y="124">COM 10</text>
+<path class="w" d="M280 170 H340"/>
+<path class="w" d="M260 110 V70 H720"/>
+<text x="560" y="64">+12 V_L (Lampen-Netzteil, GND mit Pi)</text>
+<path class="w" d="M190 310 V340"/><path class="gnd" d="M180 340 h20 M184 346 h12 M188 352 h4"/>
+<text x="210" y="352">GND_Pi</text>
+
+<circle class="pin" cx="340" cy="170" r="3"/>
+<path class="w" d="M340 170 V420 H580"/>
+
+<!-- PhotoMOS-LED: Anode aus +5 V ueber R3, Kathode am ULN-Ausgang -->
+<text x="392" y="84">+5 V</text><path class="w" d="M410 88 V95"/>
+<rect class="b" x="400" y="95" width="20" height="35"/><text x="426" y="118">R3 680 Ω</text>
+<path class="w" d="M410 130 V140 H540"/>
+<path class="w" d="M340 170 H540"/>
+<rect class="b" x="540" y="110" width="160" height="130" rx="4"/>
+<text x="540" y="258">U3 PhotoMOS AQY212EH · 60 V / 0,5 A</text>
+<path class="w" d="M560 143 L585 155 L560 167 Z M585 143 V167"/>
+<path class="w" d="M540 140 H560 V143 M540 170 H560 V167"/>
+<text class="s" x="546" y="136">1 +</text><text class="s" x="546" y="186">2 −</text>
+<path class="iso" d="M625 95 V250"/>
+<path class="w" d="M665 130 V150 M665 190 V210 M655 150 H675 M655 190 H675 M665 150 L675 190"/>
+<text class="s" x="680" y="134">6</text><text class="s" x="680" y="212">4</text>
+<path class="w" d="M665 130 H760 M665 210 H760"/>
+<circle class="b" cx="780" cy="130" r="5"/><text x="795" y="134">Tally n → DB25 Pin 23..16</text>
+<circle class="b" cx="780" cy="210" r="5"/><text x="795" y="214">GND_F → DB25 GND</text>
+<text class="s" x="795" y="230">Kontakt schliesst bei on-air:</text>
+<text class="s" x="795" y="244">CCU-Tally-In, Multidyne DB25,</text>
+<text class="s" x="795" y="258">Ross- oder BMD-GPI</text>
+
+<!-- Lampe -->
+<path class="w" d="M720 70 V330 H760"/>
+<circle class="b" cx="780" cy="330" r="5"/><text x="795" y="334">Lampe n +  (= +12 V_L)</text>
+<text class="s" x="795" y="350">Lampe zwischen + und −, ≤ 500 mA</text>
+<text x="560" y="410">F1 Polyfuse 0,5 A</text>
+<rect class="b" x="580" y="410" width="60" height="20"/>
+<path class="w" d="M640 420 H760"/>
+<circle class="b" cx="780" cy="420" r="5"/><text x="795" y="424">Lampe n −</text>
+<rect class="b" x="460" y="440" width="30" height="40"/>
+<path class="w" d="M475 420 V440 M475 480 V490"/><path class="gnd" d="M465 490 h20 M469 496 h12 M473 502 h4"/>
+<text x="496" y="462">D2 SMAJ33A (TVS)</text>
+<circle class="pin" cx="475" cy="420" r="3"/>
+
+<text x="20" y="520">ULN2803A invertiert: GPIO HIGH → OUT n zieht nach GND → PhotoMOS-LED leuchtet, Lampe brennt.</text>
+<text x="20" y="540">COM (Pin 10) an +12 V_L aktiviert die internen Freilaufdioden — Pflicht bei Relais oder Lampen mit Spule.</text>
+<text x="20" y="560">Die Lampenseite ist GND_Pi-bezogen und NICHT isoliert. Isoliert ist nur der PhotoMOS-Kontakt oben.</text>
+
+</svg>

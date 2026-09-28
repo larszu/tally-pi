@@ -171,6 +171,7 @@ class NumatoManager:
         self.output_channels = []
         self.output_values = {}     # channel -> bool (zuletzt geschrieben)
         self.last_error = None
+        self.hinweise = []          # elektrische Hinweise zur Belegung (numato_io.kanal_hinweise)
 
     # ── Board an-/abmelden ───────────────────────────────────────────────────
     def attach(self, board, device, output_channels, input_channels):
@@ -213,6 +214,12 @@ class NumatoManager:
                 self.output_values[ch] = False
             log(f"numato configured: outputs={list(output_channels)} "
                 f"inputs={list(input_channels)} width={breite}")
+            # Was das Board elektrisch NICHT kann, steht nicht im Protokoll —
+            # nur in seiner Doku. Einmal je Konfiguration sagen und ablegen.
+            self.hinweise = numato_io.kanal_hinweise(
+                output_channels, input_channels, breite)
+            for h in self.hinweise:
+                log(f"numato hinweis: {h}")
         except Exception as e:
             self.last_error = f"configure failed: {e}"
             log(f"numato {self.last_error}")
@@ -494,6 +501,7 @@ def run():
                     outvals = dict(manager.output_values)
                     sess = manager.session
                     err = manager.last_error
+                    hinweise = list(manager.hinweise)
                 paths.atomic_write_json(STATE_FILE, {
                     "connected": True,
                     "device": device,
@@ -502,6 +510,7 @@ def run():
                     "outputs": {str(k): v for k, v in outvals.items()},
                     "adc": adc,
                     "error": err,
+                    "hinweise": hinweise,
                     "ts": time.time(),
                 })
 
