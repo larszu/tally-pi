@@ -13,6 +13,13 @@ runs **natively on macOS and Windows** too: as a ready-made download from the
 Real GPIO there comes from a **Numato USB adapter**; everything else — tally
 UI, ATEM control, browser tally — works with nothing plugged in.
 
+**Wiring it up:** [docs/hardware/README.md](docs/hardware/README.md) — what a
+Pi pin can drive, how to hang a relay module on it without leaking 5 V into
+the Pi, and the schematics for an **isolated 8-channel I/O interface** that
+feeds CCU tally inputs (Sony, Panasonic, Grass Valley, Ikegami), Multidyne
+fibre beltpacks, switcher GPI and 12 V lamps, and reads zoom-demand RET/VTR
+buttons. Pin tables for each of those devices are in there too.
+
 [![syntax](https://github.com/larszu/tally-pi/actions/workflows/syntax.yml/badge.svg)](https://github.com/larszu/tally-pi/actions/workflows/syntax.yml)
 ![platform](https://img.shields.io/badge/platform-Pi%20%C2%B7%20macOS%20%C2%B7%20Windows-c51a4a)
 ![python](https://img.shields.io/badge/python-stdlib%20only-3776ab)
@@ -508,6 +515,35 @@ through the Tally tab instead.
 | `pi-numato-watcher.service` | Numato USB GPIO module poller. | enabled |
 | `pi-status.service` | OLED status display. | disabled (enable manually) |
 | `getty@tty1` | Auto-login + kiosk start. | enabled |
+
+## Where this is going
+
+TSL TallyMan is the reference for tally in OB trucks and large galleries: one
+controller reads every switcher, router and multiviewer in the building,
+decides who is on air, and drives CCUs, lamps, UMDs and intercom over dozens
+of isolated GPIOs and TSL UMD on the network. It costs several thousand euros
+and needs a Windows PC to configure.
+
+tally-pi today is a small slice of that: one ATEM, browser tally, a handful
+of GPIO lamps and buttons, on a Pi. Grown up, it should do the job TallyMan
+does for a mid-size production — and do it better where TallyMan is old:
+
+| | TallyMan today | tally-pi today | tally-pi grown up |
+|---|---|---|---|
+| Sources | every major switcher/router, via serial and IP | ATEM (native UDP) | ATEM, Ross (RossTalk/TSL), vMix, OBS, TSL 3.1/5.0 in, GPI in — one state, many sources |
+| Decides | who is on air across chained switchers, aux, multiviewer | PGM / PVW / aux per ATEM input | the same, across sources, with a readable rule per camera |
+| Outputs | 64 GPIO, 32 isolated relays, TSL UMD out | Pi header, Numato, browser | the isolated interface in `docs/hardware` (8/16/32 ch), TSL 3.1/5.0 out to UMDs and multiviewers, 12 V CCU tally, beltpack tally |
+| Camera return | — | GPIO button → ATEM aux | zoom-demand RET button → aux/return on ATEM or Ross, per camera, no PC in the loop |
+| Configure | Windows software | web UI on the box, phone-sized | same, plus import/export of the whole show as one JSON |
+| Honesty | — | amber states, no faked pin levels, diagnostics next to the kernel | same principle on every new source and output: what is unknown says so |
+| Price | thousands | a Pi, an interface board, a weekend | the same |
+
+The order of work follows the electrical findings first: an output that
+cannot safely reach a CCU is not an output. Then TSL in and out, because it
+is how everything else in a gallery already speaks tally. Then Ross, because
+it is the second switcher on most jobs here. Nothing on the right column is
+promised by a date; each row lands when it is wired, measured and tested,
+not when it is written down.
 
 ## Hardware
 
