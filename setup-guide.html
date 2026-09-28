@@ -615,6 +615,7 @@
       <span id="numato-status" style="font-size:13px;font-weight:normal;margin-left:12px"></span>
     </summary>
     <p id="numato-hint" style="color:var(--muted)">Steck ein Numato 32-Channel USB GPIO-Modul ein und es erscheint hier automatisch. Reine Status-Anzeige — Trigger werden in Companion konfiguriert.</p>
+    <ul id="numato-hinweise" style="display:none;color:var(--warn);font-size:var(--fs-sm);margin:var(--space-2) 0 0 0;padding-left:1.2em"></ul>
     <div id="numato-grid" class="gpio-grid" style="display:none"></div>
     <div id="numato-adc-wrap" style="display:none;margin-top:16px">
       <h3 style="margin-top:0">Analoge Eingänge (ADC · 10 bit · 0–1023)</h3>
@@ -1292,6 +1293,13 @@ var qrcode=function(){var t=function(t,r){var e=t,n=g[r],o=null,i=0,a=null,u=[],
       numatoState = d;
       if (d.connected) {
         statusEl.innerHTML = '<span style="color:var(--ok)">● verbunden</span> — ' + (d.device || '');
+        // Elektrische Hinweise des Watchers (2-mA-Kanaele, fehlende Pull-ups):
+        // der Text kommt aus numato_io.kanal_hinweise, hier wird er nur gezeigt.
+        const hw = document.getElementById('numato-hinweise');
+        const hs = Array.isArray(d.hinweise) ? d.hinweise : [];
+        hw.innerHTML = '';
+        for (const h of hs) { const li = document.createElement('li'); li.textContent = h; hw.appendChild(li); }
+        hw.style.display = hs.length ? 'block' : 'none';
         gridEl.style.display = 'grid';
         adcWrap.style.display = 'block';
         hintEl.style.display = 'none';

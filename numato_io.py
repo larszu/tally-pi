@@ -129,6 +129,68 @@ def finde_geraete():
     return namen
 
 
+# ── Was ein Kanal elektrisch kann ─────────────────────────────────────────────
+#
+# Das 32-Kanal-Board mit Analogeingaengen ist KEIN gleichmaessiges Raster.
+# Numato gibt je Kanalgruppe einen anderen Treiberstrom an (Quelle und Wortlaut:
+# https://numato.com/docs/32-channel-usb-gpio-module-with-analog-inputs/ ,
+# „maximum source and sink current", gelesen 2026-09-28):
+#
+#   IO0..IO7  und IO16..IO20   2 mA
+#   IO8..IO15                 25 mA
+#   IO21..IO31                 8 mA
+#
+# 2 mA reichen fuer keinen Optokoppler eines Relaismoduls und fuer keine LED.
+# Eine Tally-Lampe auf Kanal 3 „geht nicht" und niemand sieht warum — deshalb
+# steht die Tabelle hier als Daten, und `numato_watcher` meldet den Konflikt
+# in `numato.json`. Fuer andere Breiten (8/16/64) liegen keine belastbaren
+# Werte vor; dort wird NICHTS behauptet (`None`).
+#
+# Eingaenge haben auf allen Numato-Boards KEINEN internen Pull-up. Ein offener
+# Eingang schwimmt und liest zufaellig — „an externen Pull-up-Widerstand mit
+# dem Schalter" verlangt die Doku selbst. Der Watcher nimmt Ruhe = HIGH an;
+# ohne externen Pull-up (4,7 kOhm nach VCC) sind Phantom-Tastendruecke die Folge.
+TREIBERSTROM_MA_32 = tuple(
+    [2] * 8 +      # IO0..IO7
+    [25] * 8 +     # IO8..IO15
+    [2] * 5 +      # IO16..IO20
+    [8] * 11       # IO21..IO31
+)
+MINDESTSTROM_LAMPE_MA = 3   # Optokoppler-LED eines Relaismoduls, PhotoMOS-LED
+
+
+def treiberstrom_ma(kanal, breite):
+    """Treiberstrom eines Kanals in mA laut Numato, oder None wenn unbekannt."""
+    if breite == 32 and 0 <= kanal < 32:
+        return TREIBERSTROM_MA_32[kanal]
+    return None
+
+
+def kanal_hinweise(output_channels, input_channels, breite):
+    """Elektrische Hinweise zu einer Kanalbelegung — Saetze fuer numato.json.
+
+    Kein Fehler und keine Sperre: das Board tut, was es kann. Aber ein
+    Ausgang auf einem 2-mA-Kanal und ein Eingang ohne Pull-up sind die zwei
+    Gruende, aus denen „es geht nicht" am Numato entsteht, und beide sind
+    von der Software aus nicht zu sehen, nur zu wissen.
+    """
+    hinweise = []
+    for ch in sorted(set(int(c) for c in output_channels)):
+        ma = treiberstrom_ma(ch, breite)
+        if ma is not None and ma < MINDESTSTROM_LAMPE_MA:
+            hinweise.append(
+                f"Ausgang CH {ch}: nur {ma} mA Treiberstrom laut Numato — reicht "
+                f"fuer kein Relaismodul und keine LED. Kanal 8..15 (25 mA) oder "
+                f"21..31 (8 mA) nehmen, oder eine Treiberstufe davor.")
+    eingaenge = sorted(set(int(c) for c in input_channels))
+    if eingaenge:
+        hinweise.append(
+            "Eingaenge " + ", ".join(f"CH {c}" for c in eingaenge)
+            + ": Numato hat keinen internen Pull-up. Ohne externen Widerstand "
+              "(4,7 kOhm nach VCC) schwimmt der Eingang und meldet Phantom-Druecke.")
+    return hinweise
+
+
 class NumatoBoard:
     """Ein geoeffnetes Board. Alle Befehle laufen ueber `_cmd`.
 

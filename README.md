@@ -145,7 +145,11 @@ tally lamps — the guide server sends those over a local command channel
 
 - A device's **`in_gpio`** / **`out_gpio`** number is read as a **Numato
   channel** (0..31) when running off a board, instead of a Pi BCM pin. The
-  same config number, a different wire.
+  same config number, a different wire. On the 32-channel board only
+  channels **8–15** drive 25 mA; 0–7 and 16–20 drive 2 mA, not enough for
+  a relay module or an LED. Inputs have no internal pull-up (4.7 kΩ to
+  VCC required). `numato_watcher` writes both as `hinweise` into
+  `numato.json` and the UI shows them.
 - No board plugged in? Nothing is faked: `numato.json` carries
   `connected: false` with the reason, and the interface shows it — exactly as
   the Pi header reports `gpio_available: false`.
@@ -400,14 +404,30 @@ be a second truth about the same evening, and nobody would maintain it.
 
 ### Wiring notes
 
-- **Output pin** drives 3.3 V CMOS (~16 mA sink). Two common setups:
-  - Active-LOW relay module with opto-coupler input: pin → module-IN,
-    module-VCC ≥ 3.3 V, module-GND ↔ Pi-GND. UI: *Pegel = LOW*.
-  - Direct LED + series resistor (220–1 kΩ) to GND. UI: *Pegel = HIGH*.
-- **Input pin** uses internal pull-up. Wire the button between the GPIO
-  pin and any GND pin; pressing shorts to GND (idle = HIGH, pressed =
-  LOW). For noisy/long lines: 100 nF MLCC across the button reduces
-  bouncing; for fibre-optic GPIO links, use the burst tracker fields.
+The full wiring guide with schematics is **[docs/hardware/README.md](docs/hardware/README.md)**
+— relay module directly on the Pi, the isolated 8-channel I/O interface for
+CCUs, fibre beltpacks, switcher GPI, 12 V lamps and zoom-demand buttons, and
+the Numato channel groups. The short version:
+
+- **A Pi pin is 3.3 V and drives 4 mA by default on a Pi 5** (RP1; 8 mA on
+  a Pi 4). No pin leaves the enclosure: contacts, open-drain drivers and
+  opto-couplers do.
+- **Drive mode follows the polarity you set in the UI**
+  (`tally_ausgang_treiber()` in `guide_server.py`): *Pegel = LOW* →
+  **open-drain** (idle floats like an open contact, on-air pulls to GND —
+  relay modules with opto-coupler inputs, anything that wants a "short to
+  GND"); *Pegel = HIGH* → **push-pull** (LED + resistor ≥ 470 Ω, ULN2803
+  input). A read-back mismatch on an open-drain line is logged as
+  `pin_extern_gehalten` — something outside is holding the pin — instead of
+  being overridden with `pinctrl`.
+- **Relay module:** module-VCC to **3.3 V**, JD-VCC to an external 5 V
+  supply with the jumper removed, GND common. Never 5 V on the
+  opto-coupler side — that leaks current into a 3.3 V pin.
+- **Input pin** uses internal pull-up; button between the pin and GND
+  (idle = HIGH, pressed = LOW), 100 nF across the button. For long lines,
+  zoom demands and fibre GPIO converters use the opto-isolated input of
+  the interface; then the 20 ms kernel debounce is enough and the burst
+  tracker stays off.
 - The UI rejects unsafe pins (I²C / UART / SPI / EEPROM-reserved) and
   enforces disjoint pins between OUT and IN bindings.
 
@@ -493,7 +513,9 @@ through the Tally tab instead.
 
 - **Target:** Raspberry Pi 5 (Debian 13 trixie, aarch64). Pi 4 also OK.
 - **GPIO output (Tally-Lampe):** any pin from {4, 5, 6, 12, 13, 16, 17,
-  18, 19, 20, 21, 22, 23, 24, 25, 26, 27}. Push-pull, sink ≤16 mA.
+  18, 19, 20, 21, 22, 23, 24, 25, 26, 27}. Open-drain for *Pegel = LOW*,
+  push-pull for *Pegel = HIGH*; 4 mA per pin on a Pi 5 (8 mA on a Pi 4) —
+  see [docs/hardware](docs/hardware/README.md) for anything that needs more.
 - **GPIO input (Trigger):** same allow-list. Internal pull-up; wire
   button between pin and any GND.
 - **OLED (optional):** SSD1306 128×64 on I²C bus 1, address `0x3C`.

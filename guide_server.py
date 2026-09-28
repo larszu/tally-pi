@@ -746,13 +746,25 @@ def get_atem_state():
 
 
 # ---------------------------------------------------------------------------
-# Tally outputs — own GPIO pins in open-drain mode.
+# Tally outputs — eigene GPIO-Leitungen, Treiberart je Pin aus der Polaritaet.
 #
-# Idle = HIGH on an open-drain line = high-impedance, i.e. the pin behaves
-# like an open switch contact. Active = LOW = pulled to GND, i.e. as if the
-# contact was bridged. Companion (or any other system) toggles state via
-# POST /tally-out/<bcm>/on|off|pulse so it never needs to drive the pin
-# itself.
+# BEFUND 2026-09-28: Dieser Kommentar versprach bis dahin „open-drain", der
+# Code darunter forderte PUSH_PULL an — jede Lampe, gleich welcher Polaritaet.
+# Ein 5-V-Relaismodul (Optokoppler-LED zwischen VCC und IN) sah damit im
+# Ruhezustand 3,3 V gegen 5 V: Reststrom durch die LED, Restglimmen des
+# Relais, und ueber dieselbe LED floss Strom in einen Pin, der nur 3,3 V
+# vertraegt. Die „Read-back-Mismatches" auf BCM 20/22 samt pinctrl-Hammer
+# unten passen zu genau diesem Bild: ein Pin, den etwas von aussen haelt.
+#
+# Die Regel steht jetzt in `tally_ausgang_treiber()`, einer Zeile:
+#   active-low  (Relaismodul, Optokoppler nach GND)  -> OPEN_DRAIN
+#       Ruhe = hochohmig wie ein offener Kontakt, aktiv = nach GND gezogen.
+#       Der Pin liefert nie Strom nach aussen, nur der Optokoppler zieht.
+#   active-high (LED + Vorwiderstand, ULN2803-Eingang) -> PUSH_PULL
+#       Hier MUSS der Pin Strom liefern, open-drain koennte es nicht.
+# Companion (oder ein anderes System) schaltet ueber
+# POST /tally-out/<bcm>/on|off|pulse und fasst den Pin nie selbst an.
+# Die Verkabelung dazu: docs/hardware/README.md.
 # ---------------------------------------------------------------------------
 GPIO_CHIP = "/dev/gpiochip0"
 TALLY_OUT_CONSUMER = "pi-tally-out"
@@ -769,16 +781,21 @@ class TallyOutputs:
         self._error = None
         self._value_off = None
         self._value_on = None
+        self._treiber = {}     # bcm -> "open-drain" | "push-pull"
 
-    def configure(self, bcms):
+    def configure(self, bcms, active_high=None):
         """Claim the given BCM pins as tally outputs (idempotent).
 
-        Single multi-line gpiod request, push-pull output. Toggle between:
+        EINE libgpiod-Anforderung fuer alle Leitungen, aber je Leitung ihre
+        eigene Treiberart — `active_high` ist {bcm: bool} aus `out_active_high`
+        der Geraete, die Regel dazu ist `tally_ausgang_treiber()`:
 
-          OFF  → output_value HIGH (+3.3 V), relay-module LED gets 0 mA → off
-          ON   → output_value LOW  (0 V),    relay-module LED gets ~3 mA → on
+          active-low  -> OPEN_DRAIN: AUS = hochohmig (wie offener Kontakt),
+                                     AN  = nach GND gezogen, Optokoppler zieht
+          active-high -> PUSH_PULL:  AUS = 0 V, AN = +3,3 V liefert Strom
 
-        Single-request semantics, the standard libgpiod 2.x usage pattern.
+        Ohne `active_high` (alte Aufrufer) gilt open-drain — der sichere
+        Fall, der nie Strom in ein fremdes Modul drueckt.
         """
         try:
             import gpiod
@@ -790,8 +807,9 @@ class TallyOutputs:
             return
 
         bcms = sorted({int(b) for b in bcms if isinstance(b, int) and 0 <= b <= 27})
+        treiber = treiber_je_pin(bcms, active_high)
         with self._lock:
-            if bcms == self._bcms and self._req is not None:
+            if bcms == self._bcms and treiber == self._treiber and self._req is not None:
                 return  # no change
             for t in self._pulse_timers.values():
                 try: t.cancel()
@@ -805,30 +823,39 @@ class TallyOutputs:
                 self._error = None
                 return
 
-            base_settings = gpiod.LineSettings(
-                direction=Direction.OUTPUT,
-                drive=Drive.PUSH_PULL,
-                bias=Bias.DISABLED,
-                output_value=Value.ACTIVE,  # HIGH = idle = relay off
-            )
+            # Ruhe ist in beiden Treiberarten `Value.ACTIVE` (= logisch HIGH):
+            # bei open-drain heisst das „nicht ziehen", bei push-pull „+3,3 V".
+            # Was die Lampe daraus macht, entscheidet `tally_pin_treibt_tief`.
+            drive_of = {"open-drain": Drive.OPEN_DRAIN, "push-pull": Drive.PUSH_PULL}
+            config = {
+                b: gpiod.LineSettings(
+                    direction=Direction.OUTPUT,
+                    drive=drive_of[treiber[b]],
+                    bias=Bias.DISABLED,
+                    output_value=Value.ACTIVE,
+                )
+                for b in bcms
+            }
             self._value_off = Value.ACTIVE
             self._value_on  = Value.INACTIVE
 
             try:
                 # ONE request with all lines — standard libgpiod 2.x pattern.
-                config = {b: base_settings for b in bcms}
                 self._req = gpiod.request_lines(
                     GPIO_CHIP, consumer=TALLY_OUT_CONSUMER, config=config,
                 )
                 self._bcms = list(bcms)
+                self._treiber = dict(treiber)
                 self._values = {b: False for b in bcms}
                 self._error = None
-                print(f"[tally-out] claimed GPIOs (single request, push-pull, idle=HIGH): {self._bcms}",
+                print(f"[tally-out] claimed GPIOs (single request, idle=HIGH): "
+                      + ", ".join(f"{b}={treiber[b]}" for b in self._bcms),
                       flush=True)
             except Exception as e:
                 self._error = f"claim failed: {e}"
                 self._req = None
                 self._bcms = []
+                self._treiber = {}
                 self._values = {}
                 print(f"[tally-out] {self._error}", flush=True)
 
@@ -838,6 +865,7 @@ class TallyOutputs:
             except Exception: pass
         self._req = None
         self._bcms = []
+        self._treiber = {}
         self._values = {}
 
     def _write(self, bcm, on, source="auto"):
@@ -866,9 +894,26 @@ class TallyOutputs:
             if actual is not None and actual != v:
                 try:
                     log_event("pin_writeback_mismatch", bcm=b,
-                              wanted=str(v), actual=str(actual), source=source)
+                              wanted=str(v), actual=str(actual), source=source,
+                              treiber=self._treiber.get(b))
                 except Exception:
                     pass
+                if self._treiber.get(b) == "open-drain":
+                    # Open-drain und „HIGH" gewollt heisst: der Pin zieht NICHT.
+                    # Liest der Kernel trotzdem LOW, haelt etwas von aussen die
+                    # Leitung unten — ein Kurzschluss nach GND, ein zweiter
+                    # Treiber, ein Optokoppler-Eingang mit zu wenig Spannung.
+                    # Das ist Elektrik, kein Softwarefehler, und `pinctrl dh`
+                    # wuerde die Leitung heimlich auf push-pull umstellen und
+                    # gegen die Ursache treiben. Also: sagen, nicht draufhauen.
+                    try:
+                        log_event("pin_extern_gehalten", bcm=b,
+                                  wanted=str(v), actual=str(actual), source=source,
+                                  hinweis="open-drain: externe Last haelt den Pegel; "
+                                          "Verkabelung pruefen (docs/hardware)")
+                    except Exception:
+                        pass
+                    continue
                 # Sledgehammer fallback — bypass libgpiod entirely.
                 # `pinctrl op <bcm> dh|dl` works even when set_value silently
                 # no-ops, as confirmed by user testing.
@@ -1013,6 +1058,7 @@ class TallyOutputs:
                 "configured": list(self._bcms),
                 "values": {str(b): self._values.get(b, False) for b in self._bcms},
                 "latched": sorted(self._latched),
+                "treiber": {str(b): self._treiber.get(b) for b in self._bcms},
                 "error": self._error,
             }
 
@@ -1046,7 +1092,10 @@ class NumatoTallyOutputs:
         self._error = None
         self._session = None     # Sitzung des Watchers; wechselt bei Neustart
 
-    def configure(self, bcms):
+    def configure(self, bcms, active_high=None):
+        # `active_high` wird angenommen, aber nicht gebraucht: ein Numato-Kanal
+        # ist immer 3,3-V-Push-Pull, eine Treiberart gibt es dort nicht zu
+        # waehlen. Die Grenzen der Kanalgruppen (2 mA!) meldet numato_watcher.
         chans = sorted({int(b) for b in bcms if isinstance(b, int) and 0 <= b <= 31})
         with self._lock:
             for t in self._pulse_timers.values():
@@ -1196,9 +1245,11 @@ TALLY_OUTPUTS = make_tally_outputs()
 
 def reconfigure_tally_outputs():
     cfg = load_tally_config()
-    bcms = [d.get("out_gpio") for d in (cfg.get("devices") or [])
-            if isinstance(d.get("out_gpio"), int)]
-    TALLY_OUTPUTS.configure(bcms)
+    devs = [d for d in (cfg.get("devices") or [])
+            if isinstance(d, dict) and isinstance(d.get("out_gpio"), int)]
+    bcms = [d["out_gpio"] for d in devs]
+    active_high = {d["out_gpio"]: bool(d.get("out_active_high", False)) for d in devs}
+    TALLY_OUTPUTS.configure(bcms, active_high)
 
 
 # ---------------------------------------------------------------------------
@@ -1245,6 +1296,30 @@ def tally_lampe_soll_leuchten(trigger, state):
     if trigger == "pgm_pvw":
         return state in ("pgm", "pvw")
     return state == "pgm"
+
+
+def tally_ausgang_treiber(active_high):
+    """Treiberart eines Tally-Ausgangs aus seiner Polaritaet — die EINE Regel.
+
+    active-low  (Relaismodul mit Optokoppler nach GND, Kontakt-Eingang einer
+                 CCU ueber Optokoppler): "open-drain". Der Pin liefert nie
+                 Strom nach aussen; AUS ist hochohmig wie ein offener Kontakt.
+    active-high (LED mit Vorwiderstand, Eingang eines ULN2803, PhotoMOS-LED):
+                 "push-pull". Hier muss der Pin die +3,3 V liefern.
+
+    Ein Pi-5-Pin treibt ab Werk 4 mA (RP1, DRIVE=0x1), ein Pi 4 8 mA. Was
+    mehr braucht, bekommt eine Treiberstufe — siehe docs/hardware/README.md.
+    """
+    return "push-pull" if bool(active_high) else "open-drain"
+
+
+def treiber_je_pin(bcms, active_high=None):
+    """{bcm: Treiberart} fuer eine Liste von Pins; `active_high` ist
+    {bcm: bool} oder None (dann open-drain fuer alle — der Fall, der nie
+    Strom in ein fremdes Modul drueckt)."""
+    active_high = active_high or {}
+    return {int(b): tally_ausgang_treiber(active_high.get(int(b), False))
+            for b in bcms}
 
 
 def tally_pin_treibt_tief(active_high, leuchtet):
@@ -1314,6 +1389,7 @@ def build_tally_diagnostics():
             "out_gpio": bcm,
             "out_trigger": d.get("out_trigger", "pgm"),
             "out_active_high": active_high,
+            "treiber": tally_ausgang_treiber(active_high),  # open-drain | push-pull
             "sw_on": sw_on,             # what code thinks (True=lamp should be on)
             "pin_level": pin_level,     # 0=lo, 1=hi, None=not claimed
             "kernel_on": kernel_on,     # True if pin's physical level matches "on" for this polarity
